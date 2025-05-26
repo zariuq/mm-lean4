@@ -34,7 +34,7 @@ namespace ByteSliceT
 @[inline] def size (self : ByteSliceT) : Nat := self.arr.size - self.off
 
 instance : GetElem ByteSliceT Nat UInt8 fun _ _ => True where
-  getElem self idx _ := self.arr.get! (self.off + idx)
+  getElem self idx _ := self.arr[self.off + idx]!
 
 end ByteSliceT
 
@@ -48,19 +48,18 @@ structure ByteSlice where
 namespace ByteSlice
 
 def toArray : ByteSlice → ByteArray
-| ⟨arr, off, len⟩ => arr.extract off len
+  | ⟨arr, off, len⟩ => arr.extract off len
 
 instance : GetElem ByteSlice Nat UInt8 fun _ _ => True where
-  getElem self idx _ := self.arr.get! (self.off + idx)
+  getElem self idx _ := self.arr[self.off + idx]!
 
 def forIn.loop [Monad m] (f : UInt8 → β → m (ForInStep β))
-  (arr : ByteArray) (off stop : Nat) (i : Nat) (b : β) : m β := do
+    (arr : ByteArray) (off stop : Nat) (i : Nat) (b : β) : m β := do
   if i < stop then
-    match ← f (arr.get! i) b with
+    match ← f arr[i]! b with
     | ForInStep.done b => pure b
     | ForInStep.yield b => loop f arr off stop (i+1) b
   else pure b
-termination_by stop - i
 
 instance : ForIn m ByteSlice UInt8 :=
   ⟨fun ⟨arr, off, len⟩ b f => forIn.loop f arr off (off + len) off b⟩
@@ -68,16 +67,15 @@ instance : ForIn m ByteSlice UInt8 :=
 end ByteSlice
 
 def ByteSliceT.toSlice : ByteSliceT → ByteSlice
-| ⟨arr, off⟩ => ⟨arr, off, arr.size - off⟩
+  | ⟨arr, off⟩ => ⟨arr, off, arr.size - off⟩
 
 def ByteArray.toSlice (arr : ByteArray) : ByteSlice := ⟨arr, 0, arr.size⟩
 
 def ByteSlice.eqArray (bs : ByteSlice) (arr : ByteArray) : Bool :=
   let rec loop (arr₁ : ByteArray) (i j : Nat) : Bool :=
     if j < arr.size then
-      arr₁.get! i == arr.get! j && loop arr₁ (i+1) (j+1)
+      arr₁[i]! == arr[j]! && loop arr₁ (i+1) (j+1)
     else true
-  termination_by arr.size - j
   bs.len == arr.size && loop bs.arr bs.off 0
 
 def String.toAscii (s : String) : ByteArray :=
@@ -107,10 +105,10 @@ open IO.FS (Handle)
 open Std (HashMap HashSet)
 
 def isLabelChar (c : UInt8) : Bool :=
-c.isAlphanum || c == '-'.toUInt8 || c == '_'.toUInt8 || c == '.'.toUInt8
+  c.isAlphanum || c == '-'.toUInt8 || c == '_'.toUInt8 || c == '.'.toUInt8
 
 def isWhitespace (c : UInt8) : Bool :=
-c == ' '.toUInt8 || c == '\n'.toUInt8 || c == '\r'.toUInt8 || c == '\t'.toUInt8
+  c == ' '.toUInt8 || c == '\n'.toUInt8 || c == '\r'.toUInt8 || c == '\t'.toUInt8
 
 def isPrintable (c : UInt8) : Bool := c >= 32 && c <= 126
 
@@ -142,13 +140,13 @@ instance : BEq DJ := instBEqProd
 structure Frame where
   dj : Array DJ
   hyps : Array String
-deriving Inhabited
+  deriving Inhabited
 
 def Frame.size : Frame → Nat × Nat
-| ⟨dj, hyps⟩ => (dj.size, hyps.size)
+  | ⟨dj, hyps⟩ => (dj.size, hyps.size)
 
 def Frame.shrink : Frame → Nat × Nat → Frame
-| ⟨dj, hyps⟩, (x, y) => ⟨dj.shrink x, hyps.shrink y⟩
+  | ⟨dj, hyps⟩, (x, y) => ⟨dj.shrink x, hyps.shrink y⟩
 
 instance : ToString Frame := ⟨fun fr => toString fr.hyps⟩
 
@@ -283,7 +281,7 @@ def popScope (pos : Pos) (db : DB) : DB :=
   else
     db.mkError pos "can't pop global scope"
 
-def find? (db : DB) (l : String) : Option Object := db.objects.get? l
+def find? (db : DB) (l : String) : Option Object := db.objects[l]?
 
 def isConst (db : DB) (tk : String) : Bool :=
   if let some (.const _) := db.find? tk then true else false
@@ -371,26 +369,6 @@ def preload (db : DB) (pr : ProofState) (l : String) : Except String ProofState 
   | some (.assert f fr _) => return pr.pushHeap (.assert f fr)
   | _ => throw s!"statement {l} not found"
 
-@[inline] def checkHypF (db : DB) (hyps : Array String) (stack : Array Formula)
-  (off : {off // off + hyps.size = stack.size})
-  (IH : HashMap String Formula → Except String (HashMap String Formula))
-  (i : Nat) (h : i < hyps.size)
-  (subst : HashMap String Formula) : Except String (HashMap String Formula) := do
-  let val := stack[off.1 + i]'(
-    let thm {a b n} : i < a → n + a = b → n + i < b
-    | h, rfl => Nat.add_lt_add_left h _
-    thm h off.2)
-  if let some (.hyp ess f _) := db.find? hyps[i] then
-    if f[0]! == val[0]! then
-      if ess then
-        if (← f.subst subst) == val then
-          IH subst
-        else throw "type error in substitution"
-      else
-        IH (subst.insert f[1]!.value val)
-    else throw s!"bad typecode in substitution {hyps[i]}: {f} / {val}"
-  else unreachable!
-
 variable (db : DB) (hyps : Array String) (stack : Array Formula)
   (off : {off // off + hyps.size = stack.size}) in
 def checkHyp (i : Nat) (subst : HashMap String Formula) :
@@ -411,7 +389,6 @@ def checkHyp (i : Nat) (subst : HashMap String Formula) :
       else throw s!"bad typecode in substitution {hyps[i]}: {f} / {val}"
     else unreachable!
   else pure subst
-termination_by hyps.size - i
 
 def stepAssert (db : DB) (pr : ProofState) (f : Formula) : Frame → Except String ProofState
   | ⟨dj, hyps⟩ => do
@@ -422,8 +399,8 @@ def stepAssert (db : DB) (pr : ProofState) (f : Formula) : Frame → Except Stri
       let disj s1 s2 := s1 != s2 &&
         db.frame.dj.contains (if s1 < s2 then (s1, s2) else (s2, s1))
       for (v1, v2) in dj do
-        let e1 := subst.get! v1
-        let e2 := subst.get! v2
+        let e1 := subst[v1]!
+        let e2 := subst[v2]!
         let disjoint :=
           e1.foldlVars (init := true) fun b s1 =>
             e2.foldlVars b fun b s2 => b && disj s1 s2
@@ -731,7 +708,6 @@ def feed (base : Nat) (arr : ByteArray)
         match ot with
         | .this off => .token base ⟨arr, off⟩
         | .old base off arr' => .token base ⟨arr' ++ arr, off⟩ }
-termination_by arr.size - i
 
 def feedAll (s : ParserState) (base : Nat) (arr : ByteArray) : ParserState :=
   match s.charp with

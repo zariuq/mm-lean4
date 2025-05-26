@@ -11,19 +11,19 @@ partial def foo : TermElabM Unit := do
   let rec loop (s : ParserState) (base : Nat) : IO (Except ParserState DB) := do
     let buf ← h.read 1024
     if buf.isEmpty then
-      pure $ Except.ok $ s.done base
+      pure <| .ok <| s.done base
     else
       let s := s.feedAll base buf
-      if s.db.error?.isSome then pure $ Except.error s
+      if s.db.error?.isSome then pure <| .error s
       else loop s (base + buf.size)
   match ← loop Inhabited.default 0 with
-  | Except.ok _ => pure ()
-  | Except.error s' => match s'.db.error? with
-    | some ⟨Error.ax _pos l f fr, _i⟩ =>
+  | .ok _ => pure ()
+  | .error s' => match s'.db.error? with
+    | some ⟨.ax _pos l f fr, _i⟩ =>
       IO.println s!"axiom {l}: {fr} |- {f}"
-    | some ⟨Error.thm _pos l f fr, _i⟩ =>
+    | some ⟨.thm _pos l f fr, _i⟩ =>
       IO.println s!"theorem {l}: {fr} |- {f}"
-    | some ⟨Error.error pos msg, _⟩ =>
+    | some ⟨.error pos msg, _⟩ =>
       IO.println s!"at {pos}: {msg}"
     | _ => pure ()
 
@@ -159,10 +159,10 @@ theorem DJ.subst.mono {σ : VR → Expr} {dj₁ dj₂ dj₁' dj₂' : DJ}
     (h : dj₂ ≤ dj₁) (h' : dj₁' ≤ dj₂') (H : dj₁.subst σ dj₁') : dj₂.subst σ dj₂' :=
   fun _ _ d => Expr.disjoint.mono h' (H _ _ (h _ _ d))
 
-def DJ.trim (dj : DJ) (P : VR → Prop) : DJ :=
-  { disj := fun x y => dj x y ∧ P x ∧ P y
-    irr := fun x => dj.irr x.1
-    symm := fun ⟨h₁, h₂, h₃⟩ => ⟨dj.symm h₁, h₃, h₂⟩ }
+def DJ.trim (dj : DJ) (P : VR → Prop) : DJ where
+  disj := fun x y => dj x y ∧ P x ∧ P y
+  irr := fun x => dj.irr x.1
+  symm := fun ⟨h₁, h₂, h₃⟩ => ⟨dj.symm h₁, h₃, h₂⟩
 
 theorem DJ.trim.mono {dj₁ dj₂ : DJ} (hdj : dj₁ ≤ dj₂) {P Q : VR → Prop}
     (pq : ∀ x, P x → Q x) : dj₁.trim P ≤ dj₂.trim Q :=
@@ -191,12 +191,12 @@ theorem DJ.untrim.mono {dj₁ dj₂ : DJ} (hdj : dj₁ ≤ dj₂) {P Q : VR → 
     (qp : ∀ x, Q x → P x) : dj₁.untrim P ≤ dj₂.untrim Q :=
   fun _ _ ⟨h₁, h₂⟩ => ⟨h₁, fun ha hb => hdj _ _ (h₂ (qp _ ha) (qp _ hb))⟩
 
-theorem DJ.trim_le {dj₁ dj₂ : DJ} {P} : dj₁.trim P ≤ dj₂ ↔ dj₁ ≤ dj₂.untrim P :=
-  ⟨fun H _ _ h => ⟨dj₁.ne h, fun ha hb => H _ _ ⟨h, ha, hb⟩⟩,
-   fun H _ _ ⟨h, ha, hb⟩ => (H _ _ h).2 ha hb⟩
+theorem DJ.trim_le {dj₁ dj₂ : DJ} {P} : dj₁.trim P ≤ dj₂ ↔ dj₁ ≤ dj₂.untrim P where
+  mp H _ _ h := ⟨dj₁.ne h, fun ha hb => H _ _ ⟨h, ha, hb⟩⟩
+  mpr H _ _ := fun ⟨h, ha, hb⟩ => (H _ _ h).2 ha hb
 
 theorem DJ.self_le_untrim (dj : DJ) (P : VR → Prop) : dj ≤ dj.untrim P :=
-  DJ.trim_le.1 $ DJ.trim_le_self _ _
+  DJ.trim_le.1 <| DJ.trim_le_self _ _
 
 theorem DJ.trim_untrim (dj : DJ) (P : VR → Prop) : (dj.untrim P).trim P = dj.trim P :=
   DJ.le_antisymm (fun _ _ ⟨h, ha, hb⟩ => ⟨h.2 ha hb, ha, hb⟩)
@@ -272,9 +272,9 @@ theorem Statement.untrim_trim (s : Statement) : s.trim.untrim = s.untrim := by
   simp only [untrim, untrim', trim_vars]; simp only [trim, DJ.untrim_trim]
 
 theorem Statement.trim_le {s₁ s₂ : Statement} (e : s₁.vars = s₂.vars) :
-    s₁.trim.ctx ≤ s₂.ctx ↔ s₁.ctx ≤ s₂.untrim.ctx :=
-  ⟨fun ⟨h₁, h₂⟩ => ⟨h₁, DJ.trim_le.1 $ by rw [← e]; exact h₂⟩,
-   fun ⟨h₁, h₂⟩ => ⟨h₁, DJ.trim_le.2 $ by rw [e]; exact h₂⟩⟩
+    s₁.trim.ctx ≤ s₂.ctx ↔ s₁.ctx ≤ s₂.untrim.ctx where
+  mp := fun ⟨h₁, h₂⟩ => ⟨h₁, DJ.trim_le.1 <| by rw [← e]; exact h₂⟩
+  mpr := fun ⟨h₁, h₂⟩ => ⟨h₁, DJ.trim_le.2 <| by rw [e]; exact h₂⟩
 
 def Statement.trimmed (s : Statement) : Prop := s.ctx.dj.trimmed fun v => v ∈ s.vars
 
@@ -298,29 +298,29 @@ theorem Provable.mono {axs₁ axs₂} (haxs : ∀ a, axs₁ a → axs₂ a)
   | ax σ ha h₁ _ IH =>
     exact ax σ (haxs _ ha) (h₁.mono (DJ.refl _) hΓ.2) fun e h => IH _ h
 
-def Statement.provable' (axs : Statement → Prop) (s : Statement) : Prop :=
+def Statement.Provable' (axs : Statement → Prop) (s : Statement) : Prop :=
   Provable axs s.ctx s.fmla
 
-theorem Statement.provable'.mono {axs₁ axs₂} (haxs : ∀ a, axs₁ a → axs₂ a) :
-    {s₁ s₂ : Statement} → s₁ ≤ s₂ → s₁.provable' axs₁ → s₂.provable' axs₂
+theorem Statement.Provable'.mono {axs₁ axs₂} (haxs : ∀ a, axs₁ a → axs₂ a) :
+    {s₁ s₂ : Statement} → s₁ ≤ s₂ → s₁.Provable' axs₁ → s₂.Provable' axs₂
   | ⟨_Γ₁, _⟩, ⟨_Γ₂, _⟩, ⟨hΓ, rfl⟩ => Provable.mono haxs hΓ
 
-def Statement.provable (axs : Statement → Prop) (s : Statement) : Prop :=
-  s.untrim.provable' axs
+def Statement.Provable (axs : Statement → Prop) (s : Statement) : Prop :=
+  s.untrim.Provable' axs
 
--- theorem Statement.provable.mono {axs₁ axs₂} (haxs : ∀ a, axs₁ a → axs₂ a) :
---   {s₁ s₂ : Statement} → s₁ ≤ s₂ → s₁.provable axs₁ → s₂.provable axs₂
+-- theorem Statement.Provable.mono {axs₁ axs₂} (haxs : ∀ a, axs₁ a → axs₂ a) :
+--   {s₁ s₂ : Statement} → s₁ ≤ s₂ → s₁.Provable axs₁ → s₂.Provable axs₂
 -- | s₁, s₂, h, hs, pr =>
---   Statement.provable'.mono haxs (untrim'.mono (fun _ => id) hs) $
---   Statement.provable'.mono (fun _ => id) _ pr
+--   Statement.Provable'.mono haxs (untrim'.mono (fun _ => id) hs) $
+--   Statement.Provable'.mono (fun _ => id) _ pr
 
-theorem Statement.provable'.of {axs} {s : Statement} (h : s.provable' axs) : s.provable axs :=
+theorem Statement.Provable'.of {axs} {s : Statement} (h : s.Provable' axs) : s.Provable axs :=
   h.mono (fun _ => id) (self_le_untrim _)
 
-theorem Statement.provable.trim {axs} {s : Statement} : s.trim.provable axs ↔ s.provable axs := by
-  simp only [provable, untrim_trim]
+theorem Statement.Provable.trim {axs} {s : Statement} : s.trim.Provable axs ↔ s.Provable axs := by
+  simp only [Provable, untrim_trim]
 
-theorem Provable.ax_self (axs : Statement → Prop) {ax} (H : axs ax) : ax.provable' axs := by
+theorem Provable.ax_self (axs : Statement → Prop) {ax} (H : axs ax) : ax.Provable' axs := by
   have := Provable.ax (Γ := ax.ctx) VR.expr H ?disj ?hyp
   rw [Formula.subst_id] at this; exact this
   case disj =>
@@ -330,8 +330,8 @@ theorem Provable.ax_self (axs : Statement → Prop) {ax} (H : axs ax) : ax.prova
   case hyp =>
     intro fmla h
     match fmla, h with
-    | fmla, Or.inl h => rw [Formula.subst_id]; exact Provable.hyp _ h
-    | _, Or.inr ⟨v, rfl⟩ => exact Provable.var v
+    | fmla, .inl h => rw [Formula.subst_id]; exact .hyp _ h
+    | _, .inr ⟨v, rfl⟩ => exact .var v
 
 theorem Provable.trans' {axs Γ} (σ) {Γ' fmla} (pr : Provable axs Γ' fmla)
     (dj : Γ'.dj.subst σ Γ.dj)
@@ -351,7 +351,7 @@ theorem Provable.trans' {axs Γ} (σ) {Γ' fmla} (pr : Provable axs Γ' fmla)
       exact dj' _ _ ab _ _ ea fb
     focus { intros f; rw [Formula.subst_tr]; refine IH _ }
 
-theorem Provable.trans'' {axs Γ σ} (s : Statement) : s.provable' axs →
+theorem Provable.trans'' {axs Γ σ} (s : Statement) : s.Provable' axs →
     s.ctx.dj.subst σ Γ.dj →
     (∀ h, h ∈ s.ctx.hyps ∨ (∃ v:VR, h = v) → Provable axs Γ (h.subst σ)) →
     Provable axs Γ (s.fmla.subst σ) :=
@@ -392,8 +392,8 @@ theorem Provable.thm {axs} {Γ : Context}
     {e} [inst : Subst σ s e] : Provable axs Γ (c, e) := by
   rw [← inst.out]
   exact Metamath.Provable.trans' σ pr dj fun
-    | f, Or.inl h => hh _ h
-    | _, Or.inr ⟨v, rfl⟩ =>
+    | f, .inl h => hh _ h
+    | _, .inr ⟨v, rfl⟩ =>
       show Provable axs Γ (v.type, σ v ++ show Expr from []) by
       rw [List.append_nil]; exact hv v
 
@@ -401,10 +401,10 @@ theorem DJ_nil {σ dj'} : (DJ.mk' []).subst σ dj' | _, _, h => nomatch h
 theorem DJ_cons {a b l σ dj'}
     (h₁ : (σ a).disjoint dj' (σ b))
     (h₂ : (DJ.mk' l).subst σ dj') : (DJ.mk' ((a, b) :: l)).subst σ dj'
-  | _, _, ⟨_, Or.inl (List.Mem.head _)⟩ => h₁
-  | _, _, ⟨_, Or.inr (List.Mem.head _)⟩ => fun x y hx hy => dj'.symm (h₁ y x hy hx)
-  | _, _, ⟨h, Or.inl (List.Mem.tail _ h')⟩ => h₂ _ _ ⟨h, Or.inl h'⟩
-  | _, _, ⟨h, Or.inr (List.Mem.tail _ h')⟩ => h₂ _ _ ⟨h, Or.inr h'⟩
+  | _, _, ⟨_, .inl (.head _)⟩ => h₁
+  | _, _, ⟨_, .inr (.head _)⟩ => fun x y hx hy => dj'.symm (h₁ y x hy hx)
+  | _, _, ⟨h, .inl (.tail _ h')⟩ => h₂ _ _ ⟨h, .inl h'⟩
+  | _, _, ⟨h, .inr (.tail _ h')⟩ => h₂ _ _ ⟨h, .inr h'⟩
 
 theorem HH_nil {axs Γ σ} : ∀ h:Formula, h ∈ [] → Provable axs Γ (h.subst σ)
   | _, h => nomatch h
@@ -421,7 +421,7 @@ class Typed (axs : outParam _) (c : outParam CN) (e : Expr) where
 
 def Expr.ty (e) {axs c} [Typed axs c e] {Γ} : Provable axs Γ (c, e) := Typed.type Γ
 
--- This is a by hand translation of demo0.mm, ideally the tactic will write this
+-- This is a by-hand translation of demo0.mm, ideally the tactic will write this
 
 namespace Demo
 
@@ -469,40 +469,36 @@ abbrev Typed := Metamath.Typed axs
 instance tze : Typed "term" ze :=
   ⟨fun _Γ => (Provable.ax_self axs (.head _)).thm subst.ok.nil DJ_nil HH_nil⟩
 
-instance tpl {t r} [Typed "term" t] [Typed "term" r] :
-    Typed "term" (pl t r) :=
+instance tpl {t r} [Typed "term" t] [Typed "term" r] : Typed "term" (pl t r) :=
   ⟨fun _Γ =>
     have : Subst (subst_of [(vt, t), (vr, r)]) vt t := ⟨List.append_nil _⟩
     have : Subst (subst_of [(vt, t), (vr, r)]) vr r := ⟨List.append_nil _⟩
     (Provable.ax_self axs (.tail _ <| .head _)).thm
-      (subst.ok.cons vt t.ty $ subst.ok.cons vr r.ty subst.ok.nil)
+      (subst.ok.cons vt t.ty <| subst.ok.cons vr r.ty subst.ok.nil)
       DJ_nil HH_nil⟩
 
-instance weq {t r} [Typed "term" t] [Typed "term" r] :
-    Typed "wff" (eq t r) :=
+instance weq {t r} [Typed "term" t] [Typed "term" r] : Typed "wff" (eq t r) :=
   ⟨fun _Γ =>
     have : Subst (subst_of [(vt, t), (vr, r)]) vt t := ⟨List.append_nil _⟩
     have : Subst (subst_of [(vt, t), (vr, r)]) vr r := ⟨List.append_nil _⟩
-    (Provable.ax_self axs (.tail _ <| .tail _ <| .head _)).thm
-      (subst.ok.cons vt t.ty $ subst.ok.cons vr r.ty subst.ok.nil)
+    (Provable.ax_self axs (List.get_mem _ ⟨2, by decide⟩)).thm
+      (subst.ok.cons vt t.ty <| subst.ok.cons vr r.ty subst.ok.nil)
       DJ_nil HH_nil⟩
 
-instance wim {P Q} [Typed "wff" P] [Typed "wff" Q] :
-    Typed "wff" (im P Q) :=
+instance wim {P Q} [Typed "wff" P] [Typed "wff" Q] : Typed "wff" (im P Q) :=
   ⟨fun _Γ =>
     have : Subst (subst_of [(vP, P), (vQ, Q)]) vP P := ⟨List.append_nil _⟩
     have : Subst (subst_of [(vP, P), (vQ, Q)]) vQ Q := ⟨List.append_nil _⟩
-    (Provable.ax_self axs (.tail _ <| .tail _ <| .tail _ <| .head _)).thm
-      (subst.ok.cons vP P.ty $ subst.ok.cons vQ Q.ty subst.ok.nil)
+    (Provable.ax_self axs (List.get_mem _ ⟨3, by decide⟩)).thm
+      (subst.ok.cons vP P.ty <| subst.ok.cons vQ Q.ty subst.ok.nil)
       DJ_nil HH_nil⟩
 
-instance wal {x P} [Typed "set" x] [Typed "wff" P] :
-    Typed "wff" (al x P) :=
+instance wal {x P} [Typed "set" x] [Typed "wff" P] : Typed "wff" (al x P) :=
   ⟨fun _Γ =>
     have : Subst (subst_of [(vx, x), (vP, P)]) vx x := ⟨List.append_nil _⟩
     have : Subst (subst_of [(vx, x), (vP, P)]) vP P := ⟨List.append_nil _⟩
-    (Provable.ax_self axs (.tail _ <| .tail _ <| .tail _ <| .tail _ <| .head _)).thm
-      (subst.ok.cons vx x.ty $ subst.ok.cons vP P.ty subst.ok.nil)
+    (Provable.ax_self axs (List.get_mem _ ⟨4, by decide⟩)).thm
+      (subst.ok.cons vx x.ty <| subst.ok.cons vP P.ty subst.ok.nil)
       DJ_nil HH_nil⟩
 
 theorem a1 {Γ t r s} [Typed "term" t] [Typed "term" r] [Typed "term" s] :
@@ -510,14 +506,13 @@ theorem a1 {Γ t r s} [Typed "term" t] [Typed "term" r] [Typed "term" s] :
   have : Subst (subst_of [(vt, t), (vr, r), (vs, s)]) vt t := ⟨List.append_nil _⟩
   have : Subst (subst_of [(vt, t), (vr, r), (vs, s)]) vr r := ⟨List.append_nil _⟩
   have : Subst (subst_of [(vt, t), (vr, r), (vs, s)]) vs s := ⟨List.append_nil _⟩
-  (Provable.ax_self axs (.tail _ <| .tail _ <| .tail _ <| .tail _ <| .tail _ <| .head _)).thm
-    (subst.ok.cons vt t.ty $ subst.ok.cons vr r.ty $ subst.ok.cons vs s.ty subst.ok.nil)
+  (Provable.ax_self axs (List.get_mem _ ⟨5, by decide⟩)).thm
+    (subst.ok.cons vt t.ty <| subst.ok.cons vr r.ty <| subst.ok.cons vs s.ty subst.ok.nil)
     DJ_nil HH_nil
 
-theorem a2 {Γ t} [Typed "term" t] :
-    Provable Γ ("|-", eq (pl t ze) t) :=
+theorem a2 {Γ t} [Typed "term" t] : Provable Γ ("|-", eq (pl t ze) t) :=
   have : Subst (subst_of [(vt, t)]) vt t := ⟨List.append_nil _⟩
-  (Provable.ax_self axs (.tail _ <| .tail _ <| .tail _ <| .tail _ <| .tail _ <| .tail _ <| .head _)).thm
+  (Provable.ax_self axs (List.get_mem _ ⟨6, by decide⟩)).thm
     (subst.ok.cons vt t.ty subst.ok.nil)
     DJ_nil HH_nil
 
@@ -527,17 +522,17 @@ theorem mp {Γ P Q} [Typed "wff" P] [Typed "wff" Q]
     Provable Γ ("|-", Q) :=
   have : Subst (subst_of [(vP, P), (vQ, Q)]) vP P := ⟨List.append_nil _⟩
   have : Subst (subst_of [(vP, P), (vQ, Q)]) vQ Q := ⟨List.append_nil _⟩
-  (Provable.ax_self axs (.tail _ <| .tail _ <| .tail _ <| .tail _ <| .tail _ <| .tail _ <| .tail _ <| .head _)).thm
-    (subst.ok.cons vP P.ty $ subst.ok.cons vQ Q.ty subst.ok.nil)
-    DJ_nil (HH_cons min $ HH_cons maj HH_nil)
+  (Provable.ax_self axs (List.get_mem _ ⟨7, by decide⟩)).thm
+    (subst.ok.cons vP P.ty <| subst.ok.cons vQ Q.ty subst.ok.nil)
+    DJ_nil (HH_cons min <| HH_cons maj HH_nil)
 
 theorem ax5 {Γ x P} [Typed "set" x] [Typed "wff" P]
     (xp : x.disjoint Γ.dj P) :
     Provable Γ ("|-", im P (al x P)) :=
   have : Subst (subst_of [(vx, x), (vP, P)]) vx x := ⟨List.append_nil _⟩
   have : Subst (subst_of [(vx, x), (vP, P)]) vP P := ⟨List.append_nil _⟩
-  (Provable.ax_self axs (.tail _ <| .tail _ <| .tail _ <| .tail _ <| .tail _ <| .tail _ <| .tail _ <| .tail _ <| .head _)).thm
-    (subst.ok.cons vx x.ty $ subst.ok.cons vP P.ty subst.ok.nil)
+  (Provable.ax_self axs (List.get_mem _ ⟨8, by decide⟩)).thm
+    (subst.ok.cons vx x.ty <| subst.ok.cons vP P.ty subst.ok.nil)
     (DJ_cons xp DJ_nil) HH_nil
 
 theorem th1 {Γ t} [Typed "term" t] :
