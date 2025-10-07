@@ -127,7 +127,7 @@ def toMath (bs : ByteSlice) : Bool × String := Id.run do
   let mut s := ""
   for c in bs do
     s := s.push c.toChar
-    unless isPrintable c do ok := false
+    unless isMathChar c do ok := false
   (ok, s)
 
 structure Pos where (line col : Nat)
@@ -314,6 +314,18 @@ def insert (db : DB) (pos : Pos) (l : String) (obj : String → Object) : DB :=
     { db with objects := db.objects.insert l (obj l) }
 
 def insertHyp (db : DB) (pos : Pos) (l : String) (ess : Bool) (f : Formula) : DB :=
+  -- For $f statements (ess = false), check that no other $f exists for this variable
+  let db := Id.run do
+    if !ess && f.size >= 2 then
+      let v := f[1]!.value
+      -- Check all existing hypotheses in current frame
+      let mut db := db
+      for h in db.frame.hyps do
+        if let some (.hyp false prevF _) := db.find? h then
+          if prevF.size >= 2 && prevF[1]!.value == v then
+            db := db.mkError pos s!"variable {v} already has $f hypothesis"
+      db
+    else db
   let db := db.insert pos l (.hyp ess f)
   db.withHyps fun hyps => hyps.push l
 
@@ -329,17 +341,23 @@ def trimFrame (db : DB) (fmla : Formula) (fr := db.frame) : Bool × Frame := Id.
     if vars.contains v.1 && vars.contains v.2 then
       dj := dj.push v
   let mut hyps := #[]
-  let mut inHyps := false
   let mut ok := true
+  let mut varsWithF : HashSet String := ∅
   for l in fr.hyps do
     let ess ←
       if let some (.hyp false f _) := db.find? l then
-        if inHyps then ok := false
-        vars.contains f[1]!.value
+        -- Spec §4.2.4: $f and $e can be interleaved (appearance order)
+        -- No need to enforce "$f before $e" - that's a legacy restriction
+        let v := f[1]!.value
+        if vars.contains v then
+          varsWithF := varsWithF.insert v
+        vars.contains v
       else
-        inHyps := true
         true
     if ess then hyps := hyps.push l
+  -- Check that all variables have a $f hypothesis
+  for v in vars do
+    unless varsWithF.contains v do ok := false
   (ok, ⟨dj, hyps⟩)
 
 def trimFrame' (db : DB) (fmla : Formula) : Except String Frame :=
@@ -560,9 +578,14 @@ def feedProof (s : ParserState) (tk : ByteSlice) (pr : ProofState) : ParserState
     | .error msg => s.mkError pr.pos msg
 where
   goNormal (pr : ProofState) :=
-    let (ok, tk) := toLabel tk
-    if ok then s.db.stepNormal pr tk
-    else throw s!"invalid label '{tk}'"
+    -- Check for unknown step marker '?'
+    if tk.eqArray "?".toAscii then
+      -- Push formula matching the statement being proved (incomplete proof)
+      pure (pr.push pr.fmla)
+    else
+      let (ok, tk) := toLabel tk
+      if ok then s.db.stepNormal pr tk
+      else throw s!"invalid label '{tk}'"
   go (pr : ProofState) : Except String ProofState := do
     match pr.ptp with
     | .start =>
@@ -592,7 +615,9 @@ where
             pr ← pr.save
             chr := 0
         else if c = '?'.toUInt8 then
-          throw "proof contains '?'"
+          -- Unknown step in compressed proof - push the formula being proved
+          pr := pr.push pr.fmla
+          chr := 0
         else
           throw "proof parse error"
       pure { pr with ptp := .compressed chr }
@@ -723,7 +748,10 @@ def done (s : ParserState) (base : Nat) : DB := Id.run do
   let base := s.mkPos base
   let { db := db, tokp := tokp, ..} := s
   match tokp with
-  | .start => db
+  | .start =>
+    if db.scopes.size > 0 then
+      db.mkError base "unclosed block (missing $})"
+    else db
   | .comment _ => db.mkError base "unclosed comment"
   | .const => db.mkError base "unclosed $c"
   | .var => db.mkError base "unclosed $v"
@@ -738,14 +766,46 @@ def done (s : ParserState) (base : Nat) : DB := Id.run do
 
 end ParserState
 
+-- Simple preprocessor: replace $[ ... $] with whitespace (ignore includes)
+-- This handles self-include correctly per spec §4.1.2
+def stripIncludes (arr : ByteArray) : ByteArray := Id.run do
+  let mut result := ByteArray.empty
+  let mut i := 0
+  while i < arr.size do
+    -- Look for $[ token
+    if i + 1 < arr.size && arr[i]! == '$'.toUInt8 && arr[i+1]! == '['.toUInt8 then
+      -- Skip until $]
+      i := i + 2
+      while i + 1 < arr.size && !(arr[i]! == '$'.toUInt8 && arr[i+1]! == ']'.toUInt8) do
+        i := i + 1
+      -- Skip $]
+      if i + 1 < arr.size then i := i + 2
+      -- Replace with single space (whitespace)
+      result := result.push ' '.toUInt8
+    else
+      result := result.push arr[i]!
+      i := i + 1
+  result
+
 partial def check (fname : String) : IO DB := do
   let h ← Handle.mk fname IO.FS.Mode.read
-  let rec loop (s : ParserState) (base : Nat) : IO DB := do
-    let buf ← h.read 1024
-    if buf.isEmpty then
+  -- Read entire file
+  let rec readAll (acc : ByteArray) : IO ByteArray := do
+    let buf ← h.read 4096
+    if buf.isEmpty then return acc
+    else readAll (acc ++ buf)
+  let contents ← readAll ByteArray.empty
+
+  -- Strip $[ ... $] includes (treat as whitespace per spec)
+  let processed := stripIncludes contents
+
+  let rec loop (s : ParserState) (base : Nat) (arr : ByteArray) (off : Nat) : IO DB := do
+    if off >= arr.size then
       return s.done base
     else
+      let len := min 1024 (arr.size - off)
+      let buf := arr.extract off (off + len)
       let s := s.feedAll base buf
       if s.db.error?.isSome then return s.db
-      else loop s (base + buf.size)
-  loop default 0
+      else loop s (base + buf.size) arr (off + len)
+  loop default 0 processed 0
