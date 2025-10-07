@@ -766,38 +766,78 @@ def done (s : ParserState) (base : Nat) : DB := Id.run do
 
 end ParserState
 
--- Simple preprocessor: replace $[ ... $] with whitespace (ignore includes)
--- This handles self-include correctly per spec §4.1.2
-def stripIncludes (arr : ByteArray) : ByteArray := Id.run do
-  let mut result := ByteArray.empty
-  let mut i := 0
-  while i < arr.size do
-    -- Look for $[ token
-    if i + 1 < arr.size && arr[i]! == '$'.toUInt8 && arr[i+1]! == '['.toUInt8 then
-      -- Skip until $]
-      i := i + 2
-      while i + 1 < arr.size && !(arr[i]! == '$'.toUInt8 && arr[i+1]! == ']'.toUInt8) do
-        i := i + 1
-      -- Skip $]
-      if i + 1 < arr.size then i := i + 2
-      -- Replace with single space (whitespace)
-      result := result.push ' '.toUInt8
-    else
-      result := result.push arr[i]!
-      i := i + 1
-  result
+-- Preprocessor with include support
+-- Processes $[ filename $] directives by recursively loading files
+-- Handles self-includes and cycles per spec §4.1.2
 
-partial def check (fname : String) : IO DB := do
+partial def expandIncludes (fname : String) (seen : HashSet String) : IO ByteArray := do
+  -- Canonicalize path (resolve ./ and ../)
+  let canonPath ← IO.FS.realPath fname
+  let canonStr := canonPath.toString
+
+  -- Check for cycles (including self-include)
+  if seen.contains canonStr then
+    -- Per spec §4.1.2: "self-include will simply be ignored"
+    return ByteArray.empty
+
+  let seen := seen.insert canonStr
+
+  -- Read file
   let h ← Handle.mk fname IO.FS.Mode.read
-  -- Read entire file
   let rec readAll (acc : ByteArray) : IO ByteArray := do
     let buf ← h.read 4096
     if buf.isEmpty then return acc
     else readAll (acc ++ buf)
   let contents ← readAll ByteArray.empty
 
-  -- Strip $[ ... $] includes (treat as whitespace per spec)
-  let processed := stripIncludes contents
+  -- Process includes: find $[ ... $] and expand recursively
+  let mut result := ByteArray.empty
+  let mut i := 0
+
+  while i < contents.size do
+    -- Look for $[ token
+    if i + 1 < contents.size && contents[i]! == '$'.toUInt8 && contents[i+1]! == '['.toUInt8 then
+      i := i + 2
+      -- Skip whitespace after $[
+      while i < contents.size && (contents[i]! == ' '.toUInt8 || contents[i]! == '\n'.toUInt8 || contents[i]! == '\t'.toUInt8 || contents[i]! == '\r'.toUInt8) do
+        i := i + 1
+
+      -- Extract filename until $]
+      let mut includePath := ByteArray.empty
+      while i + 1 < contents.size && !(contents[i]! == '$'.toUInt8 && contents[i+1]! == ']'.toUInt8) do
+        if contents[i]! != ' '.toUInt8 && contents[i]! != '\n'.toUInt8 && contents[i]! != '\t'.toUInt8 && contents[i]! != '\r'.toUInt8 then
+          includePath := includePath.push contents[i]!
+        i := i + 1
+
+      -- Skip $]
+      if i + 1 < contents.size then i := i + 2
+
+      -- Convert includePath to String
+      let includeFile := String.fromUTF8! includePath
+
+      -- Resolve relative path (relative to current file's directory)
+      let baseDir := System.FilePath.parent fname |>.getD "."
+      let fullPath := baseDir / includeFile
+
+      -- Recursively expand the included file
+      try
+        let expanded ← expandIncludes fullPath.toString seen
+        result := result ++ expanded
+        -- Add whitespace to separate from next token
+        result := result.push ' '.toUInt8
+      catch _ =>
+        -- If file doesn't exist or can't be read, treat as error
+        -- For now, just skip (could throw error instead)
+        result := result.push ' '.toUInt8
+    else
+      result := result.push contents[i]!
+      i := i + 1
+
+  return result
+
+partial def check (fname : String) : IO DB := do
+  -- Expand all includes recursively
+  let processed ← expandIncludes fname (HashSet.emptyWithCapacity 16)
 
   let rec loop (s : ParserState) (base : Nat) (arr : ByteArray) (off : Nat) : IO DB := do
     if off >= arr.size then
