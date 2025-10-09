@@ -1,8 +1,16 @@
+import Metamath.Spec
 import Metamath.Verify
+import Metamath.Kernel
 
 open Metamath.Verify in
-def main (n : List String) : IO UInt32 := do
-  let db ← check <| n.getD 0 "set.mm"
+def main (args : List String) : IO UInt32 := do
+  let (permissive, fname) := match args with
+  | "--permissive" :: fname :: _ => (true, fname)
+  | fname :: "--permissive" :: _ => (true, fname)
+  | fname :: _ => (false, fname)
+  | [] => (false, "set.mm")
+
+  let db ← check fname permissive
   match db.error? with
   | none =>
     IO.println s!"verified, {db.objects.size} objects"

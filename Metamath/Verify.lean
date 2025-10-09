@@ -263,6 +263,7 @@ structure DB where
   objects : HashMap String Object
   interrupt : Bool
   error? : Option Interrupt
+  permissive : Bool := false
   deriving Inhabited
 
 namespace DB
@@ -305,6 +306,14 @@ def isSym (db : DB) (tk : String) : Bool :=
   db.withFrame fun ⟨dj, hyps⟩ => ⟨dj, f hyps⟩
 
 def insert (db : DB) (pos : Pos) (l : String) (obj : String → Object) : DB :=
+  -- Spec Section 4.2.8: $c must be in outermost block only (strict mode)
+  let db := match obj l with
+  | .const _ =>
+    if !db.permissive && db.scopes.size > 0 then
+      db.mkError pos s!"$c must be in outermost block (spec Section 4.2.8)"
+    else db
+  | _ => db
+  if db.error then db else
   if let some o := db.find? l then
     let ok : Bool := match o with
     | .var _ => if let .var _ := obj l then true else false
@@ -769,8 +778,10 @@ end ParserState
 -- Preprocessor with include support
 -- Processes $[ filename $] directives by recursively loading files
 -- Handles self-includes and cycles per spec §4.1.2
+-- In strict mode: validates includes are at outermost scope and not inside statements
 
-partial def expandIncludes (fname : String) (seen : HashSet String) : IO ByteArray := do
+partial def expandIncludes (fname : String) (seen : HashSet String) (permissive : Bool := false) :
+    IO (Except String (ByteArray × HashSet String)) := do
   -- Canonicalize path (resolve ./ and ../)
   let canonPath ← IO.FS.realPath fname
   let canonStr := canonPath.toString
@@ -778,7 +789,7 @@ partial def expandIncludes (fname : String) (seen : HashSet String) : IO ByteArr
   -- Check for cycles (including self-include)
   if seen.contains canonStr then
     -- Per spec §4.1.2: "self-include will simply be ignored"
-    return ByteArray.empty
+    return .ok (ByteArray.empty, seen)
 
   let seen := seen.insert canonStr
 
@@ -792,11 +803,62 @@ partial def expandIncludes (fname : String) (seen : HashSet String) : IO ByteArr
 
   -- Process includes: find $[ ... $] and expand recursively
   let mut result := ByteArray.empty
+  let mut seen := seen  -- Make seen mutable to thread through
   let mut i := 0
+  let mut scopeDepth := 0  -- Track ${ $} nesting
+  let mut inStatement := false  -- Track if we're inside a statement (after label before $.)
+  let mut inComment := false  -- Track if we're inside a comment
 
   while i < contents.size do
-    -- Look for $[ token
+    -- Track comment state (comments take precedence over everything else)
+    if i + 1 < contents.size && contents[i]! == '$'.toUInt8 then
+      let c := contents[i+1]!.toChar
+      if c == '(' then
+        inComment := true
+        result := result.push contents[i]!
+        result := result.push contents[i+1]!
+        i := i + 2
+        continue
+      else if c == ')' then
+        inComment := false
+        result := result.push contents[i]!
+        result := result.push contents[i+1]!
+        i := i + 2
+        continue
+
+    -- Skip everything inside comments
+    if inComment then
+      result := result.push contents[i]!
+      i := i + 1
+      continue
+
+    -- Track scope depth for strict mode validation
+    if i + 1 < contents.size && contents[i]! == '$'.toUInt8 then
+      let c := contents[i+1]!.toChar
+      if c == '{' then
+        scopeDepth := scopeDepth + 1
+      else if c == '}' then
+        scopeDepth := max 0 (scopeDepth - 1)
+      else if c == '.' then
+        inStatement := false  -- Statement terminator
+
+    -- Track if we're entering a statement (simplified: after $f, $e, $a, $p)
+    if i + 1 < contents.size && contents[i]! == '$'.toUInt8 then
+      let c := contents[i+1]!.toChar
+      if c == 'f' || c == 'e' || c == 'a' || c == 'p' then
+        inStatement := true
+
+    -- Look for $[ token (only outside comments)
     if i + 1 < contents.size && contents[i]! == '$'.toUInt8 && contents[i+1]! == '['.toUInt8 then
+      -- Validate strict mode constraints (spec §4.1.2)
+      if !permissive then
+        -- Check: not in inner scope
+        if scopeDepth > 0 then
+          return .error s!"include in inner scope (strict mode requires outermost scope only, spec §4.1.2)"
+        -- Check: not inside a statement
+        if inStatement then
+          return .error s!"include inside statement (strict mode forbids token splicing, spec §4.1.2)"
+
       i := i + 2
       -- Skip whitespace after $[
       while i < contents.size && (contents[i]! == ' '.toUInt8 || contents[i]! == '\n'.toUInt8 || contents[i]! == '\t'.toUInt8 || contents[i]! == '\r'.toUInt8) do
@@ -804,16 +866,33 @@ partial def expandIncludes (fname : String) (seen : HashSet String) : IO ByteArr
 
       -- Extract filename until $]
       let mut includePath := ByteArray.empty
+      let startPos := i  -- Debug: save start position
       while i + 1 < contents.size && !(contents[i]! == '$'.toUInt8 && contents[i+1]! == ']'.toUInt8) do
-        if contents[i]! != ' '.toUInt8 && contents[i]! != '\n'.toUInt8 && contents[i]! != '\t'.toUInt8 && contents[i]! != '\r'.toUInt8 then
-          includePath := includePath.push contents[i]!
+        let c := contents[i]!
+        if c != ' '.toUInt8 && c != '\n'.toUInt8 && c != '\t'.toUInt8 && c != '\r'.toUInt8 then
+          includePath := includePath.push c
         i := i + 1
+      -- Debug: check what we extracted
+      if includePath.isEmpty && i > startPos then
+        return .error s!"extracted empty path from position {startPos} to {i} in {fname}"
 
       -- Skip $]
       if i + 1 < contents.size then i := i + 2
 
       -- Convert includePath to String
-      let includeFile := String.fromUTF8! includePath
+      let mut includeFile := String.fromUTF8! includePath
+
+      -- Debug: check extracted path before normalization
+      if includeFile.isEmpty then
+        return .error s!"extracted empty include path before normalization in {fname}"
+
+      -- Normalize "./" prefix (FilePath doesn't handle it well)
+      if includeFile.startsWith "./" then
+        includeFile := includeFile.drop 2
+
+      -- Check for empty path after normalization
+      if includeFile.isEmpty then
+        return .error s!"include path became empty after normalizing './' prefix (original was '{String.fromUTF8! includePath}') in {fname}"
 
       -- Resolve relative path (relative to current file's directory)
       let baseDir := System.FilePath.parent fname |>.getD "."
@@ -821,31 +900,38 @@ partial def expandIncludes (fname : String) (seen : HashSet String) : IO ByteArr
 
       -- Recursively expand the included file
       try
-        let expanded ← expandIncludes fullPath.toString seen
-        result := result ++ expanded
-        -- Add whitespace to separate from next token
-        result := result.push ' '.toUInt8
-      catch _ =>
-        -- If file doesn't exist or can't be read, treat as error
-        -- For now, just skip (could throw error instead)
-        result := result.push ' '.toUInt8
+        match ← expandIncludes fullPath.toString seen permissive with
+        | .ok (expanded, seen') =>
+          seen := seen'  -- Thread the updated seen set through
+          result := result ++ expanded
+          -- Add whitespace to separate from next token
+          result := result.push ' '.toUInt8
+        | .error e => return .error e
+      catch e =>
+        return .error s!"failed to read include file '{includeFile}' (resolved to '{fullPath}'): {e}"
     else
       result := result.push contents[i]!
       i := i + 1
 
-  return result
+  return .ok (result, seen)
 
-partial def check (fname : String) : IO DB := do
-  -- Expand all includes recursively
-  let processed ← expandIncludes fname (HashSet.emptyWithCapacity 16)
-
-  let rec loop (s : ParserState) (base : Nat) (arr : ByteArray) (off : Nat) : IO DB := do
-    if off >= arr.size then
-      return s.done base
-    else
-      let len := min 1024 (arr.size - off)
-      let buf := arr.extract off (off + len)
-      let s := s.feedAll base buf
-      if s.db.error?.isSome then return s.db
-      else loop s (base + buf.size) arr (off + len)
-  loop default 0 processed 0
+partial def check (fname : String) (permissive : Bool := false) : IO DB := do
+  -- Expand all includes recursively with permissive mode awareness
+  match ← expandIncludes fname (HashSet.emptyWithCapacity 16) permissive with
+  | .error msg =>
+    -- Return DB with error for include validation failures
+    let initialDB : DB := { (default : DB) with permissive := permissive }
+    return initialDB.mkError ⟨1, 1⟩ msg
+  | .ok (processed, _) =>
+    let rec loop (s : ParserState) (base : Nat) (arr : ByteArray) (off : Nat) : IO DB := do
+      if off >= arr.size then
+        return s.done base
+      else
+        let len := min 1024 (arr.size - off)
+        let buf := arr.extract off (off + len)
+        let s := s.feedAll base buf
+        if s.db.error?.isSome then return s.db
+        else loop s (base + buf.size) arr (off + len)
+    let initialDB : DB := { (default : DB) with permissive := permissive }
+    let initialState : ParserState := { (default : ParserState) with db := initialDB }
+    loop initialState 0 processed 0
