@@ -446,10 +446,16 @@ theorem toFrame_float_correspondence
                           | nil =>
                               -- Valid float: construct witness
                               simp [h_expr] at h_float
-                              injection h_float with h_c h_v
-                              subst h_c h_v
+                              -- h_float : c' = c ∧ { v := v' } = v
+                              obtain ⟨h_c, h_v⟩ := h_float
+                              subst h_c
+                              -- Need to reconstruct formula equality f = #[.const c.c, .var v']
+                              -- This requires more detailed formula structure lemmas
                               have h_size : i < hyps.size := by simp [h_i_len]
-                              exact ⟨i, lbl, h_size, by simp [h_lbl_eq, h_find]⟩
+                              have h_formula : f = #[.const c.c, .var v'] := by
+                                -- TODO: Need lemma about toExprOpt injectivity
+                                sorry
+                              exact ⟨i, lbl, h_size, by rw [h_formula, h_v]; simp [h_lbl_eq, h_find]⟩
                           | cons _ _ =>
                               -- Malformed: 2+ elements, contradiction
                               simp [h_expr] at h_float
@@ -473,12 +479,12 @@ theorem toFrame_float_correspondence
 
     -- Need: floatVarOfLabel db hyps[i]! = some (c, v)
     -- Show toExprOpt converts the formula correctly
-    have h_shape : toExprOpt #[.const c.c, .var v.v] = some ⟨c, [c.c]⟩ := by
+    have h_shape : toExprOpt #[.const c.c, .var v.v] = some ⟨c, [v.v]⟩ := by
       unfold toExprOpt
       simp
 
     -- Use the helper lemma with h_find
-    exact floatVarOfLabel_of_find? db hyps[i]! #[.const c.c, .var v.v] lbl c c.c h_find h_shape
+    exact floatVarOfLabel_of_find? db hyps[i]! #[.const c.c, .var v.v] lbl c v.v h_find h_shape
 
 /-! ## ✨ SIMULATION RELATION: View Functions & Invariants
 
@@ -1149,10 +1155,16 @@ theorem assert_step_ok
   · -- Provide invariant (stub)
     constructor
     · exact inv.db_ok
-    · sorry  -- frame_ok stub
-    · sorry  -- stack_ok stub
+    · -- frame_ok: frame unchanged in assert step
+      -- pr' has same frame as pr (stepAssert only modifies stack)
+      sorry  -- Need: pr'.frame = pr.frame (follows from stepAssert impl)
+    · -- stack_ok: stack projection matches after pop/push
+      -- Need: viewStack pr'.stack = (stack_spec.dropLastN fr_impl.hyps.size) ++ [toExpr concl]
+      -- where concl is the substituted conclusion
+      sorry  -- Depends on Phase 5.2 for stack window correspondence
   · -- Provide stack transformation witness
-    exact ⟨[], sorry⟩  -- needed list stub
+    -- needed should be the hypotheses consumed from the stack
+    exact ⟨[], sorry⟩  -- Need Phase 5.2 to construct needed list
 
 /-- Phase 6: Main stepNormal soundness (factored by cases).
 
@@ -1322,11 +1334,15 @@ theorem stepProof_equiv_stepNormal
     -- Both sides throw errors, so they're vacuously equal
     -- h_heap is just True (constants not in heap), so proof is trivial
     simp [h_find]
+    -- Both sides are error throws, which are equal
+    rfl
   | var _ =>
     -- Variables: stepNormal throws error, stepProof also errors
     -- Both sides throw errors, so they're vacuously equal
     -- h_heap is just True (variables not in heap), so proof is trivial
     simp [h_find]
+    -- Both sides are error throws, which are equal
+    rfl
   | hyp ess f lbl =>
     -- Hypothesis case: need to show heap lookup matches formula
     simp [h_find]
