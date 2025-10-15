@@ -8,19 +8,6 @@
 
 ## Current Documentation
 
-### Active Requests (For GPT-5)
-
-- **REQUEST_GPT5_CLEANUP_STRATEGY.md** - PRIMARY REQUEST
-  - Comprehensive strategy question for getting file to compile
-  - Covers compressed proof support architecture
-  - Proposes 4 cleanup strategies with detailed analysis
-  - **Status:** Ready to send
-
-- **REQUEST_GPT5_COMPILATION_FIXES.md** - Alternative request
-  - Focuses on specific compilation error fixes
-  - More tactical than strategic
-  - **Status:** Superseded by CLEANUP_STRATEGY request
-
 ### Session History
 
 **2025-10-15: BUILD SUCCESS** 🎉
