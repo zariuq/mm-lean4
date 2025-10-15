@@ -30,6 +30,16 @@ structure Constant where
   c : Sym
   deriving DecidableEq, Repr
 
+@[simp] theorem beq_const_true_iff {c₁ c₂ : Constant} :
+  (c₁ == c₂) = true ↔ c₁ = c₂ := by
+  constructor
+  · intro h
+    cases decide_eq_true_eq.mp h
+    rfl
+  · intro h
+    subst h
+    exact decide_eq_true_eq.mpr rfl
+
 structure Variable where
   v : Sym
   deriving DecidableEq, Repr

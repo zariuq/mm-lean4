@@ -1,6 +1,9 @@
 import Metamath.Spec
 import Metamath.Verify
-import Metamath.Kernel
+import Metamath.KernelExtras
+import Metamath.KernelClean  -- Phase 1: Minimal axiomatic skeleton (bottom-up strategy)
+-- import Metamath.KernelSkeleton  -- Archived (parse errors)
+-- import Metamath.Kernel  -- Archived (185 errors)
 
 open Metamath.Verify in
 def main (args : List String) : IO UInt32 := do
