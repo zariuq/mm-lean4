@@ -115,6 +115,13 @@ def dvOK (vars : List Variable) (dv : List (Variable × Variable)) (σ : Subst) 
     let ws := varsInExpr vars (σ w)
     ∀ x, x ∈ vs → x ∉ ws
 
+/-- A substitution `σ` is the identity on a set of variables `vs` if
+    for every `v ∈ vs`, we have `σ v = ⟨(σ v).typecode, [v.v]⟩`.
+
+This is used for composition lemmas in KernelExtras. -/
+def Subst.IdOn (σ : Subst) (vs : List Variable) : Prop :=
+  ∀ v ∈ vs, σ v = ⟨(σ v).typecode, [v.v]⟩
+
 /-! ## Substitution Application
 
 Applying a substitution to an expression:
