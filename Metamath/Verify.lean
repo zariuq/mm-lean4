@@ -1,6 +1,41 @@
 import Std.Data.HashMap
 import Std.Data.HashSet
 
+/-! ## Array Bridging Lemmas
+
+These lemmas bridge between dependent indexing `arr[i]'h` and panic-safe indexing `arr[i]!`.
+They are needed for equation lemmas that compare unfolded definitions (which use dependent
+indexing internally) with user-facing specifications (which use `!` notation).
+-/
+
+namespace Array
+
+/-- Total index equals partial index when in-bounds (Nat version). -/
+@[simp] theorem getBang_eq_get_nat (a : Array α) (i : Nat) (h : i < a.size) [Inhabited α] :
+  a[i]! = a[i]'h := by
+  simp only [getElem!_pos, h]
+
+/-- (A) Length bridge: arrays and their lists have the same length. -/
+@[simp] theorem toList_length (a : Array α) : a.toList.length = a.size := by
+  rfl
+
+/-- (B) Characterize `get? = some` without `Inhabited`: unfold `get?`. -/
+@[simp] theorem get?_eq_some_iff {a : Array α} {i : Nat} {x : α} :
+    a[i]? = some x ↔ ∃ h : i < a.size, a[i]'h = x := by
+  simp only [getElem?_def]
+  by_cases h : i < a.size
+  · -- in-bounds branch
+    simp [h]
+  · -- out-of-bounds branch
+    simp [h]
+
+/-- (C) Bridge `Array.get!` to `List.get!` under a bound. -/
+@[simp] theorem get!_toList' {α} [Inhabited α]
+    (a : Array α) (i : Nat) (h : i < a.size) :
+    a[i]! = a.toList[i]! := by
+  simp [getElem!_def, getElem_toList, h]
+
+end Array
 
 def UInt8.toChar (n : UInt8) : Char := ⟨n.toUInt32, by
   have := n.toFin.2
@@ -416,6 +451,81 @@ def checkHyp (i : Nat) (subst : HashMap String Formula) :
       else throw s!"bad typecode in substitution {hyps[i]}: {f} / {val}"
     else unreachable!
   else pure subst
+
+/-- Equation lemma: base case when `i ≥ hyps.size`. -/
+@[simp] theorem checkHyp_base
+  (db : DB) (hyps : Array String) (stack : Array Formula)
+  (off : {off : Nat // off + hyps.size = stack.size})
+  (i : Nat) (σ : Std.HashMap String Formula)
+  (h : ¬ i < hyps.size) :
+  checkHyp db hyps stack off i σ = .ok σ := by
+  unfold checkHyp
+  simp [h]
+  rfl
+
+/-- Equation lemma when lookup at `hyps[i]` finds an **essential** hypothesis. -/
+@[simp] theorem checkHyp_step_hyp_true
+  (db : DB) (hyps : Array String) (stack : Array Formula)
+  (off : {off : Nat // off + hyps.size = stack.size})
+  (i : Nat) (σ : Std.HashMap String Formula)
+  (f : Formula) (lbl : String)
+  (h_i : i < hyps.size)
+  (h_find : db.find? hyps[i] = some (.hyp true f lbl)) :
+  checkHyp db hyps stack off i σ
+    =
+  if f[0]! == stack[off.1 + i]![0]! then
+    match f.subst σ with
+    | .ok s =>
+        if s == stack[off.1 + i]! then
+          checkHyp db hyps stack off (i+1) σ
+        else
+          .error "type error in substitution"
+    | .error e => .error e
+  else
+    .error (s!"bad typecode in substitution {hyps[i]}: {f} / {stack[off.1 + i]!}") := by
+  -- Use rw to unfold only the LHS
+  rw [checkHyp]
+  simp [h_i, h_find]
+  have h_idx : off.1 + i < stack.size := by
+    have : off.1 + i < off.1 + hyps.size := Nat.add_lt_add_left h_i _
+    simpa [off.2] using this
+  simp [Array.getBang_eq_get_nat, h_idx, bind, Except.bind]
+  -- After all simplifications, LHS and RHS are structurally identical
+  -- Just need to handle the nested if-then-else and match cases
+  split
+  · -- Case: typecode check passes
+    split
+    · -- Case: subst returns error
+      rename_i err heq
+      simp [heq]
+    · -- Case: subst returns ok
+      rename_i val heq
+      simp [heq]
+      split <;> rfl
+  · -- Case: typecode check fails
+    rfl
+
+/-- Equation lemma when lookup at `hyps[i]` finds a **float** hypothesis. -/
+@[simp] theorem checkHyp_step_hyp_false
+  (db : DB) (hyps : Array String) (stack : Array Formula)
+  (off : {off : Nat // off + hyps.size = stack.size})
+  (i : Nat) (σ : Std.HashMap String Formula)
+  (f : Formula) (lbl : String)
+  (h_i : i < hyps.size)
+  (h_find : db.find? hyps[i] = some (.hyp false f lbl)) :
+  checkHyp db hyps stack off i σ
+    =
+  if f[0]! == stack[off.1 + i]![0]!
+    then checkHyp db hyps stack off (i+1) (σ.insert f[1]!.value (stack[off.1 + i]!))
+    else .error (s!"bad typecode in substitution {hyps[i]}: {f} / {stack[off.1 + i]!}") := by
+  rw [checkHyp]  -- KEY: Use rw not unfold to avoid expanding RHS recursive calls
+  simp [h_i, h_find]
+  have h_idx : off.1 + i < stack.size := by
+    have : off.1 + i < off.1 + hyps.size := Nat.add_lt_add_left h_i _
+    simpa [off.2] using this
+  simp [Array.getBang_eq_get_nat, h_idx]
+  -- Float case: simpler than essential case, no do-notation to reduce
+  split <;> rfl
 
 def stepAssert (db : DB) (pr : ProofState) (f : Formula) : Frame → Except String ProofState
   | ⟨dj, hyps⟩ => do

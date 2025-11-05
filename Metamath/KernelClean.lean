@@ -1358,56 +1358,95 @@ theorem assert_step_ok
   simp [h_find] at h_step
   -- h_step : db.stepAssert pr f_impl fr_impl = Except.ok pr'
 
-  -- TODO: Full proof requires Phase 5.2 and 5.3
-  -- Here's the proof architecture:
+  -- Get checkHyp success from stepAssert
+  unfold Verify.DB.stepAssert at h_step
+  cases h_hyp_size : (fr_impl.hyps.size ≤ pr.stack.size) with
+  | false =>
+    simp [h_hyp_size] at h_step
+  | true =>
+    simp [h_hyp_size] at h_step
 
-  -- Step 1: Extract TypedSubst witness from checkHyp (Phase 5.1)
-  -- unfold Verify.DB.stepAssert at h_step
-  -- Extract checkHyp success from stepAssert execution
-  -- Use checkHyp_produces_TypedSubst to get σ_typed
+    -- Calculate offset
+    let off := pr.stack.size - fr_impl.hyps.size
+    have h_off : off + fr_impl.hyps.size = pr.stack.size := Nat.sub_add_cancel h_hyp_size
 
-  -- Step 2: Show "needed" list correspondence (Phase 5.2 - checkHyp_hyp_matches)
-  -- The stack window [off, off+hyps.size) matches hypotheses after substitution
-  -- This constructs the "needed" list for ProofValid.useAxiom
+    -- Extract checkHyp result from the do-block
+    cases h_chk : Verify.DB.checkHyp db fr_impl.hyps pr.stack ⟨off, h_off⟩ 0 ∅ with
+    | error e => simp [h_chk] at h_step
+    | ok σ_impl =>
+      simp [h_chk] at h_step
 
-  -- Step 3: Show DV check soundness (Phase 5.3 - dv_check_sound)
-  -- The impl DV loop corresponds to Spec.dvOK check
+      -- Get well-formedness conditions from checkHyp success
+      have assert_hyps_wf : HypsWellFormed db fr_impl.hyps :=
+        checkHyp_success_implies_HypsWellFormed db fr_impl.hyps pr.stack ⟨off, h_off⟩ σ_impl h_chk
 
-  -- Step 4: Show substitution correspondence
-  -- toExpr (f_impl.subst σ_impl) = Spec.applySubst vars σ_typed.σ e_assert
-  -- This needs axiom about Formula.subst vs Spec.applySubst correspondence
+      have assert_floats_wf : FloatsWellStructured db fr_impl.hyps pr.stack ⟨off, h_off⟩ :=
+        checkHyp_success_implies_FloatsWellStructured db fr_impl.hyps pr.stack ⟨off, h_off⟩ σ_impl h_chk
 
-  -- Step 5: Reconstruct invariant
-  -- pr' = {pr with stack := (pr.stack.shrink off).push concl}
-  -- Need to show: viewStack pr'.stack = (stack_spec.dropLastN n) ++ [e_conclusion]
+      -- Extract TypedSubst witness using Phase 5 infrastructure
+      have ⟨σ_typed, h_typed⟩ : ∃ (σ_typed : Bridge.TypedSubst fr_assert),
+        toSubstTyped fr_assert σ_impl = some σ_typed := by
+        -- Get allM success from checkHyp success
+        have h_allM : (Bridge.floats fr_assert).allM (fun (c, v) => checkFloat σ_impl c v) = some true := by
+          -- Frame with empty DVs for checkHyp_validates_floats
+          have h_fr_hypsOnly : toFrame db { dj := #[], hyps := fr_impl.hyps } = some ⟨fr_assert.mand, []⟩ := by
+            unfold toFrame at h_fr_assert ⊢
+            simp at h_fr_assert ⊢
+            cases h_map : fr_impl.hyps.toList.mapM (convertHyp db) with
+            | none =>
+                simp [h_map] at h_fr_assert
+            | some hs =>
+                simp [h_map] at h_fr_assert ⊢
+                cases fr_assert with | mk mand dv =>
+                simp at h_fr_assert
+                have : hs = mand ∧ fr_impl.dj.toList.map convertDV = dv := h_fr_assert
+                simp [this.1]
+          -- Now get allM success using the hyps-only frame
+          have h_allM_hyps := checkHyp_validates_floats db fr_impl.hyps pr.stack ⟨off, h_off⟩
+            assert_hyps_wf assert_floats_wf σ_impl ⟨fr_assert.mand, []⟩ h_chk h_fr_hypsOnly
+          -- Bridge.floats only depends on .mand, not .dv
+          have h_floats_eq : Bridge.floats ⟨fr_assert.mand, []⟩ = Bridge.floats fr_assert := by
+            unfold Bridge.floats
+            rfl
+          rw [← h_floats_eq]
+          exact h_allM_hyps
+        -- Apply toSubstTyped_of_allM_true to get TypedSubst witness
+        exact toSubstTyped_of_allM_true fr_assert σ_impl h_allM
 
-  -- Minimal stub: provide witnesses to satisfy existential
-  -- This unblocks the build while architectural work continues
-  refine ⟨stack_spec, e_assert, ?_, ?_⟩
-  · -- Provide invariant (stub)
-    constructor
-    · exact inv.db_ok
-    · -- frame_ok: frame unchanged in assert step
-      -- From Verify.lean:436, stepAssert returns { pr with stack := (pr.stack.shrink off).push concl }
-      -- which preserves the frame field (record update only changes stack)
-      -- **Proof strategy**: Track through do-notation: checkHyp >>= DV loop >>= subst >>= pure
-      -- When h_step shows success, all intermediate steps succeeded and reached final `pure`
-      -- From Except.ok injectivity: pr' = { pr with stack := ... }, so pr'.frame = pr.frame by rfl
-      sorry  -- TODO: case-split on monadic operations to reach pure statement
-    · -- stack_ok: stack projection matches after pop/push
-      -- Need: viewStack pr'.stack = (stack_spec.dropLastN fr_impl.hyps.size) ++ [toExpr concl]
-      -- where concl is the substituted conclusion
-      sorry  -- Depends on Phase 5.2 for stack window correspondence
-  · -- Provide stack transformation witness
-    -- needed should be the hypotheses consumed from the stack
-    exact ⟨[], sorry⟩  -- Need Phase 5.2 to construct needed list
+      -- The conclusion that gets pushed is the INSTANTIATED assertion
+      let e_conclusion := Spec.applySubst fr_assert.vars σ_typed.σ e_assert
 
-/-- Phase 6: Main stepNormal soundness (factored by cases).
+      -- Build h_match condition for subst_correspondence
+      have h_match : ∀ v_var ∈ fr_assert.vars, ∃ f_v, σ_impl[v_var.v]? = some f_v ∧ toExpr f_v = σ_typed.σ v_var := by
+        intro v_var h_v_in
+        unfold Spec.Frame.vars at h_v_in
+        simp [List.mem_filterMap] at h_v_in
+        obtain ⟨h_hyp, h_mem_hyp, h_match'⟩ := h_v_in
+        cases h_hyp with
+        | essential e => simp at h_match'
+        | floating c_type v_in_hyp =>
+            simp at h_match'
+            have h_eq_var : v_in_hyp = v_var := h_match'
+            have h_mem_floats : (c_type, v_in_hyp) ∈ Bridge.floats fr_assert :=
+              Bridge.floats_complete fr_assert c_type v_in_hyp h_mem_hyp
+            unfold toSubstTyped at h_typed
+            simp only at h_typed
+            split at h_typed
+            · rename_i h_allM_success
+              have h_point : checkFloat σ_impl c_type v_in_hyp = some true :=
+                (List.allM_true_iff_forall _ _ |>.mp) h_allM_success (c_type, v_in_hyp) h_mem_floats
+              obtain ⟨f_v, hf, h_size, htc⟩ := checkFloat_success σ_impl c_type v_in_hyp h_point
+              refine ⟨f_v, ?_, ?_⟩
+              · rw [← h_eq_var]
+                exact hf
+              · rw [← h_eq_var]
+                cases h_typed
+                simp only [hf]
+            · cases h_typed
 
-When a proof step succeeds, it corresponds to a valid ProofStep in the spec.
-This theorem dispatches to the three cases above.
--/
-theorem stepNormal_sound
+      -- Continue with DV checks, substitution, and stack reconstruction
+      -- For now, provide stub witnesses
+      sorry
   (db : Verify.DB) (pr pr' : Verify.ProofState) (label : String)
   (Γ : Spec.Database) (fr : Spec.Frame) :
   toDatabase db = some Γ →
