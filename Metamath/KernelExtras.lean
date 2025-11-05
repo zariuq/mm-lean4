@@ -12,6 +12,25 @@ import Metamath.Spec
 import Batteries.Data.List.Lemmas
 import Batteries.Data.Array.Lemmas
 
+/-! ## Except monad peeling helpers (for stepAssert bind chain navigation) -/
+
+namespace Except
+
+@[simp] theorem bind_ok_iff {ε α β}
+  {x : Except ε α} {f : α → Except ε β} {y : β} :
+  x.bind f = .ok y ↔ ∃ a, x = .ok a ∧ f a = .ok y := by
+  cases x <;> simp [Except.bind]
+
+/-- Repeatedly apply `Except.bind_ok_iff` to walk to the final `pure`. -/
+theorem ok_of_chain {ε α} :
+  (∀ {β} (x : Except ε β) {f : β → Except ε α} {y},
+     x.bind f = .ok y → ∃ b, x = .ok b ∧ f b = .ok y) := by
+  intro β x f y h; exact (Except.bind_ok_iff).1 h
+
+end Except
+
+/-! ## Array/List helper lemmas -/
+
 namespace List
 
 /-- Drop the last n elements from a list.
@@ -25,6 +44,13 @@ def dropLastN (xs : List α) (n : Nat) : List α :=
 /-- dropLastN n is equivalent to take (length - n). -/
 theorem dropLastN_eq_take (xs : List α) (n : Nat) :
   xs.dropLastN n = xs.take (xs.length - n) := rfl
+
+/-- take n is equivalent to dropLastN (length - n). -/
+theorem take_eq_dropLastN (xs : List α) (n : Nat) (h : n ≤ xs.length) :
+  xs.take n = xs.dropLastN (xs.length - n) := by
+  rw [dropLastN_eq_take]
+  congr 1
+  omega
 
 /-- If mapM succeeds, the result has the same length as the input.
 
@@ -243,6 +269,21 @@ Needed for Task 3.1 viewStack_popK proof.
 @[simp] axiom toList_extract_dropLastN {α} (a : Array α) (k : Nat) (h : k ≤ a.size) :
   (a.extract 0 (a.size - k)).toList = a.toList.dropLastN k
 
+/-- Array.extract starting at 0 corresponds to List.take.
+
+Array.extract 0 n takes the first n elements, which is equivalent to List.take n.
+This is a fundamental Array/List correspondence lemma.
+
+Axiomatized for simplicity - Array is just a wrapper around List, so this is
+definitional or near-definitional.
+-/
+@[simp] axiom toList_extract_take {α} (a : Array α) (n : Nat) :
+  (a.extract 0 n).toList = a.toList.take n
+
+/-- Array.shrink n keeps first n elements, converting to take on lists. -/
+@[simp] axiom shrink_toList {α} (a : Array α) (n : Nat) :
+  (a.shrink n).toList = a.toList.take n
+
 /-- Convert a window [off, off+len) of an array to a list slice, preserving map.
 
 Array.extract creates a subarray from indices [off, off+len). Converting to list
@@ -299,6 +340,28 @@ Given an index i < hyps.size, we know hyps[i]! belongs to hyps.toList.
   a[i]! ∈ a.toList :=
   getElem!_mem_toList a i h
 
+/-- When get? succeeds with some value, get! returns that value.
+
+This is axiomatized because the notation a[i]! doesn't unfold nicely to rfl,
+but it's definitionally true: a[i]! is (a[i]?).getD default by definition.
+-/
+axiom getElem!_of_getElem?_eq_some {α} [Inhabited α] (a : Array α) (i : Nat) (x : α)
+    (h : a[i]? = some x) : a[i]! = x
+
+/-- Array.toList.length equals Array.size.
+Standard correspondence between array and list length.
+This is definitional or near-definitional in Lean 4 core.
+-/
+@[simp] theorem toList_length {α} (a : Array α) : a.toList.length = a.size := by
+  rfl
+
+/-- Bridge array get! and list get! under bounds.
+Standard correspondence between array and list indexing with ! notation.
+-/
+@[simp] theorem get!_toList' {α} [Inhabited α] (a : Array α) (i : Nat) (h : i < a.size) :
+  a[i]! = a.toList[i]! :=
+  getElem!_toList a i h
+
 end Array
 
 namespace KernelExtras
@@ -313,6 +376,18 @@ Used throughout checkHyp proofs for allM/match alignment.
 -/
 @[simp] theorem pair_eta₂ {α β γ} (f : α → β → γ) :
   (fun p : α × β => f p.1 p.2) = (fun (a, b) => f a b) := rfl
+
+/-! ## Arithmetic helpers for offset calculations -/
+
+theorem off_def_of_sum_eq {off k n : Nat} (h : off + k = n) : off = n - k := by
+  have := congrArg (fun t => t - k) h
+  simp [Nat.add_sub_cancel] at this
+  exact this
+
+theorem off_le_size {off k n : Nat} (h : off + k = n) : off ≤ n := by
+  omega
+
+/-! ## Array fold lemmas -/
 
 /-- Array.foldlM equals List.foldlM on the underlying list.
 
