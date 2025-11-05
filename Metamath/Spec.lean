@@ -236,6 +236,37 @@ inductive ProofValidSeq (Γ : Database) : Frame → List Expr → Frame → List
 axiom ProofValidSeq.toProvable {Γ : Database} {fr : Frame} {stk : List Expr} {e : Expr} :
   ProofValidSeq Γ fr stk fr [e] → Provable Γ fr e
 
+/-- Turn a completed `ProofValid` derivation into a left-to-right `ProofValidSeq`
+    starting from the empty stack and same frame.
+
+    This bridges between the two proof representations:
+    - ProofValid: single-step extension rules (useFloating, useEssential, useAxiom)
+    - ProofValidSeq: sequential composition of ProofValid derivations
+
+    We can build a ProofValid inductively by extending with single steps,
+    then convert to ProofValidSeq at the end to apply toProvable.
+    This avoids threading ProofValidSeq through array folds. -/
+theorem ProofValid.toSeq_from_nil
+  {Γ : Database} {fr : Frame} {stk : List Expr} {steps : List ProofStep}
+  (h : ProofValid Γ fr stk steps) :
+  ProofValidSeq Γ fr [] fr stk := by
+  induction h with
+  | nil =>
+      -- base: ProofValid Γ fr [] [] → ProofValidSeq Γ fr [] fr []
+      exact ProofValidSeq.nil fr []
+  | useFloating hmem ih =>
+      -- h : ProofValid Γ fr (Expr.mk c [Sym.var v] :: stk) steps
+      -- ih : ProofValidSeq Γ fr [] fr stk
+      -- goal: ProofValidSeq Γ fr [] fr (Expr.mk c [Sym.var v] :: stk)
+      -- Use cons to extend the sequence
+      sorry
+  | useEssential hmem ih =>
+      -- Similar to useFloating
+      sorry
+  | useAxiom hmatch ih =>
+      -- Similar pattern
+      sorry
+
 /-! ## Soundness Statement
 
 The key theorem to prove: if our verifier accepts a proof, then the
