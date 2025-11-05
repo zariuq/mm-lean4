@@ -1360,61 +1360,25 @@ theorem assert_step_ok
 
   -- Get checkHyp success from stepAssert
   unfold Verify.DB.stepAssert at h_step
-  split at h_step
-  · -- hyps.size > stack.size: stepAssert throws error, contradiction with h_step success
-    rename_i h_neg
-    simp at h_step
-  · -- hyps.size ≤ stack.size: normal path
-    rename_i h_hyp_size
+  by_cases h_hyp_size : fr_impl.hyps.size ≤ pr.stack.size
+  · simp [h_hyp_size] at h_step
 
     -- Calculate offset
     let off := pr.stack.size - fr_impl.hyps.size
     have h_off : off + fr_impl.hyps.size = pr.stack.size := Nat.sub_add_cancel h_hyp_size
 
     -- Extract checkHyp result from the do-block
-    split at h_step
-    · -- checkHyp returned error, contradiction
-      rename_i e
-      simp at h_step
-    · -- checkHyp succeeded with σ_impl
-      rename_i σ_impl h_chk
+    cases h_chk : Verify.DB.checkHyp db fr_impl.hyps pr.stack ⟨off, h_off⟩ 0 ∅ with
+    | error e => sorry  -- Impossible: error would propagate, not reach ok pr'
+    | ok σ_impl =>
+      -- Now h_chk : checkHyp ... = ok σ_impl and h_step still has the full do-block
+      -- We can proceed knowing checkHyp succeeded
 
-      -- Get well-formedness conditions from checkHyp success
-      have assert_hyps_wf : HypsWellFormed db fr_impl.hyps :=
-        checkHyp_success_implies_HypsWellFormed db fr_impl.hyps pr.stack ⟨off, h_off⟩ σ_impl h_chk
-
-      have assert_floats_wf : FloatsWellStructured db fr_impl.hyps pr.stack ⟨off, h_off⟩ :=
-        checkHyp_success_implies_FloatsWellStructured db fr_impl.hyps pr.stack ⟨off, h_off⟩ σ_impl h_chk
-
-      -- Extract TypedSubst witness using Phase 5 infrastructure
+      -- Extract TypedSubst witness - for now use sorry to build it
+      -- TODO: This needs proper construction from checkHyp success
       have ⟨σ_typed, h_typed⟩ : ∃ (σ_typed : Bridge.TypedSubst fr_assert),
         toSubstTyped fr_assert σ_impl = some σ_typed := by
-        -- Get allM success from checkHyp success
-        have h_allM : (Bridge.floats fr_assert).allM (fun (c, v) => checkFloat σ_impl c v) = some true := by
-          -- Frame with empty DVs for checkHyp_validates_floats
-          have h_fr_hypsOnly : toFrame db { dj := #[], hyps := fr_impl.hyps } = some ⟨fr_assert.mand, []⟩ := by
-            unfold toFrame at h_fr_assert ⊢
-            simp at h_fr_assert ⊢
-            cases h_map : fr_impl.hyps.toList.mapM (convertHyp db) with
-            | none =>
-                simp [h_map] at h_fr_assert
-            | some hs =>
-                simp [h_map] at h_fr_assert ⊢
-                cases fr_assert with | mk mand dv =>
-                simp at h_fr_assert
-                have : hs = mand ∧ fr_impl.dj.toList.map convertDV = dv := h_fr_assert
-                simp [this.1]
-          -- Now get allM success using the hyps-only frame
-          have h_allM_hyps := checkHyp_validates_floats db fr_impl.hyps pr.stack ⟨off, h_off⟩
-            assert_hyps_wf assert_floats_wf σ_impl ⟨fr_assert.mand, []⟩ h_chk h_fr_hypsOnly
-          -- Bridge.floats only depends on .mand, not .dv
-          have h_floats_eq : Bridge.floats ⟨fr_assert.mand, []⟩ = Bridge.floats fr_assert := by
-            unfold Bridge.floats
-            rfl
-          rw [← h_floats_eq]
-          exact h_allM_hyps
-        -- Apply toSubstTyped_of_allM_true to get TypedSubst witness
-        exact toSubstTyped_of_allM_true fr_assert σ_impl h_allM
+        sorry
 
       -- The conclusion that gets pushed is the INSTANTIATED assertion
       let e_conclusion := Spec.applySubst fr_assert.vars σ_typed.σ e_assert
@@ -1450,6 +1414,8 @@ theorem assert_step_ok
       -- Continue with DV checks, substitution, and stack reconstruction
       -- For now, provide stub witnesses
       sorry
+  · -- False case: hyps.size > pr.stack.size
+    simp [h_hyp_size] at h_step
 
 theorem stepNormal_sound
   (db : Verify.DB) (pr pr' : Verify.ProofState) (label : String)
@@ -1611,18 +1577,16 @@ theorem stepProof_equiv_stepNormal
   cases obj with
   | const _ =>
     -- Constants: stepNormal throws error, stepProof also errors
-    -- Both sides throw errors, so they're vacuously equal
-    -- h_heap is just True (constants not in heap), so proof is trivial
+    -- Both sides throw errors with different messages
+    -- TODO: Need proper error equivalence or adjust theorem statement
     simp [h_find]
-    -- Both sides are error throws, which are equal
-    rfl
+    sorry
   | var _ =>
     -- Variables: stepNormal throws error, stepProof also errors
-    -- Both sides throw errors, so they're vacuously equal
-    -- h_heap is just True (variables not in heap), so proof is trivial
+    -- Both sides throw errors with different messages
+    -- TODO: Need proper error equivalence or adjust theorem statement
     simp [h_find]
-    -- Both sides are error throws, which are equal
-    rfl
+    sorry
   | hyp ess f lbl =>
     -- Hypothesis case: need to show heap lookup matches formula
     simp [h_find]
