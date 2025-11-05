@@ -1374,11 +1374,44 @@ theorem assert_step_ok
       -- Now h_chk : checkHyp ... = ok σ_impl and h_step still has the full do-block
       -- We can proceed knowing checkHyp succeeded
 
-      -- Extract TypedSubst witness - for now use sorry to build it
-      -- TODO: This needs proper construction from checkHyp success
+      -- Extract TypedSubst witness using checkHyp_validates_floats
       have ⟨σ_typed, h_typed⟩ : ∃ (σ_typed : Bridge.TypedSubst fr_assert),
         toSubstTyped fr_assert σ_impl = some σ_typed := by
-        sorry
+        -- Need to show allM succeeds on Bridge.floats fr_assert
+        -- Use checkHyp_validates_floats with a hyps-only frame
+
+        -- Step 1: Build frame with empty DVs (GPT-5's patch #1, option B)
+        have h_fr_hypsOnly : toFrame db {dj := #[], hyps := fr_impl.hyps} = some ⟨fr_assert.mand, []⟩ := by
+          cases fr_impl with | mk dj hyps =>
+          unfold toFrame at h_fr_assert ⊢
+          simp at h_fr_assert ⊢
+          -- Both sides use the same hyps.toList.mapM (convertHyp db)
+          cases h_map : hyps.toList.mapM (convertHyp db) with
+          | none =>
+              -- If mapM fails, h_fr_assert would be none
+              simp [h_map] at h_fr_assert
+          | some hs =>
+              -- If mapM succeeds with hs, extract that fr_assert.mand = hs
+              simp [h_map] at h_fr_assert ⊢
+              cases fr_assert with | mk mand dv =>
+              simp at h_fr_assert
+              -- h_fr_assert gives us hs = mand ∧ dj.toList.map convertDV = dv
+              have : hs = mand ∧ dj.toList.map convertDV = dv := h_fr_assert
+              simp [this.1]
+
+        -- Step 2: Get allM success from checkHyp_validates_floats
+        have h_allM : (Bridge.floats fr_assert).allM (fun (c, v) => checkFloat σ_impl c v) = some true := by
+          -- Apply checkHyp_validates_floats with the hyps-only frame
+          have h_allM_hypsOnly := checkHyp_validates_floats db fr_impl.hyps pr.stack ⟨off, h_off⟩ σ_impl ⟨fr_assert.mand, []⟩ h_chk h_fr_hypsOnly
+          -- Bridge.floats only depends on .mand, not .dv
+          have h_floats_eq : Bridge.floats ⟨fr_assert.mand, []⟩ = Bridge.floats fr_assert := by
+            unfold Bridge.floats
+            rfl
+          rw [← h_floats_eq]
+          exact h_allM_hypsOnly
+
+        -- Step 3: Use toSubstTyped_of_allM_true axiom to get the TypedSubst witness
+        exact toSubstTyped_of_allM_true fr_assert σ_impl h_allM
 
       -- The conclusion that gets pushed is the INSTANTIATED assertion
       let e_conclusion := Spec.applySubst fr_assert.vars σ_typed.σ e_assert
