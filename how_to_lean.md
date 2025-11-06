@@ -3062,3 +3062,111 @@ The fix: Apply equation lemmas BEFORE the hypothesis gets transformed by unfold/
 - Example from Metamath transport lemma: Eliminated pattern mismatch errors by preserving original hypothesis form
 - Pattern: Case analysis → equation lemma rewrite → guard splitting
 
+
+---
+
+## How to Prove Array Lemmas via List Correspondence
+
+**Pattern discovered**: 2025-11-06 while proving `Array.head_push_stable`
+
+### The Problem
+
+Array operations use `[i]!` notation (getElem!), but core Lean lemmas like `Array.getElem_push_lt` use `[i]'proof` notation (getElem with explicit bounds proof). How do we bridge between them?
+
+### The Solution: Use List Correspondence
+
+**Key insight**: Convert array indexing to list indexing using `Array.getElem!_toList`, then leverage list properties.
+
+### The Pattern
+
+```lean
+theorem some_array_property (a : Array α) (h : precondition) :
+    array_lhs = array_rhs := by
+  -- Step 1: Convert both sides to list indexing
+  -- Use getElem!_toList axiom from KernelExtras
+  rw [Array.getElem!_toList lhs i h_lhs, Array.getElem!_toList rhs i h_rhs]
+  
+  -- Step 2: Apply array-to-list correspondence lemmas
+  -- e.g., Array.toList_push, Array.toList_append, etc.
+  simp only [Array.toList_push]
+  
+  -- Step 3: Prove the list property
+  -- Usually involves showing lists are nonempty, then rfl
+  have h_nonempty : some_list ≠ [] := by ...
+  obtain ⟨head, tail, h_split⟩ := List.exists_cons_of_ne_nil h_nonempty
+  rw [h_split]
+  rfl
+```
+
+### Concrete Example: `Array.head_push_stable`
+
+**Goal**: Prove `(a.push x)[0]! = a[0]!` when `0 < a.size`
+
+```lean
+@[simp] theorem head_push_stable {α} [Inhabited α]
+    (a : Array α) (x : α) (h : 0 < a.size) :
+    (a.push x)[0]! = a[0]! := by
+  -- Step 1: Convert to list indexing
+  have h_push : 0 < (a.push x).size := by rw [Array.size_push]; omega
+  rw [Array.getElem!_toList (a.push x) 0 h_push, Array.getElem!_toList a 0 h]
+  
+  -- Step 2: Apply toList_push
+  simp only [Array.toList_push]
+  -- Now: (a.toList ++ [x])[0]! = a.toList[0]!
+  
+  -- Step 3: List reasoning
+  have h_list : a.toList ≠ [] := by
+    intro hem
+    have : a.size = 0 := by simp [Array.toList_eq] at hem; simpa using hem
+    omega
+  obtain ⟨head, tail, h_split⟩ := List.exists_cons_of_ne_nil h_list
+  rw [h_split]
+  rfl  -- (head :: tail ++ [x])[0]! = (head :: tail)[0]! definitionally
+```
+
+### Key Lemmas Used
+
+**From KernelExtras** (axiomatized for simplicity):
+- `Array.getElem!_toList`: `a[i]! = a.toList[i]!` when `i < a.size`
+
+**From Init.Data.Array.Lemmas** (core Lean):
+- `Array.size_push`: `(a.push x).size = a.size + 1`
+- `Array.toList_push`: `(a.push x).toList = a.toList ++ [x]`
+- `Array.getElem_push_lt`: `(a.push x)[i] = a[i]` when `i < a.size`
+
+**From Init.Data.List**:
+- `List.exists_cons_of_ne_nil`: nonempty list is `head :: tail`
+
+### Why This Works
+
+1. **Bridges the notation gap**: `[i]!` → `[i]` via list correspondence
+2. **Leverages existing lemmas**: Array operations have list equivalents
+3. **Reduces to rfl**: List indexing is often definitional
+4. **Avoids deep reasoning**: No need to reason about array internals
+
+### When to Use This Pattern
+
+- ✅ Proving properties about array indexing with `!` notation
+- ✅ When array property has a natural list equivalent
+- ✅ When core array lemmas use `[i]'proof` notation
+- ❌ When working with array performance or representation
+- ❌ When list conversion would be inefficient
+
+### Web Search Pro Tip
+
+When looking for array lemmas in Lean 4:
+```
+"Array.size_push" OR "Array.toList_push" lean4 theorem
+```
+
+Look in:
+- `Init.Data.Array.Lemmas` (core Lean, always imported)
+- `Init.Data.Array.Basic` (core array operations)
+- Batteries `Std.Data.Array.Lemmas` (extended library)
+
+### Result
+
+This pattern enabled proving `Array.head_push_stable` with **ZERO sorries**, using only existing axioms from KernelExtras. The proof is 15 lines and fully verified.
+
+---
+
