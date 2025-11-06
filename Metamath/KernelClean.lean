@@ -1508,53 +1508,28 @@ theorem assert_step_ok
       rw [h_chk] at h_step
       simp [Bind.bind, Except.bind] at h_step
 
-      -- After simplifying, h_step has form: do { DV-loop; concl ← f.subst; pure } = ok pr'
-      -- We need to show ∃ stack_new e_conclusion, ProofStateInv ... ∧ stack transformation
-
-      -- The key insight: if h_step = ok pr', then all the intermediate steps succeeded
-      -- Let's provide the witnesses
-      refine ⟨?stack_new, ?e_conclusion, ?inv, ?transform⟩
-
-      case stack_new =>
-        -- The new stack should be the dropped stack plus the conclusion
-        exact (stack_spec.dropLastN fr_impl.hyps.size) ++ [e_conclusion]
-
-      case e_conclusion =>
-        -- The conclusion is e_conclusion (already defined as applySubst)
-        exact e_conclusion
-
-      case inv =>
-        -- Build ProofStateInv for pr'
-        -- After simp, h_step has form: (do { ... }) = ok pr'
-        -- We need to extract what pr' is and build the invariant
-
-        constructor
-        case db_ok =>
-          -- Database unchanged
-          exact inv.db_ok
-        case frame_ok =>
-          -- Frame unchanged (only stack changes in stepAssert)
-          -- From h_step, pr' has form { pr with stack := ... }
-          -- So pr'.frame = pr.frame
-          -- Need to extract this from h_step
-          sorry -- TODO: Extract that pr'.frame = pr.frame from h_step, then use inv.frame_ok
-        case stack_ok =>
-          -- Need: viewStack pr'.stack = stack_new
-          -- where stack_new = (stack_spec.dropLastN fr_impl.hyps.size) ++ [e_conclusion]
-          --
-          -- From stepAssert definition:
-          -- pr' = { pr with stack := (pr.stack.shrink off).push concl }
-          --
-          -- Need to:
-          -- 1. Extract concl_impl from h_step
-          -- 2. Show toExpr concl_impl = e_conclusion (via subst_correspondence)
-          -- 3. Use viewStack_push and viewStack_popK lemmas
-          sorry -- TODO: Extract concl_impl and apply viewStack lemmas
-
-      case transform =>
-        -- Show stack transformation: stack_new = dropLastN ++ [e_conclusion]
-        refine ⟨[], ?_⟩
-        rfl -- By definition of stack_new
+      -- Case-split on Formula.subst FIRST
+      cases h_subst_res : Verify.Formula.subst σ_impl f_impl with
+      | error err =>
+        -- If subst fails, rewrite h_step with it
+        rw [h_subst_res] at h_step
+        -- After DV loop (which we split on next), error would propagate
+        split at h_step
+        · simp [Bind.bind, Except.bind] at h_step
+        · simp [Functor.map, Except.map] at h_step
+      | ok concl_impl =>
+        -- Subst succeeded! Now split on DV forIn
+        rw [h_subst_res] at h_step
+        split at h_step
+        · -- DV forIn error
+          simp [Functor.map, Except.map] at h_step
+        · -- DV forIn ok, now extract pr'
+          simp [Functor.map, Except.map] at h_step
+          injection h_step with h_pr'_eq
+          -- h_pr'_eq : { pr with stack := (pr.stack.extract ...).push concl_impl } = pr'
+          subst h_pr'_eq
+          -- Now build witnesses!
+          sorry -- TODO: Use concl_impl and apply subst_correspondence, viewStack lemmas
   · -- False case: hyps.size > pr.stack.size
     simp [h_hyp_size] at h_step
 
