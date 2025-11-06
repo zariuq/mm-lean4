@@ -1525,8 +1525,31 @@ theorem assert_step_ok
 
       case inv =>
         -- Build ProofStateInv for pr'
-        -- Need to show: db_ok, frame_ok, stack_ok
-        sorry -- TODO: Extract pr' structure from h_step and build invariant
+        -- After simp, h_step has form: (do { ... }) = ok pr'
+        -- We need to extract what pr' is and build the invariant
+
+        constructor
+        case db_ok =>
+          -- Database unchanged
+          exact inv.db_ok
+        case frame_ok =>
+          -- Frame unchanged (only stack changes in stepAssert)
+          -- From h_step, pr' has form { pr with stack := ... }
+          -- So pr'.frame = pr.frame
+          -- Need to extract this from h_step
+          sorry -- TODO: Extract that pr'.frame = pr.frame from h_step, then use inv.frame_ok
+        case stack_ok =>
+          -- Need: viewStack pr'.stack = stack_new
+          -- where stack_new = (stack_spec.dropLastN fr_impl.hyps.size) ++ [e_conclusion]
+          --
+          -- From stepAssert definition:
+          -- pr' = { pr with stack := (pr.stack.shrink off).push concl }
+          --
+          -- Need to:
+          -- 1. Extract concl_impl from h_step
+          -- 2. Show toExpr concl_impl = e_conclusion (via subst_correspondence)
+          -- 3. Use viewStack_push and viewStack_popK lemmas
+          sorry -- TODO: Extract concl_impl and apply viewStack lemmas
 
       case transform =>
         -- Show stack transformation: stack_new = dropLastN ++ [e_conclusion]
