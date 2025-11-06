@@ -1525,11 +1525,36 @@ theorem assert_step_ok
           simp [Functor.map, Except.map] at h_step
         · -- DV forIn ok, now extract pr'
           simp [Functor.map, Except.map] at h_step
-          injection h_step with h_pr'_eq
-          -- h_pr'_eq : { pr with stack := (pr.stack.extract ...).push concl_impl } = pr'
-          subst h_pr'_eq
-          -- Now build witnesses!
-          sorry -- TODO: Use concl_impl and apply subst_correspondence, viewStack lemmas
+          -- h_step : { pr with stack := (pr.stack.extract ...).push concl_impl } = pr'
+
+          -- Apply subst_correspondence to show toExpr concl_impl = e_conclusion
+          have h_concl_eq : toExpr concl_impl = e_conclusion :=
+            subst_correspondence f_impl e_assert σ_impl fr_assert.vars σ_typed.σ
+              h_expr h_match concl_impl h_subst_res
+
+          -- Use subst to replace pr' with the record update
+          subst h_step
+          -- After subst, pr' becomes { pr with stack := ... }
+
+          -- Provide existential witnesses
+          refine ⟨(stack_spec.dropLastN fr_impl.hyps.size) ++ [e_conclusion], e_conclusion, ?inv, ⟨[], rfl⟩⟩
+
+          -- Build ProofStateInv
+          constructor
+          · exact inv.db_ok
+          · exact inv.frame_ok
+          · -- stack_ok: viewStack ((pr.stack.extract ...).push concl_impl) = (stack_spec.dropLastN ...) ++ [e_conclusion]
+            -- Step 1: Apply viewStack_push to handle the .push
+            rw [viewStack_push]
+            -- Step 2: Use h_concl_eq to replace toExpr concl_impl with e_conclusion
+            rw [h_concl_eq]
+            -- Step 3: Apply viewStack_popK to handle the .extract
+            have h_size : fr_impl.hyps.size ≤ pr.stack.size := by
+              have : pr.stack.size - fr_impl.hyps.size + fr_impl.hyps.size = pr.stack.size := Nat.sub_add_cancel h_hyp_size
+              omega
+            rw [viewStack_popK pr.stack fr_impl.hyps.size h_size]
+            -- Step 4: Use inv.stack_ok : viewStack pr.stack = stack_spec
+            rw [inv.stack_ok]
   · -- False case: hyps.size > pr.stack.size
     simp [h_hyp_size] at h_step
 
