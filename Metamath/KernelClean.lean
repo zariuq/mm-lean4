@@ -1502,47 +1502,36 @@ theorem assert_step_ok
                 simp only [hf]
             · cases h_typed
 
-      -- Continue with DV checks, substitution, and stack reconstruction
-      --
-      -- At this point we have all the key ingredients:
-      -- ✅ σ_impl : implementation substitution (from checkHyp success)
-      -- ✅ σ_typed : semantic typed substitution (TypedSubst extraction complete!)
-      -- ✅ h_typed : correspondence between σ_impl and σ_typed
-      -- ✅ e_conclusion : semantic conclusion (Spec.applySubst fr_assert.vars σ_typed.σ e_assert)
-      -- ✅ h_match : ∀ v ∈ vars, σ_impl[v]? and σ_typed.σ v correspond
-      -- ✅ subst_correspondence : bridges impl and semantic substitution (THEOREM, not axiom!)
+      -- Now extract the rest: DV checks, substitution, final state
+      -- h_step currently has form: do { checkHyp; DV-loop; subst; pure } = ok pr'
+      -- We've handled checkHyp, now simplify with it
+      rw [h_chk] at h_step
+      simp [Bind.bind, Except.bind] at h_step
 
-      -- What remains: Extract DV loop + Formula.subst + final state from h_step
-      --
-      -- h_step has the complex form:
-      --   do { DV-loop; concl ← f_impl.subst σ_impl; pure {...} } = ok pr'
-      --
-      -- To complete this, need to:
-      -- 1. Case-split on DV forIn loop result (passes or error)
-      -- 2. Case-split on f_impl.subst σ_impl result (ok concl_impl or error)
-      -- 3. Extract final pure and injection to get pr' structure
-      -- 4. Apply subst_correspondence theorem to show:
-      --      toExpr concl_impl = e_conclusion
-      -- 5. Use viewStack lemmas to show stack correspondence
-      -- 6. Build ProofStateInv for pr' with new stack
-      -- 7. Provide witnesses for existential
-      --
-      -- The challenge: h_step is deeply nested monadic code. Rewriting with
-      -- case hypotheses doesn't work cleanly because the pattern isn't at top-level.
-      --
-      -- Strategy needed: Either
-      --   (a) Prove helper lemmas about do-notation elaboration
-      --   (b) Use more sophisticated tactics (omega, aesop, etc.)
-      --   (c) Manually unfold the do-notation step-by-step
-      --
-      -- All ingredients are available:
-      -- ✅ σ_impl, σ_typed, h_typed, e_conclusion, h_match
-      -- ✅ subst_correspondence (THEOREM, not axiom!)
-      -- ✅ checkHyp_validates_floats already applied
-      -- ✅ TypedSubst extraction complete (zero sorries in that section)
-      --
-      -- This IS provable, just requires tactical patience with monad laws.
-      sorry
+      -- After simplifying, h_step has form: do { DV-loop; concl ← f.subst; pure } = ok pr'
+      -- We need to show ∃ stack_new e_conclusion, ProofStateInv ... ∧ stack transformation
+
+      -- The key insight: if h_step = ok pr', then all the intermediate steps succeeded
+      -- Let's provide the witnesses
+      refine ⟨?stack_new, ?e_conclusion, ?inv, ?transform⟩
+
+      case stack_new =>
+        -- The new stack should be the dropped stack plus the conclusion
+        exact (stack_spec.dropLastN fr_impl.hyps.size) ++ [e_conclusion]
+
+      case e_conclusion =>
+        -- The conclusion is e_conclusion (already defined as applySubst)
+        exact e_conclusion
+
+      case inv =>
+        -- Build ProofStateInv for pr'
+        -- Need to show: db_ok, frame_ok, stack_ok
+        sorry -- TODO: Extract pr' structure from h_step and build invariant
+
+      case transform =>
+        -- Show stack transformation: stack_new = dropLastN ++ [e_conclusion]
+        refine ⟨[], ?_⟩
+        rfl -- By definition of stack_new
   · -- False case: hyps.size > pr.stack.size
     simp [h_hyp_size] at h_step
 
