@@ -203,6 +203,39 @@ def toExprOpt (f : Verify.Formula) : Option Spec.Expr :=
   else
     none
 
+/-! ## Helper Lemmas for subst_correspondence -/
+
+/-- toExprOpt agrees with toExpr on well-formed formulas. -/
+@[simp] theorem toExprOpt_some_iff_toExpr
+    (f : Verify.Formula) (e : Spec.Expr) :
+  toExprOpt f = some e ↔ (f.size > 0 ∧ toExpr f = e) := by
+  unfold toExprOpt toExpr
+  by_cases h : f.size > 0
+  · simp [h]
+  · simp [h]
+
+/-- Head (typecode) is preserved by implementation substitution.
+Returns explicit size bounds so callers can use array indexing. -/
+theorem subst_preserves_head
+    {f g : Verify.Formula} {σ : Std.HashMap String Verify.Formula}
+    (h_to : toExprOpt f = some e)
+    (h_sub : f.subst σ = Except.ok g) :
+  ∃ (h_f : 0 < f.size) (h_g : 0 < g.size), g[0]'h_g = f[0]'h_f := by
+  -- The Formula.subst function processes each symbol:
+  -- - Constants are copied unchanged (including the head/typecode)
+  -- - Variables are expanded from the substitution
+  -- The head f[0] must be a constant (since toExprOpt succeeded), so it's copied to g[0]
+  unfold toExprOpt at h_to
+  split at h_to
+  case isTrue h_size =>
+    -- f.size > 0, so f has a head
+    -- From Formula.subst definition: the loop copies constants unchanged
+    -- Need to show g[0] = f[0] and g.size > 0
+    -- This follows from the structure of Formula.subst
+    sorry  -- TODO: Prove from Formula.subst equation lemmas
+  case isFalse =>
+    simp at h_to
+
 /-- Convert a single hypothesis label to spec hypothesis.
     Fails fast if the label doesn't resolve or formula doesn't convert. -/
 def convertHyp (db : Verify.DB) (label : String) : Option Spec.Hyp := do
@@ -680,36 +713,60 @@ theorem subst_correspondence
   ∀ concl_impl, f_impl.subst σ_impl = Except.ok concl_impl →
     toExpr concl_impl = Spec.applySubst vars σ_spec e_spec := by
   intro concl_impl h_subst
-  -- Extract that f_impl is nonempty from h_toExpr
-  unfold toExprOpt at h_toExpr
-  split at h_toExpr
-  case isTrue h_size =>
-    -- f_impl.size > 0, so we have a valid formula
-    injection h_toExpr with h_e_eq
-    -- h_e_eq: e_spec = { typecode := ⟨f_impl[0].value⟩, syms := f_impl.toList.tail.map toSym }
 
-    -- The proof needs to show:
-    -- 1. concl_impl[0] = f_impl[0] (typecode preserved)
-    -- 2. concl_impl.toList.tail corresponds to substituting e_spec.syms
-    --
-    -- Key lemma needed: forIn correspondence showing that the monadic loop
-    -- in Formula.subst computes the same result as flatMap in Spec.applySubst
-    --
-    -- For each symbol in f_impl:
-    --   - If .const c: both keep c unchanged
-    --   - If .var v with v ∈ vars:
-    --       * σ_impl[v] = some f_v (from h_match)
-    --       * toExpr f_v = σ_spec v (from h_match)
-    --       * Formula.subst expands f_v (skipping typecode)
-    --       * Spec.applySubst uses (σ_spec v).syms
-    --       * These correspond by toExpr definition
-    --
-    -- This is provable but requires careful reasoning about Array.foldl,
-    -- forIn elaboration, and the correspondence between toList/tail/map and syms.
-    sorry
-  case isFalse =>
-    -- f_impl.size ≤ 0, but h_toExpr = some e_spec - contradiction
-    simp at h_toExpr
+  -- Get head preservation with explicit size bounds
+  obtain ⟨h_f, h_g, h_head⟩ := subst_preserves_head (e := e_spec) h_toExpr h_subst
+
+  -- Extract that e_spec came from f_impl
+  have hx : f_impl.size > 0 ∧ toExpr f_impl = e_spec := (toExprOpt_some_iff_toExpr _ _).mp h_toExpr
+
+  -- Translate goal to toExprOpt using the equivalence
+  have h_opt : toExprOpt concl_impl = some (Spec.applySubst vars σ_spec e_spec) := by
+    -- Unfold toExprOpt on concl_impl using h_g
+    unfold toExprOpt
+    simp [h_g]
+
+    -- Head/typecode equality: preserved by subst, equals e_spec.typecode from h_toExpr
+    have h_typecode : (⟨concl_impl[0]'h_g |>.value⟩ : Spec.Constant) = e_spec.typecode := by
+      -- concl_impl[0]'h_g = f_impl[0]'h_f (from h_head)
+      -- e_spec.typecode = ⟨f_impl[0]'h_f .value⟩
+      unfold toExpr at hx
+      simp [hx.1] at hx
+      -- Now hx is: {typecode := ⟨f_impl[0].value⟩, syms := ...} = e_spec
+      -- Extract typecode equality
+      have h_f_tc : ⟨f_impl[0]'h_f |>.value⟩ = e_spec.typecode := by
+        rw [← hx]
+      rw [← h_f_tc, h_head]
+
+    -- Tail/syms correspondence
+    have h_tail : (concl_impl.toList.tail.map toSym) = (Spec.applySubst vars σ_spec e_spec).syms := by
+      -- This is the key step: show implementation and semantic substitution agree
+      -- Both process symbols left-to-right:
+      --   - Constants are copied
+      --   - Variables are expanded using h_match
+      sorry  -- TODO: Prove by induction over e_spec.syms using h_match
+
+    -- Combine head and tail to combine typecode and syms
+    -- We have: h_typecode : {c := concl_impl[0].value} = e_spec.typecode
+    -- We have: h_tail : List.map toSym concl_impl.toList.tail = (applySubst ...).syms
+    -- Goal: {typecode := {c := concl_impl[0].value}, syms := (List.map toSym concl_impl.toList).tail} = applySubst ...
+    -- Need to show: (List.map toSym concl_impl.toList).tail = List.map toSym concl_impl.toList.tail
+    have tail_commute : (concl_impl.toList.map toSym).tail = concl_impl.toList.tail.map toSym := by
+      cases concl_impl.toList <;> rfl
+    rw [tail_commute, h_typecode, h_tail]
+    -- Now goal is: {typecode := e_spec.typecode, syms := (applySubst ...).syms} = applySubst ...
+    -- By definition of applySubst, this is just eta-expansion
+    unfold Spec.applySubst
+    simp
+
+  -- Finally convert back to toExpr using the equivalence
+  -- h_opt : toExprOpt concl_impl = some (applySubst vars σ_spec e_spec)
+  -- We know concl_impl.size > 0 from h_g
+  -- So toExprOpt concl_impl = some (...) means toExpr concl_impl = ...
+  have : concl_impl.size > 0 ∧ toExpr concl_impl = Spec.applySubst vars σ_spec e_spec := by
+    rw [← toExprOpt_some_iff_toExpr]
+    exact h_opt
+  exact this.2
 
 /-! ## PHASE 5: checkHyp soundness (PROVABLE - GPT-5 refactor) -/
 
