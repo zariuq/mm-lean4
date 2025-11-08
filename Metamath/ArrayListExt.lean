@@ -197,8 +197,6 @@ namespace Array
 /-- Array.toList preserves getElem! access (panic-safe version).
 
 If i < a.size, then a[i]! in the original array equals a.toList[i]! in the list.
-
-Proof strategy: Unfold getElem! definitions, use getElem_toList.
 -/
 axiom getElem!_toList {α} [Inhabited α] (a : Array α) (i : Nat) (h : i < a.size) :
   a[i]! = a.toList[i]!
@@ -225,12 +223,16 @@ axiom getElem!_mem_toList {α} [Inhabited α] (a : Array α) (i : Nat) (h : i < 
 /-- Correspondence between get? and getElem!.
 
 If a[i]? returns some x, then a[i]! equals x.
-
-Proof strategy: Unfold get?/getElem! definitions, use h to discharge bounds.
-This should be a simple 1-2 line proof.
 -/
-axiom getElem!_of_getElem?_eq_some {α} [Inhabited α] (a : Array α) (i : Nat) (x : α)
-  (h : a[i]? = some x) : a[i]! = x
+theorem getElem!_of_getElem?_eq_some {α} [Inhabited α] (a : Array α) (i : Nat) (x : α)
+  (h : a[i]? = some x) : a[i]! = x := by
+  -- getElem? returns some x iff i < size and a[i] = x
+  have ⟨hi, heq⟩ : ∃ h : i < a.size, a[i] = x := by
+    simp [getElem?_def] at h
+    exact h
+  -- Directly use the bounds witness and equality
+  simp [getElem!, Array.get!Internal, hi]
+  exact heq
 
 end Array
 
@@ -258,13 +260,17 @@ for the common case of extract 0 n (take pattern).
 /-- Extracting a prefix while dropping the last k elements.
 
 This operation is common in stack manipulation (pop k elements).
-
-Proof strategy: Use toList_extract_take with n = a.size - k, then rewrite
-List.take (len - k) to List.dropLastN k using length equalities.
 -/
-axiom toList_extract_dropLastN {α} (a : Array α) (k : Nat) (h : k ≤ a.size) :
-  (a.extract 0 (a.size - k)).toList = a.toList.dropLastN k
--- TODO: Prove using toList_extract_take (defined above) + List.dropLastN_eq_take
+theorem toList_extract_dropLastN {α} (a : Array α) (k : Nat) (h : k ≤ a.size) :
+  (a.extract 0 (a.size - k)).toList = a.toList.dropLastN k := by
+  -- Use toList_extract_take: (a.extract 0 n).toList = a.toList.take n
+  rw [toList_extract_take]
+  -- Now goal is: a.toList.take (a.size - k) = a.toList.dropLastN k
+  -- Use dropLastN definition: dropLastN k = take (length - k)
+  rw [List.dropLastN_eq_take]
+  -- Goal: a.toList.take (a.size - k) = a.toList.take (a.toList.length - k)
+  -- These are equal because a.size = a.toList.length (definitional)
+  rfl
 
 /-- Shrinking an array to size n equals taking the first n elements.
 
@@ -279,13 +285,14 @@ We can use it without a local proof.
 
 Window operation: extract a slice [off, off+len) and map a function over it.
 This is equivalent to dropping off elements, taking len elements, then mapping.
-
-Proof strategy: Use extract→drop/take bridge, then List.map fusion.
-Should be provable without axioms using toList_extract.
 -/
-axiom window_toList_map {α β} (a : Array α) (off len : Nat)
+theorem window_toList_map {α β} (a : Array α) (off len : Nat)
     (f : α → β) (h : off + len ≤ a.size) :
   (a.extract off (off + len)).toList.map f =
-  ((a.toList.drop off).take len).map f
+  ((a.toList.drop off).take len).map f := by
+  -- Use toList_extract to convert extract to List.extract
+  rw [Array.toList_extract]
+  -- List.extract is defined as drop then take
+  simp [List.extract]
 
 end Array
