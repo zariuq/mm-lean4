@@ -5,13 +5,15 @@ package «mm-lean4» where
   -- TODO: Enable strict mode once Verify.lean is updated
   -- moreLeanArgs := #["-DwarningAsError=true", "-DautoImplicit=false"]
 
-require batteries from git "https://github.com/leanprover-community/batteries" @ "v4.20.0-rc2"
+require batteries from git "https://github.com/leanprover-community/batteries" @ "v4.24.0"
 
 @[default_target]
 lean_lib Metamath where
   -- Active modules (all compile cleanly):
   -- Spec: Formal specification of Metamath verification
+  -- ByteSliceCompat: Compatibility layer for Std.ByteSlice (Batteries 4.24.0+)
   -- Verify: Implementation of proof checker
+  -- ArrayListExt: Centralized array/list infrastructure lemmas (Batteries 4.24.0+)
   -- Bridge: Implementation-to-spec bridge functions
   -- KernelExtras: Helper lemmas for kernel verification
   -- AllM: Phase 2 allM extraction lemmas
@@ -19,7 +21,7 @@ lean_lib Metamath where
   -- ValidateDB: Database format validation tests
   -- ParserInvariants: Parser correctness theorems (eliminate axioms!)
   -- ParserProofs: Proofs of parser axioms by code inspection
-  roots := #[`Metamath.Spec, `Metamath.Verify, `Metamath.Bridge, `Metamath.KernelExtras, `Metamath.AllM, `Metamath.KernelClean, `Metamath.ValidateDB, `Metamath.ParserInvariants, `Metamath.ParserProofs]
+  roots := #[`Metamath.Spec, `Metamath.ByteSliceCompat, `Metamath.Verify, `Metamath.ArrayListExt, `Metamath.Bridge, `Metamath.KernelExtras, `Metamath.AllM, `Metamath.KernelClean, `Metamath.ValidateDB, `Metamath.ParserInvariants, `Metamath.ParserProofs]
 
 @[default_target]
 lean_lib MetamathExperimental where

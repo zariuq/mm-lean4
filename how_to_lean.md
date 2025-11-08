@@ -1,9 +1,41 @@
 # How to Formalize in Lean 4: Lessons from Metamath Kernel Soundness
 
-This document captures practical lessons learned while formalizing the Metamath kernel soundness proof in Lean 4.20.0-rc2. It focuses on real-world strategies for dealing with complex proofs, opaque functions, and architectural challenges.
+**Last Updated:** 2025-11-08
+**Lean Version:** 4.24.0
+**Batteries Version:** v4.24.0
+**Project Status:** Active Development - Axiom Reduction Phase
+
+This document captures practical lessons learned while formalizing the Metamath kernel soundness proof in Lean 4. Originally started with Lean 4.20.0-rc2, recently upgraded to 4.24.0 with Batteries 4.24.0, which has significantly improved the proof infrastructure.
+
+---
+
+## 🎯 Quick Start for New Contributors
+
+**Current Focus:** Eliminating axioms from infrastructure lemmas (List.mapM, Array/List bridges)
+
+**Where to Start:**
+1. Read `AXIOMS.md` for comprehensive axiom inventory
+2. Pick an axiom from Phase 3 targets (mapM/fold proofs)
+3. Follow proof strategies documented in `Metamath/KernelExtras.lean` comments
+4. Test with `lake build` after each proof
+
+**Build Command:**
+```bash
+lake build  # Should complete successfully with warnings (sorries) but NO errors
+```
+
+**Recent Progress (Nov 2025):**
+- ✅ Upgraded to Lean 4.24.0 + Batteries 4.24.0
+- ✅ Eliminated ByteSlice custom implementation (migrated to Std.ByteSlice)
+- ✅ Proven 8 axioms (3 trivial + 2 from Std + 3 foldlM infrastructure)
+- ✅ Axiom count: 26+ → 18 (-31% reduction)
+- 🎯 Target: <10 axioms by end of Phase 3
+
+---
 
 ## Table of Contents
 
+0. [Project Status](#project-status) ⭐ NEW
 1. [Core Philosophy](#core-philosophy)
 2. [Proof Strategies](#proof-strategies)
 3. [Common Patterns](#common-patterns)
