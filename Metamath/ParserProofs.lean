@@ -15,6 +15,7 @@ import Metamath.Verify
 import Metamath.Spec
 import Metamath.ParserInvariants
 import Metamath.KernelExtras
+import Batteries.Tactic.Init
 
 namespace Metamath.ParserProofs
 

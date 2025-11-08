@@ -89,7 +89,7 @@ import Metamath.Verify
 import Metamath.KernelExtras
 import Metamath.Bridge.Basics
 import Metamath.AllM
-import Metamath.ParserProofs
+-- import Metamath.ParserProofs  -- Temporarily disabled due to Batteries 4.24.0 ByteSlice conflict
 
 namespace Metamath.Kernel
 
@@ -247,7 +247,7 @@ Proved using list correspondence via axiom getElem!_toList.
   -- Since a.toList is nonempty (a.size > 0), the head of the append is the head of a.toList
   have h_list : a.toList ≠ [] := by
     intro hem
-    have : a.size = 0 := by simp [Array.toList_eq] at hem; simpa using hem
+    have : a.size = 0 := by simp [Array.length_toList] at hem; simpa using hem
     omega
   -- For nonempty list xs, (xs ++ ys)[0]! = xs[0]!
   obtain ⟨head, tail, h_split⟩ := List.exists_cons_of_ne_nil h_list
@@ -649,10 +649,7 @@ theorem viewStack_popK (stack : Array Verify.Formula) (k : Nat) (h : k ≤ stack
   viewStack (stack.extract 0 (stack.size - k)) = (viewStack stack).dropLastN k := by
   unfold viewStack
   simp [Array.toList_extract_dropLastN stack k h]
-  -- Need to show: map toExpr of dropLastN = dropLastN of map toExpr
-  -- This is just: (xs.dropLastN k).map f = (xs.map f).dropLastN k
-  unfold List.dropLastN
-  simp [List.map_take]
+  -- map toExpr of dropLastN = dropLastN of map toExpr (proved by simp)
 
 /-- Taking a window from impl stack corresponds to taking from spec stack -/
 theorem viewStack_window (stack : Array Verify.Formula) (off len : Nat) (h : off + len ≤ stack.size) :
