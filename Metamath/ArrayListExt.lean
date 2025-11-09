@@ -94,18 +94,59 @@ element contributes true (since true && true = true, true && false = false).
       intro y hy
       exact h y (List.mem_cons_of_mem x hy)
 
+/-- Nested fold starting with false accumulator always returns false. -/
+private theorem foldl_nested_false {α β} (xs : List α) (ys : List β) (p : α → β → Bool) :
+    xs.foldl (fun b x => ys.foldl (fun b' y => b' && p x y) b) false = false := by
+  induction xs with
+  | nil => rfl
+  | cons x xs ih =>
+    simp [List.foldl, foldl_and_false, ih]
+
 /-- Nested fold with && returns true iff predicate holds for all pairs.
 
 Extension of foldl_and_eq_true to two lists. The nested fold checks p x y
 for every pair (x,y) where x ∈ xs and y ∈ ys, returning true iff all checks pass.
-
-Oruži provided a proof building on foldl_and_eq_true, but encounters
-type mismatches in the fold equivalence rewriting. The proof requires careful
-handling of the nested fold structure with accumulator threading.
 -/
-axiom foldl_all₂ {α β} (xs : List α) (ys : List β) (p : α → β → Bool) :
+theorem foldl_all₂ {α β} (xs : List α) (ys : List β) (p : α → β → Bool) :
   (xs.foldl (fun b x => ys.foldl (fun b' y => b' && p x y) b) true = true)
-  ↔ (∀ x ∈ xs, ∀ y ∈ ys, p x y = true)
+  ↔ (∀ x ∈ xs, ∀ y ∈ ys, p x y = true) := by
+  induction xs with
+  | nil =>
+    simp [List.foldl]
+  | cons x xs ih =>
+    rw [List.foldl]
+    constructor
+    · -- Forward direction: fold succeeds → all pairs satisfy p
+      intro h z hz w hw
+      -- First extract that inner fold must be true
+      have h_inner : ys.foldl (fun b' y => b' && p x y) true = true := by
+        match h_eq : ys.foldl (fun b' y => b' && p x y) true with
+        | true => rfl
+        | false =>
+          -- Contradiction: h_eq = false implies outer fold = false
+          rw [h_eq, foldl_nested_false] at h
+          nomatch h
+      cases hz with
+      | head =>
+        -- z = x: use h_inner
+        exact (foldl_and_eq_true ys).mp h_inner w hw
+      | tail _ hmem =>
+        -- z ∈ xs: rewrite h using h_inner, then apply IH
+        rw [h_inner] at h
+        exact ih.mp h z hmem w hw
+    · -- Backward direction: all pairs satisfy p → fold succeeds
+      intro h
+      -- First show inner fold = true
+      have h_inner : ys.foldl (fun b' y => b' && p x y) true = true := by
+        apply (foldl_and_eq_true ys).mpr
+        intro w hw
+        exact h x (List.mem_cons_self ..) w hw
+      -- Rewrite goal using h_inner
+      rw [h_inner]
+      -- Now use IH
+      apply ih.mpr
+      intro z hz w hw
+      exact h z (List.mem_cons_of_mem x hz) w hw
 
 /-- If mapM succeeds on a list, then f succeeds on each element.
 
