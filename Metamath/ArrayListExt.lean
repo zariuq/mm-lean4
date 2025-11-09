@@ -49,12 +49,38 @@ See AXIOMS.md for documented proof strategies.
 This is a fundamental property of Option.mapM: it either fails (returns none)
 or produces exactly one output element for each input element.
 
-Oruži provided a proof using case-splitting on f x and xs.mapM f, but
-simp [List.mapM] doesn't expand past mapM.loop in Lean 4.20.0-rc2.
-This still requires mapM.loop lemmas in Lean 4.24.0.
+Proven using a helper lemma about mapM.loop that tracks the accumulator.
 -/
-axiom mapM_length_option {α β : Type} (f : α → Option β) :
-  ∀ {xs : List α} {ys : List β}, xs.mapM f = some ys → ys.length = xs.length
+private theorem mapM_loop_length {α β} (f : α → Option β) :
+  ∀ (xs : List α) (acc : List β) (ys : List β),
+    List.mapM.loop f xs acc = some ys →
+    ys.length = acc.length + xs.length := by
+  intro xs
+  induction xs with
+  | nil =>
+    intro acc ys h
+    simp [List.mapM.loop] at h
+    cases h
+    simp
+  | cons a xs' ih =>
+    intro acc ys h
+    simp [List.mapM.loop] at h
+    cases hfa : f a with
+    | none =>
+      simp [hfa] at h
+    | some b =>
+      simp [hfa] at h
+      have := ih (b :: acc) ys h
+      simp at this ⊢
+      omega
+
+theorem mapM_length_option {α β : Type _} (f : α → Option β) :
+  ∀ {xs : List α} {ys : List β}, xs.mapM f = some ys → ys.length = xs.length := by
+  intro xs ys h
+  unfold List.mapM at h
+  have := mapM_loop_length f xs [] ys h
+  simp at this
+  exact this
 
 /-- Helper: folding && with false always gives false. -/
 private theorem foldl_and_false {α} (xs : List α) (p : α → Bool) :
@@ -154,11 +180,38 @@ Fundamental Option.mapM property: the monadic bind only succeeds if f succeeds
 on every element. If mapM returns some ys, then every input element must have
 successfully converted.
 
-Oruži provided a proof with direct induction, but again hits mapM.loop
-expansion issues when trying to extract the success proof.
+Proven using a helper lemma about mapM.loop that handles membership.
 -/
-axiom mapM_some_of_mem {α β} (f : α → Option β) {xs : List α} {ys : List β} {x : α}
-    (h : xs.mapM f = some ys) (hx : x ∈ xs) : ∃ b, f x = some b
+private theorem mapM_loop_some_of_mem {α β} (f : α → Option β) :
+  ∀ (xs : List α) (acc : List β) (ys : List β) (x : α),
+    List.mapM.loop f xs acc = some ys →
+    x ∈ xs →
+    ∃ b, f x = some b := by
+  intro xs
+  induction xs with
+  | nil =>
+    intro acc ys x h hmem
+    cases hmem
+  | cons a xs' ih =>
+    intro acc ys x h hmem
+    simp [List.mapM.loop] at h
+    cases hfa : f a with
+    | none =>
+      simp [hfa] at h
+    | some b =>
+      simp [hfa] at h
+      cases hmem with
+      | head =>
+        -- x = a, so f x = f a = some b
+        exact ⟨b, hfa⟩
+      | tail _ hmem' =>
+        -- x ∈ xs', use IH
+        exact ih (b :: acc) ys x h hmem'
+
+theorem mapM_some_of_mem {α β} (f : α → Option β) {xs : List α} {ys : List β} {x : α}
+    (h : xs.mapM f = some ys) (hx : x ∈ xs) : ∃ b, f x = some b := by
+  unfold List.mapM at h
+  exact mapM_loop_some_of_mem f xs [] ys x h hx
 
 /-- If an element is in a list (with BEq), then indexing by idxOf succeeds.
 
@@ -195,39 +248,125 @@ axiom mapM_get_some {α β} (f : α → Option β) (xs : List α) (ys : List β)
 If mapM succeeds on xs ++ ys, it's equivalent to mapping xs and ys separately
 and concatenating the results.
 
-Needed for Task 3.1 viewStack_push proof.
+Provided directly by Batteries 4.24.0 as List.mapM_append for LawfulMonad.
+Option is a LawfulMonad, so this is just a direct application.
 -/
-axiom list_mapM_append {α β} (f : α → Option β) (xs ys : List α) :
-    (xs ++ ys).mapM f = do
-      let xs' ← xs.mapM f
-      let ys' ← ys.mapM f
-      pure (xs' ++ ys')
+abbrev list_mapM_append {α β} (f : α → Option β) (xs ys : List α) :=
+  @List.mapM_append Option α β _ _ (f := f) (l₁ := xs) (l₂ := ys)
 
 /-- MapM preserves dropLastN operation.
 
 If mapM succeeds on xs, then mapM on xs.dropLastN n also succeeds and produces
 ys.dropLastN n.
 
-Needed for Task 3.1 viewStack_popK proof.
+Proven by decomposing xs using take/drop, applying mapM_append, and showing
+that the first part corresponds to dropLastN.
 -/
-axiom list_mapM_dropLastN_of_mapM_some {α β} (f : α → Option β)
+theorem list_mapM_dropLastN_of_mapM_some {α β} (f : α → Option β)
     {xs : List α} {ys : List β} (h : xs.mapM f = some ys) (k : Nat) :
-    (xs.dropLastN k).mapM f = some (ys.dropLastN k)
+    (xs.dropLastN k).mapM f = some (ys.dropLastN k) := by
+  unfold List.dropLastN
+  have hlen := @List.mapM_length_option α β f xs ys h
+  rw [hlen]
+  -- Strategy: rewrite xs as xs.take n ++ xs.drop n
+  let n := xs.length - k
+  have split_xs : xs = xs.take n ++ xs.drop n := (List.take_append_drop n xs).symm
+  rw [split_xs] at h
+  -- Now use mapM_append to decompose h
+  rw [List.mapM_append] at h
+  -- h now says: (xs.take n).mapM f >>= ... = some ys
+  -- We need to extract that (xs.take n).mapM f = some (ys.take n)
+  simp [pure] at h
+  -- h : bind (xs.take n).mapM f (...) = some ys
+  cases hxs_take : (xs.take n).mapM f with
+  | none =>
+    simp [hxs_take] at h
+  | some ys₁ =>
+    simp [hxs_take] at h
+    cases hxs_drop : (xs.drop n).mapM f with
+    | none =>
+      simp [hxs_drop] at h
+    | some ys₂ =>
+      simp [hxs_drop] at h
+      -- h : some (ys₁ ++ ys₂) = some ys
+      cases h
+      -- ys = ys₁ ++ ys₂
+      -- Need to show ys₁ = ys.take n
+      have hlen₁ := @List.mapM_length_option α β f (xs.take n) ys₁ hxs_take
+      have hlen₂ := @List.mapM_length_option α β f (xs.drop n) ys₂ hxs_drop
+      -- ys₁.length = (xs.take n).length
+      simp at hlen₁ hlen₂
+      -- Show that ys₁.length = xs.length - k (which is n)
+      have n_le : n ≤ xs.length := Nat.sub_le xs.length k
+      have hlen₁' : ys₁.length = n := by
+        rw [hlen₁]
+        exact Nat.min_eq_left n_le
+      -- Now show (ys₁ ++ ys₂).take (xs.length - k) = ys₁
+      have take_eq : (ys₁ ++ ys₂).take ys₁.length = ys₁ := by
+        induction ys₁ with
+        | nil => rfl
+        | cons y ys₁' ih => simp
+      -- Combine: hlen₁' : ys₁.length = n = xs.length - k
+      congr 1
+      symm
+      show List.take (xs.length - k) (ys₁ ++ ys₂) = ys₁
+      calc List.take (xs.length - k) (ys₁ ++ ys₂)
+          _ = List.take n (ys₁ ++ ys₂) := by rfl
+          _ = List.take ys₁.length (ys₁ ++ ys₂) := by rw [← hlen₁']
+          _ = ys₁ := take_eq
 
 /-- FilterMap after mapM can be fused.
 
 If mapM succeeds and produces ys, then filtering ys with g is equivalent
 to filtering xs with the composed operation (f then g).
 
-This is a mapM/filterMap fusion optimization used in stack manipulation proofs.
-
-Proof strategy: Induction on xs, using mapM/filterMap correspondence.
+Proven using a helper lemma about mapM.loop that tracks the accumulator.
+The key insight: mapM.loop accumulates results in reverse, so we track
+filterMap through this reverse accumulation.
 -/
-axiom filterMap_after_mapM_eq {α β γ}
+private theorem mapM_loop_filterMap_eq {α β γ} (f : α → Option β) (p : β → Option γ) :
+  ∀ (xs : List α) (acc : List β) (ys : List β),
+    List.mapM.loop f xs acc = some ys →
+    ys.filterMap p = acc.reverse.filterMap p ++ xs.filterMap (fun a => Option.bind (f a) p) := by
+  intro xs
+  induction xs with
+  | nil =>
+    intro acc ys h
+    simp [List.mapM.loop] at h
+    cases h
+    simp
+  | cons a xs' ih =>
+    intro acc ys h
+    simp [List.mapM.loop] at h
+    cases hfa : f a with
+    | none =>
+      rw [hfa] at h
+      simp at h
+    | some b =>
+      rw [hfa] at h
+      simp at h
+      have ih_result := ih (b :: acc) ys h
+      rw [ih_result]
+      rw [List.reverse_cons]
+      rw [List.filterMap_append]
+      rw [List.filterMap]
+      cases hpb : p b with
+      | none =>
+        simp [List.filterMap]
+        simp [hfa, Option.bind, hpb]
+      | some c =>
+        simp [List.filterMap]
+        simp [hfa, Option.bind, hpb]
+
+theorem filterMap_after_mapM_eq {α β γ}
     (f : α → Option β) (p : β → Option γ)
     {xs : List α} {ys : List β}
     (h : xs.mapM f = some ys) :
-  xs.filterMap (fun a => Option.bind (f a) p) = ys.filterMap p
+  xs.filterMap (fun a => Option.bind (f a) p) = ys.filterMap p := by
+  unfold List.mapM at h
+  have helper := mapM_loop_filterMap_eq f p xs [] ys h
+  simp at helper
+  exact helper.symm
 
 end KernelExtras.List
 
@@ -238,9 +377,12 @@ namespace Array
 /-- Array.toList preserves getElem! access (panic-safe version).
 
 If i < a.size, then a[i]! in the original array equals a.toList[i]! in the list.
+
+Uses Batteries 4.24's `getElem!_pos` lemma which says c[i]! = c[i] when i is valid.
 -/
-axiom getElem!_toList {α} [Inhabited α] (a : Array α) (i : Nat) (h : i < a.size) :
-  a[i]! = a.toList[i]!
+theorem getElem!_toList {α} [Inhabited α] (a : Array α) (i : Nat) (h : i < a.size) :
+  a[i]! = a.toList[i]! := by
+  simp [getElem!_pos, h]
 
 /-- Array.toList preserves indexed get access.
 
@@ -256,10 +398,11 @@ theorem toList_get {α} (a : Array α) (i : Nat) (h : i < a.size) :
 
 If i < a.size, then a[i]! is a member of a.toList.
 
-Proof strategy: Use getElem!_toList + List.getElem!_mem.
+Proven using getElem!_pos to convert to bounded access, then standard membership.
 -/
-axiom getElem!_mem_toList {α} [Inhabited α] (a : Array α) (i : Nat) (h : i < a.size) :
-  a[i]! ∈ a.toList
+theorem getElem!_mem_toList {α} [Inhabited α] (a : Array α) (i : Nat) (h : i < a.size) :
+  a[i]! ∈ a.toList := by
+  simp [getElem!_pos, h]
 
 /-- Correspondence between get? and getElem!.
 
