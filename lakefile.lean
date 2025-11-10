@@ -13,6 +13,8 @@ lean_lib Metamath where
   -- Spec: Formal specification of Metamath verification
   -- ByteSliceCompat: Compatibility layer for Std.ByteSlice (Batteries 4.24.0+)
   -- Verify: Implementation of proof checker
+  -- WellFormedness: Foundational well-formedness predicates (parser guarantees)
+  -- ParserBasics: Trivial parser properties (warm-up proofs!)
   -- ArrayListExt: Centralized array/list infrastructure lemmas (Batteries 4.24.0+)
   -- Bridge: Implementation-to-spec bridge functions
   -- KernelExtras: Helper lemmas for kernel verification
@@ -21,7 +23,7 @@ lean_lib Metamath where
   -- ValidateDB: Database format validation tests
   -- ParserInvariants: Parser correctness theorems (eliminate axioms!)
   -- ParserProofs: Proofs of parser axioms by code inspection
-  roots := #[`Metamath.Spec, `Metamath.ByteSliceCompat, `Metamath.Verify, `Metamath.ArrayListExt, `Metamath.Bridge, `Metamath.KernelExtras, `Metamath.AllM, `Metamath.KernelClean, `Metamath.ValidateDB, `Metamath.ParserInvariants, `Metamath.ParserProofs]
+  roots := #[`Metamath.Spec, `Metamath.ByteSliceCompat, `Metamath.Verify, `Metamath.WellFormedness, `Metamath.ParserBasics, `Metamath.ArrayListExt, `Metamath.Bridge, `Metamath.KernelExtras, `Metamath.AllM, `Metamath.KernelClean, `Metamath.ValidateDB, `Metamath.ParserInvariants, `Metamath.ParserProofs]
 
 @[default_target]
 lean_lib MetamathExperimental where

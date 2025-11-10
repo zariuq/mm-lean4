@@ -25,10 +25,12 @@ This approach:
 
 import Metamath.Verify
 import Metamath.Spec
+import Metamath.WellFormedness
 
 namespace Metamath.ParserInvariants
 
 open Verify
+open Metamath.WF
 
 /-! ## Parser Behavior Lemmas
 
@@ -51,7 +53,8 @@ all float hypotheses in the database have correct structure.
 after validating structure (line 565). If validation fails, sets error (line 566).
 Therefore, db.error? = none implies all $f passed validation.
 -/
-axiom parser_validates_all_float_structures :
+-- TODO: Prove by induction on parser operations (insertHyp validates structure at line 299-300)
+theorem parser_validates_all_float_structures :
   ∀ (db : DB) (l : String) (f : Formula) (lbl : String),
     -- If parsing succeeded
     db.error? = none →
@@ -60,7 +63,8 @@ axiom parser_validates_all_float_structures :
     -- Then it has correct structure
     f.size = 2 ∧
     (∃ c : String, f[0]! = Sym.const c) ∧
-    (∃ v : String, f[1]! = Sym.var v)
+    (∃ v : String, f[1]! = Sym.var v) := by
+  sorry
 
 /-- **Lemma**: Parser success implies no duplicate float variables.
 
@@ -75,7 +79,8 @@ Therefore, if parsing succeeds, no frame has duplicate float variables.
 If duplicate exists, sets error (line 335). Therefore, db.error? = none
 implies no duplicates were found during parsing.
 -/
-axiom parser_validates_float_uniqueness :
+-- TODO: Prove by induction on parser (insertHyp checks duplicates at lines 304-306)
+theorem parser_validates_float_uniqueness :
   ∀ (db : DB) (label : String) (fmla : Formula) (fr : Frame) (proof : String),
     -- If parsing succeeded
     db.error? = none →
@@ -89,7 +94,8 @@ axiom parser_validates_float_uniqueness :
         fi.size >= 2 → fj.size >= 2 →
         (match fi[1]! with | .var v => v | _ => "") = vi →
         (match fj[1]! with | .var v => v | _ => "") = vj →
-        vi ≠ vj
+        vi ≠ vj := by
+  sorry
 
 /-! ## 1. Float Variable Uniqueness
 
@@ -412,6 +418,36 @@ theorem my_proof (db : DB) (h_success : db.error? = none) ... := by
 
 Benefit: Explicit precondition makes assumptions clear, fewer axioms!
 -/
+
+/-! ## Parser Output Well-Formedness
+
+**Core Connector**: Parser success implies database well-formedness.
+
+If parsing succeeded (`db.error? = none`), then the database produced by the parser
+satisfies all structural well-formedness predicates used by the verifier.
+
+This theorem should be proven by composing the individual parser behavior lemmas:
+- `parser_validates_all_float_structures` (formulas have correct structure)
+- `parser_validates_float_uniqueness` (no duplicate float variables)
+- `parser_enforces_float_size` (exact size = 2 for floats)
+- `parser_enforces_constant_declaration` (constants declared before use)
+- `parser_enforces_variable_declaration` (variables declared before use)
+
+**Proof strategy**: Induction on parser operations, showing each check maintains invariants:
+- `insertHyp` checks for duplicate floats (lines 304-306 in Verify.lean)
+- `feedTokens` validates $f shape before calling insertHyp (lines 561-567)
+- `toExpr`/`toExprOpt` rely on nonempty formulas with constant heads
+- Frame construction preserves well-formedness through trimming and scoping
+
+**TODO**: Prove by analyzing Verify.lean parser code and showing invariant preservation.
+This is provable because it's about pure Lean code (HashMaps, for loops, string operations).
+-/
+theorem parser_success_wellformed (db : DB) :
+  db.error? = none → WellFormedDB db := by
+  -- TODO: Prove by composing individual parser invariant theorems
+  -- Each parser operation (insertHyp, feedTokens, etc.) maintains well-formedness
+  -- This is the correctness proof for the PARSER component (half the battle!)
+  sorry
 
 end Metamath.ParserInvariants
 

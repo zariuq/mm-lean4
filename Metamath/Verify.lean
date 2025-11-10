@@ -140,16 +140,20 @@ instance : ToString Formula where
     f.foldl (init := s) (start := 1) fun (s:String) v =>
       s ++ " " ++ v.value
 
-def Formula.subst (σ : HashMap String Formula) (f : Formula) : Except String Formula := do
-  let mut f' := #[]
-  for c in f do
-    match c with
-    | .const _ => f' := f'.push c
-    | .var v =>
-      match σ[v]? with
-      | none => throw s!"variable {v} not found"
-      | some e => f' := e.foldl Array.push f' 1
-  pure f'
+/-- One-step substitution action. -/
+def Formula.substStep (σ : HashMap String Formula)
+    (acc : Formula) (s : Sym) : Except String Formula :=
+  match s with
+  | .const _ => .ok (acc.push s)
+  | .var v   =>
+    match σ[v]? with
+    | none   => .error s!"variable {v} not found"
+    | some e => .ok (e.foldl Array.push acc 1)
+
+/-- Substitution is foldlM of substStep over the array.
+    This definition makes substitution reasoning straightforward. -/
+def Formula.subst (σ : HashMap String Formula) (f : Formula) : Except String Formula :=
+  f.foldlM (Formula.substStep σ) #[]
 
 def Formula.foldlVars (self : Formula) (init : α) (f : α → String → α) : α :=
   self.foldl (init := init) (start := 1) fun a v =>
