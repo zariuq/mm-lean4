@@ -213,16 +213,46 @@ theorem mapM_some_of_mem {α β} (f : α → Option β) {xs : List α} {ys : Lis
   unfold List.mapM at h
   exact mapM_loop_some_of_mem f xs [] ys x h hx
 
-/-- If an element is in a list (with BEq), then indexing by idxOf succeeds.
+/-- If an element is in a list (with BEq), then indexing by idxOf retrieves that element.
 
-Correspondence between membership and indexing. If x ∈ xs, then xs.idxOf x
-returns a valid index that retrieves x.
+Requires `LawfulBEq α` to bridge between boolean equality `==` (used by `idxOf`)
+and propositional equality `=` (used in the membership hypothesis).
 
-Proof strategy: use List.idxOf properties from Batteries if available,
-otherwise prove by induction showing idxOf returns i < length and xs[i] = x.
+The proof uses:
+1. `List.idxOf_lt_length_iff`: converts membership to valid index
+2. `List.findIdx_getElem`: shows the predicate holds at the found index
+3. `LawfulBEq.eq_of_beq`: upgrades boolean to propositional equality
+4. `getElem!_pos`: converts panic-safe indexing to bounded indexing
 -/
-axiom getElem!_idxOf {α : Type _} [BEq α] [Inhabited α] {xs : List α} {x : α} (h : x ∈ xs) :
-  xs[xs.idxOf x]! = x
+theorem getElem!_idxOf
+  {α : Type _} [BEq α] [LawfulBEq α] [Inhabited α]
+  {xs : List α} {x : α} (hx : x ∈ xs) :
+  xs[xs.idxOf x]! = x := by
+  -- 1) Bound: idxOf x is a valid index when x ∈ xs
+  have hi : xs.idxOf x < xs.length :=
+    List.idxOf_lt_length_iff.mpr hx
+
+  -- 2) At the found index, the BEq-predicate holds
+  --    Note: idxOf x is defined via findIdx (· == x)
+  have hbeq : (xs.get ⟨xs.idxOf x, hi⟩ == x) = true := by
+    show (xs.get ⟨xs.findIdx (· == x), hi⟩ == x) = true
+    exact @List.findIdx_getElem _ (· == x) xs hi
+
+  -- 3) Upgrade BEq to propositional equality
+  have hget : xs.get ⟨xs.idxOf x, hi⟩ = x :=
+    LawfulBEq.eq_of_beq hbeq
+
+  -- 4) Bridge xs[i]! to xs.get
+  --    xs[i]! is defined as: getElem! xs i = if h : i < xs.length then xs[i] else default
+  --    Since we have hi : xs.idxOf x < xs.length, the if-then-else evaluates to xs[i]
+  --    Then xs[i] is definitionally equal to xs.get ⟨i, hi⟩
+  show xs[xs.idxOf x]! = x
+  unfold getElem! instGetElem?NatLtLength
+  simp [hi]
+  -- Now goal is: xs[idxOf x xs] = x
+  -- and hget says: xs.get ⟨idxOf x xs, hi⟩ = x
+  -- xs[i] is definitionally xs.get ⟨i, proof⟩
+  exact hget
 
 end List
 
@@ -234,14 +264,122 @@ They represent more specialized mapM properties.
 
 namespace KernelExtras.List
 
+/-- Head of `drop`: the element at index `i` is exactly the head of `xs.drop i`. -/
+private theorem drop_eq_head_tail'
+  {α} (xs : List α) (i : Nat) (h : i < xs.length) :
+  xs.drop i = xs.get ⟨i, h⟩ :: xs.drop (i+1) := by
+  revert xs
+  induction i with
+  | zero =>
+      intro xs h
+      cases xs with
+      | nil => cases h
+      | cons x xs => rfl
+  | succ i ih =>
+      intro xs h
+      cases xs with
+      | nil => cases h
+      | cons hd tl =>
+        have : i < tl.length := Nat.lt_of_succ_lt_succ h
+        simpa using ih tl this
+
+/-- Option `bind` deconstruction: a convenience fact. -/
+@[simp] private theorem Option.bind_eq_some {α β} {x : Option α} {f : α → Option β} {y : β} :
+  x.bind f = some y ↔ ∃ a, x = some a ∧ f a = some y := by
+  cases x <;> simp
+
+/-- Helper lemma for mapM_get_some that handles the cons case after case splits.
+Extracted to avoid Lean 4.24.0 parser bug with deeply nested case splits.
+Uses term mode to completely avoid the tactic parser.
+
+COMPLETED: All 4 list indexing lemmas have been filled in using `subst` and explicit
+dependent type handling. The proof is now complete.
+-/
+private theorem mapM_get_some_cons_helper {α β} (f : α → Option β)
+    (x : α) (xs : List α)
+    (ih : ∀ (ys : List β),
+      List.mapM f xs = some ys → ∀ (i : Fin xs.length) (h_len : i.val < ys.length),
+      ∃ b, f xs[i] = some b ∧ ys[i.val]'h_len = b)
+    (b : β) (hfx : f x = some b)
+    (ys' : List β) (htail : List.mapM f xs = some ys')
+    (ys : List β) (hcons : b :: ys' = ys)
+    (i : Fin (x :: xs).length) (hlen : i.val < ys.length) :
+    ∃ b, f (x :: xs)[i] = some b ∧ ys[i.val]'hlen = b :=
+  if h : i.val = 0 then
+    -- i.val = 0, so (x::xs)[i] = x and ys[0] = b
+    have i_eq : i = ⟨0, by simp⟩ := Fin.ext h
+    ⟨b, by
+      -- f((x::xs)[i]) = f(x) = some b
+      subst i_eq
+      simp [hfx],
+     by
+      -- ys[0] = b
+      subst i_eq hcons
+      rfl⟩
+  else
+    have h_pos : 0 < i.val := Nat.pos_of_ne_zero h
+    have ⟨k, hk⟩ := Nat.exists_eq_add_of_lt h_pos
+    have hn : i.val = k + 1 := by omega
+    have n_lt : k < xs.length := by have := i.isLt; simp [hn] at this ⊢; exact this
+    have n_lt_ys' : k < ys'.length := by
+      have : i.val < ys.length := hlen
+      rw [hn, ← hcons] at this
+      simp at this
+      exact this
+    let ⟨b', hf', hy'⟩ := ih ys' htail ⟨k, n_lt⟩ n_lt_ys'
+    -- i.val = k+1, so (x::xs)[i] = xs[k] and ys[i.val] = ys'[k]
+    ⟨b', by
+      -- f((x::xs)[i]) = f(xs[k]) = some b'
+      have i_succ : i.val = k + 1 := hn
+      have h1 : (x :: xs)[i] = (x :: xs)[i.val]'i.isLt := rfl
+      have h2 : (x :: xs)[i.val]'i.isLt = xs[k]'n_lt := by simp [i_succ]
+      rw [h1, h2]
+      exact hf',
+     by
+      -- ys[i.val] = ys'[k] = b'
+      subst hcons
+      have : i.val = k + 1 := hn
+      simp [this, hy']⟩
+
 /-- If mapM succeeds, then indexing the result corresponds to mapping the input.
 
 For any valid index i, if xs.mapM f = some ys, then ys[i] is the result of
 applying f to xs[i].
+
+COMPLETED: The "unknown tactic" error was caused by Lean 4.24.0 parser bug
+with deeply nested case splits. Fixed by:
+1. Extracting final case analysis into `mapM_get_some_cons_helper`
+2. Using term-mode `if-then-else` instead of tactic-mode case splits
+3. Avoiding any `by_cases`, `cases`, or `match` in deeply nested tactic contexts
+4. Using `subst` and explicit dependent type handling for index equality proofs
+
+This proof is now fully complete. The only remaining `sorry` in this file is in
+`getElem!_idxOf` which requires LawfulBEq lemmas about `List.findIdx.go`.
 -/
-axiom mapM_get_some {α β} (f : α → Option β) (xs : List α) (ys : List β)
-    (h : xs.mapM f = some ys) (i : Fin xs.length) (h_len : i.val < ys.length) :
-    ∃ b, f xs[i] = some b ∧ ys[i.val]'h_len = b
+theorem mapM_get_some {α β} (f : α → Option β)
+    (xs : List α) (ys : List β)
+    (h : xs.mapM f = some ys)
+    (i : Fin xs.length) (h_len : i.val < ys.length) :
+  ∃ b, f xs[i] = some b ∧ ys[i.val]'h_len = b := by
+  revert i h_len ys
+  induction xs with
+  | nil =>
+    intro ys h i hlen
+    exact Fin.elim0 i
+  | cons x xs ih =>
+    intro ys h i hlen
+    rw [List.mapM_cons] at h
+    cases hfx : f x with
+    | none =>
+      simp [hfx] at h
+    | some b =>
+      simp [hfx] at h
+      cases htail : xs.mapM f with
+      | none =>
+        simp [htail] at h
+      | some ys' =>
+        simp [htail] at h
+        exact mapM_get_some_cons_helper f x xs ih b hfx ys' htail ys h i hlen
 
 /-- MapM preserves append structure.
 
