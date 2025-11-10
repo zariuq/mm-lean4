@@ -15,6 +15,7 @@ lean_lib Metamath where
   -- Verify: Implementation of proof checker
   -- WellFormedness: Foundational well-formedness predicates (parser guarantees)
   -- ParserBasics: Trivial parser properties (warm-up proofs!)
+  -- ParserCorrectness: Ground-up parser correctness architecture (Layer 0-5)
   -- ArrayListExt: Centralized array/list infrastructure lemmas (Batteries 4.24.0+)
   -- Bridge: Implementation-to-spec bridge functions
   -- KernelExtras: Helper lemmas for kernel verification
@@ -23,7 +24,10 @@ lean_lib Metamath where
   -- ValidateDB: Database format validation tests
   -- ParserInvariants: Parser correctness theorems (eliminate axioms!)
   -- ParserProofs: Proofs of parser axioms by code inspection
-  roots := #[`Metamath.Spec, `Metamath.ByteSliceCompat, `Metamath.Verify, `Metamath.WellFormedness, `Metamath.ParserBasics, `Metamath.ArrayListExt, `Metamath.Bridge, `Metamath.KernelExtras, `Metamath.AllM, `Metamath.KernelClean, `Metamath.ValidateDB, `Metamath.ParserInvariants, `Metamath.ParserProofs]
+  -- HashMapLemmas: Infrastructure for HashMap reasoning (eliminates axioms!)
+  -- ParserLoopInduction: Infrastructure for feed loop induction
+  -- DBCaseAnalysis: Helpers for complex case analysis in DB operations
+  roots := #[`Metamath.Spec, `Metamath.ByteSliceCompat, `Metamath.Verify, `Metamath.WellFormedness, `Metamath.ParserBasics, `Metamath.ParserCorrectness, `Metamath.ArrayListExt, `Metamath.Bridge, `Metamath.KernelExtras, `Metamath.AllM, `Metamath.KernelClean, `Metamath.ValidateDB, `Metamath.ParserInvariants, `Metamath.ParserProofs, `Metamath.HashMapLemmas, `Metamath.ParserLoopInduction, `Metamath.DBCaseAnalysis]
 
 @[default_target]
 lean_lib MetamathExperimental where
