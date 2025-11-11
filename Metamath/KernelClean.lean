@@ -701,6 +701,22 @@ theorem convertHyp_floating_case_extract (tc : Spec.Constant) (sym : Spec.Sym) :
     some (Spec.Hyp.floating tc (Spec.Variable.mk sym)) := by
   rfl
 
+/-- Helper: Convert array membership to indexed form.
+
+When `x ∈ array.toList`, there exists an index `i < array.size` with `array[i]! = x`.
+This bridges between list-based and array-based proofs. -/
+theorem toList_mem_implies_index (arr : Array String) (x : String) (h : x ∈ arr.toList) :
+    ∃ i, i < arr.size ∧ arr[i]! = x := by
+  -- Convert list membership to indexed form using List.mem_iff_get
+  rw [List.mem_iff_get] at h
+  obtain ⟨⟨i, hi⟩, h_eq⟩ := h
+  -- Now hi : i < arr.toList.length and h_eq : arr.toList.get ⟨i, hi⟩ = x
+  -- The key insight: arr.toList is built from array indices, so:
+  -- - arr.toList.length = arr.size
+  -- - arr.toList.get ⟨i, h⟩ corresponds to arr[i]!
+  -- This needs Array.toList_length and toList_get lemmas to be applied correctly
+  sorry  -- Array/List: convert list get/mem to array indexing
+
 /-- ✅ Phase 4: Convert Frame to spec Frame (IMPLEMENTED) -/
 def toFrame (db : Verify.DB) (fr_impl : Verify.Frame) : Option Spec.Frame := do
   -- Convert hypotheses - FAIL FAST if any conversion fails
@@ -782,11 +798,11 @@ theorem toFrame_some_of_wfFrame (db : Verify.DB) :
   have h_list : ∀ label ∈ db.frame.hyps.toList, ∃ h_spec, convertHyp db label = some h_spec := by
     intro label h_mem
     -- label ∈ db.frame.hyps.toList means there exists an index i with db.frame.hyps[i]! = label
-    -- Unfold the membership in the array's toList
-    unfold Array.toList at h_mem
-    -- Now h_mem is list membership in the native array list
-    -- Try to extract the array index from this membership
-    sorry  -- Array/List correspondence: extract index from toList membership
+    have ⟨i, hi, h_eq⟩ := toList_mem_implies_index db.frame.hyps label h_mem
+    -- Now we have i < db.frame.hyps.size and db.frame.hyps[i]! = label
+    rw [← h_eq]
+    -- Apply h_all_succeed to this index
+    exact h_all_succeed i hi
 
   -- Apply List.mapM_some
   obtain ⟨hyps_spec, h_mapM⟩ := List.mapM_some (convertHyp db) db.frame.hyps.toList h_list
