@@ -2,6 +2,7 @@ import Metamath.Spec
 import Metamath.Verify
 import Metamath.KernelExtras
 import Metamath.KernelClean  -- Phase 1: Minimal axiomatic skeleton (bottom-up strategy)
+import Metamath.ParserSoundnessDemo  -- Parser soundness demonstration
 -- import Metamath.KernelSkeleton  -- Archived (parse errors)
 -- import Metamath.Kernel  -- Archived (185 errors)
 
