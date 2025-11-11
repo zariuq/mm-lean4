@@ -214,20 +214,23 @@ theorem array_size2_tail_map_toSym {f : Verify.Formula} (h_size : f.size = 2) :
 theorem array_size2_tail_is_second_elem {f : Verify.Formula} (h_size : f.size = 2) :
     f.toList.tail = [f[1]!] := by
   obtain ⟨x, y, h_list⟩ := array_toList_size2_structure h_size
-  -- We have h_list : f.toList = [x, y]
-  -- We need: f.toList.tail = [f[1]!]
-  -- So: [y] = [f[1]!]
-  -- Need to show: y = f[1]!
-  -- The key is that x = f[0]! and y = f[1]! by construction
-  -- (since f.toList is built from successive getElem! calls)
+  -- h_list : f.toList = [x, y]
   rw [h_list]
   simp only [List.tail]
   -- Goal: [y] = [f[1]!]
-  -- From getElem!_mem_toList: f[i]! ∈ f.toList for i < f.size
-  -- And from toList construction: f.toList[1] = f[1]!
-  have h_0 : f[0]! = x := by sorry  -- Array elem 0 from toList decomposition
-  have h_1 : f[1]! = y := by sorry  -- Array elem 1 from toList decomposition
-  rw [h_1]
+  congr
+  -- Goal: y = f[1]!
+  -- Key insight: y is at index 1 in f.toList = [x, y]
+  -- So y = f.toList[1]!
+  -- And by getElem!_toList: f.toList[1]! = f[1]!
+  have h_y_toList : y = f.toList[1]! := by
+    rw [h_list]
+    rfl
+  rw [h_y_toList]
+  -- Now: f.toList[1]! = f[1]!
+  -- Apply getElem!_toList which requires 1 < f.size
+  have h_bound : 1 < f.size := by omega
+  rw [getElem!_toList f 1 h_bound]
 
 /-! ### Option and Do-Notation Lemmas -/
 
@@ -776,15 +779,9 @@ theorem toFrame_some_of_wfFrame (db : Verify.DB) :
       obtain ⟨e, s, h_toExpr, h_singleton⟩ := toExprOpt_size2_singleton_syms f h_size
       -- Show convertHyp succeeds
       refine ⟨Spec.Hyp.floating e.typecode ⟨s⟩, ?_⟩
-      -- **Proof sketch**:
-      -- 1. convertHyp unfolds to match on db.find?
-      -- 2. h_find : db.find? label = some (.hyp false f lbl) matches the first case
-      -- 3. This gives us: let e ← toExprOpt f; match e with | ⟨c, [v]⟩ => pure (Hyp.floating c ⟨v⟩) | _ => none
-      -- 4. toExprOpt f = some e (from h_toExpr), so the let succeeds with e
-      -- 5. e.syms = [s] (from h_singleton), so pattern ⟨c, [v]⟩ matches with v = s
-      -- 6. Result: pure (Hyp.floating e.typecode ⟨s⟩) = some (Hyp.floating e.typecode ⟨s⟩)
-      -- This is exactly what convertHyp_floating_case_extract proves, but we need to
-      -- manually unfold convertHyp's do-notation to apply it. Documented as mechanical.
+      -- Documented: This requires unfolding convertHyp's do-notation and applying
+      -- the extraction lemma convertHyp_floating_case_extract, which requires manually
+      -- threading through the pattern match after simp transforms the goal.
       sorry  -- Pattern match succeeds: structural case analysis + extraction lemma
 
     · -- Essential hypothesis case: ess = true
