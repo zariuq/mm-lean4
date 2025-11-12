@@ -732,11 +732,100 @@ theorem toList_mem_implies_index (arr : Array String) (x : String) (h : x ∈ ar
   rw [List.mem_iff_get] at h
   obtain ⟨⟨i, hi⟩, h_eq⟩ := h
   -- Now hi : i < arr.toList.length and h_eq : arr.toList.get ⟨i, hi⟩ = x
-  -- The key insight: arr.toList is built from array indices, so:
-  -- - arr.toList.length = arr.size
-  -- - arr.toList.get ⟨i, h⟩ corresponds to arr[i]!
-  -- This needs Array.toList_length and toList_get lemmas to be applied correctly
-  sorry  -- Array/List: convert list get/mem to array indexing
+  refine ⟨i, ?_, ?_⟩
+  · -- Show i < arr.size
+    have h_len : arr.toList.length = arr.size := Array.toList_length arr
+    rw [← h_len]
+    exact hi
+  · -- Show arr[i]! = x
+    -- We have h_eq : arr.toList.get ⟨i, hi⟩ = x
+    -- Array to list correspondence via getElem!_toList
+    have h_toList : arr.toList.length = arr.size := Array.toList_length arr
+    have h_i_bound : i < arr.size := by rw [← h_toList]; exact hi
+    have h_get : arr[i]! = arr.toList[i]! := getElem!_toList arr i h_i_bound
+    rw [h_get]
+    -- Now prove: arr.toList[i]! = x
+    -- This requires showing that l[i]! unfolds to l.get ⟨i, hi⟩
+    -- Both are semantically equal: bang notation checks bounds and returns l.get ⟨i, h⟩ when bounds hold
+    -- The bang notation l[i]! unfolds to l.get ⟨i, hi⟩ when bounds hi : i < l.length
+    -- Use getElem!_pos and List.get_eq_getElem to bridge the notations
+    simp only [hi, getElem!_pos, List.get_eq_getElem]
+    exact h_eq
+
+/-- **Foundational Utility: mapM membership preservation**
+
+    If a monadic map succeeds, membership in the output implies membership in the input.
+    Key lemma for converting between array-indexed and list-membership forms in well-formed proofs. -/
+theorem List.mapM_mem {α β : Type u_1} (f : α → Option β) (xs : List α) (ys : List β) (y : β)
+    (h : xs.mapM f = some ys) (h_mem : y ∈ ys) :
+    ∃ x ∈ xs, f x = some y := by
+  -- Induction on xs: base case and cons case
+  induction xs generalizing ys with
+  | nil =>
+      -- Base: xs = [], so mapM [] f = some []
+      simp at h
+      -- h : ys = []
+      rw [h] at h_mem
+      -- h_mem : y ∈ [] is false
+      simp at h_mem
+  | cons a as ih =>
+      -- Inductive: xs = a :: as
+      -- mapM (a :: as) f reduces via do-notation bind
+
+      -- Case split on whether f a succeeds
+      cases h_fa : f a with
+      | none =>
+          -- f a = none, so mapM (a :: as) f = none
+          -- But h says it equals some ys, contradiction
+          simp [List.mapM_cons, h_fa] at h
+      | some y_head =>
+          -- f a = some y_head
+          -- Simplify h: (do-bind reduces and ys must be non-empty)
+          simp [List.mapM_cons, h_fa] at h
+
+          cases ys with
+          | nil =>
+              -- ys = [], but y ∈ ys is false
+              simp at h_mem
+          | cons y_head' ys_tail =>
+              -- ys = y_head' :: ys_tail
+              have h_mem_or : y = y_head' ∨ y ∈ ys_tail := List.mem_cons.mp h_mem
+
+              -- At this point, simp [List.mapM_cons, h_fa] has already simplified h to:
+              -- h: (as.mapM f >>= fun vs => pure (y_head :: vs)) = some (y_head' :: ys_tail)
+
+              rcases h_mem_or with h_eq | h_mem_tail
+              · -- y = y_head': a is the witness
+                -- From h, we can extract that y_head = y_head' by injecting the bind result
+                cases hm : mapM f as with
+                | none =>
+                    -- mapM f as = none, so bind gives none
+                    rw [hm] at h
+                    simp at h
+                | some ys' =>
+                    -- mapM f as = some ys', so bind gives some (y_head :: ys')
+                    rw [hm] at h
+                    simp at h
+                    -- h is now simplified to a conjunction: h_head = y_head' ∧ ys' = ys_tail
+                    obtain ⟨h_head, h_tail⟩ := h
+                    exact ⟨a, by simp, by rw [← h_eq, h_head]; exact h_fa⟩
+              · -- y ∈ ys_tail: use induction on tail
+                -- Extract mapM f as = some ys_tail from h
+                have h_as : List.mapM f as = some ys_tail := by
+                  cases hm : mapM f as with
+                  | none =>
+                      rw [hm] at h
+                      simp at h
+                  | some ys' =>
+                      rw [hm] at h
+                      simp at h
+                      -- h is now simplified to a conjunction
+                      obtain ⟨h_head, h_tail⟩ := h
+                      rw [← h_tail]
+                      exact hm
+                -- Apply induction
+                obtain ⟨x, hx_mem, hx_eq⟩ := ih ys_tail h_as h_mem_tail
+                exact ⟨x, by simp [hx_mem], hx_eq⟩
 
 /-- ✅ Phase 4: Convert Frame to spec Frame (IMPLEMENTED) -/
 def toFrame (db : Verify.DB) (fr_impl : Verify.Frame) : Option Spec.Frame := do
@@ -786,10 +875,12 @@ theorem toFrame_some_of_wfFrame (db : Verify.DB) :
       obtain ⟨e, s, h_toExpr, h_singleton⟩ := toExprOpt_size2_singleton_syms f h_size
       -- Show convertHyp succeeds
       refine ⟨Spec.Hyp.floating e.typecode ⟨s⟩, ?_⟩
-      -- Documented: This requires unfolding convertHyp's do-notation and applying
-      -- the extraction lemma convertHyp_floating_case_extract, which requires manually
-      -- threading through the pattern match after simp transforms the goal.
-      sorry  -- Pattern match succeeds: structural case analysis + extraction lemma
+      -- Proof strategy: convertHyp reduces as follows:
+      -- 1. db.find? db.frame.hyps[i]! = some (.hyp false f lbl) via h_find
+      -- 2. toExprOpt f = some e via h_toExpr
+      -- 3. Pattern match e with ⟨c, [v]⟩ succeeds because e.syms = [s] (via h_singleton)
+      -- 4. Result: pure (Spec.Hyp.floating e.typecode ⟨s⟩) = some (Spec.Hyp.floating e.typecode ⟨s⟩)
+      sorry  -- Requires unfolding do-notation with pattern match on e.syms = [s]
 
     · -- Essential hypothesis case: ess = true
       have h_ess_true : ess = true := by
@@ -799,14 +890,10 @@ theorem toFrame_some_of_wfFrame (db : Verify.DB) :
       obtain ⟨e, h_e⟩ := toExprOpt_some_of_size_pos f h_size_pos
       -- For essential: convertHyp just wraps in Hyp.essential
       refine ⟨Spec.Hyp.essential e, ?_⟩
-      -- **Proof sketch**:
-      -- 1. convertHyp unfolds to match on db.find?
-      -- 2. h_find and h_ess_true match the second case: some (.hyp true f lbl)
-      -- 3. This gives us: let e ← toExprOpt f; pure (Hyp.essential e)
-      -- 4. toExprOpt f = some e (from h_e), so the let succeeds
-      -- 5. Result: pure (Hyp.essential e) = some (Hyp.essential e)
-      -- This is exactly what essential_pattern_match proves. Documented as mechanical.
-      sorry  -- Essential case: do-notation let and pure succeed
+      -- convertHyp unfolds: match on db.find?, then do-notation
+      -- h_find and h_ess_true guide us to: let e ← toExprOpt f; pure (Hyp.essential e)
+      -- h_e: toExprOpt f = some e makes the let succeed
+      sorry  -- Essential case: do-notation let and pure succeed (same structure as floating)
 
   -- Now convert array-based proof to list and apply List.mapM_some
   -- Convert h_all_succeed to list membership form
