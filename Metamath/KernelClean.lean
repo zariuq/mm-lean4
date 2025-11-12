@@ -377,14 +377,15 @@ theorem toExprOpt_size2_singleton_syms (f : Verify.Formula) (h_size : f.size = 2
   -- After unfolding, we have `if h : f.size > 0 then some {...} else none`
   rw [dif_pos h_pos]
   -- Now goal is: ∃ e s, some {...} = some e ∧ e.syms = [s]
-  have h_tail := array_size2_toList_tail h_size
-  obtain ⟨y, h_y⟩ := h_tail
+  -- Use the stronger lemma: toList.tail = [f[1]!]
+  have h_tail := array_size2_tail_is_second_elem h_size
   -- The expression has typecode f[0].value and syms = f.toList.tail.map toSym
-  refine ⟨{typecode := ⟨f[0].value⟩, syms := f.toList.tail.map toSym}, toSym y, ?_, ?_⟩
+  refine ⟨{typecode := ⟨f[0].value⟩, syms := f.toList.tail.map toSym}, toSym f[1]!, ?_, ?_⟩
   · -- some {...} = some e
     rfl
-  · -- e.syms = [toSym y]
-    simp [h_y, List.map]
+  · -- e.syms = [toSym f[1]!]
+    rw [h_tail]
+    simp [List.map]
 
 /-- Option.bind with some value reduces to applying the function. -/
 theorem Option.bind_some {α β : Type _} (a : α) (f : α → Option β) :
@@ -677,12 +678,18 @@ theorem convertHyp_float_from_var (db : Verify.DB) (label : String) (f : Verify.
     rw [h_tail, h_v]
     simp [List.map]
 
-  -- Use h_syms to rewrite in h_conv
-  -- The pattern match in convertHyp will see syms = [toSym (Sym.var v_str)]
-  -- and extract v = toSym (Sym.var v_str)
-  -- This is a straightforward consequence of pattern matching on do-notation
-  -- but requires detailed reasoning about Option bind and match
-  sorry  -- Pattern match extraction: v = toSym (Sym.var v_str) from h_conv + h_syms
+  -- Use h_syms to establish the form of the expression
+  -- h_syms : f.toList.tail.map toSym = [toSym (Sym.var v_str)]
+  -- This means the expr's syms field is exactly [toSym (Sym.var v_str)]
+  --
+  -- From h_conv and h_syms, the pattern match succeeds with:
+  -- - typecode from f[0]
+  -- - extracted variable v = toSym (Sym.var v_str)
+  --
+  -- The proof requires showing this extraction from the do-notation,
+  -- using expr_singleton_pattern_match to handle the pattern matching
+  refine ⟨v_str, ?_⟩
+  sorry  -- Pattern match extraction: complete do-notation threading
 
 /-- Convert DV pair to spec variables. -/
 def convertDV (dv : String × String) : Spec.Variable × Spec.Variable :=
