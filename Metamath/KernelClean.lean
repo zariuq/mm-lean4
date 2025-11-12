@@ -925,6 +925,17 @@ theorem toFrame_some_of_wfFrame (db : Verify.DB) :
     2. Each floating hyp came from convertHyp applied to a well-formed formula
     3. convertHyp_float_from_var proves the Variable came from toSym (Sym.var _)
     4. Therefore no Variable can equal toSym (Sym.const _) -/
+/-- Helper: Extract the mapM result from toFrame's do-notation -/
+lemma toFrame_hyps_eq (db : Verify.DB) (fr_impl : Verify.Frame) (fr_spec : Spec.Frame)
+    (h_conv : toFrame db fr_impl = some fr_spec) :
+    fr_impl.hyps.toList.mapM (convertHyp db) = some fr_spec.mand := by
+  -- toFrame returns ⟨hyps_spec, dv_spec⟩, so extracting hyps_spec gives us the mapM result
+  have : toFrame db fr_impl = some ⟨fr_spec.mand, fr_spec.dj⟩ := h_conv
+  -- The do-notation in toFrame is: let hyps_spec ← ...; ... pure ⟨hyps_spec, dv_spec⟩
+  unfold toFrame at this
+  simp at this
+  sorry  -- Needs unfold of do-notation and Spec.Frame constructor
+
 theorem toFrame_vars_from_var (db : Verify.DB) (fr_impl : Verify.Frame) (fr_spec : Spec.Frame)
     (h_wf : WellFormedFrame db fr_impl)
     (h_conv : toFrame db fr_impl = some fr_spec) :
@@ -959,13 +970,18 @@ theorem toFrame_vars_from_var (db : Verify.DB) (fr_impl : Verify.Frame) (fr_spec
 
       -- From toFrame definition: hyps_spec ← fr_impl.hyps.toList.mapM (convertHyp db)
       -- So fr_spec.mand came from this mapM
-      -- Therefore ∃ label ∈ fr_impl.hyps.toList, convertHyp db label = some (floating c_type v_float)
+      -- h ∈ fr_spec.mand was produced by convertHyp, so by List.mapM_mem:
+      have h_map_eq : fr_impl.hyps.toList.mapM (convertHyp db) = some fr_spec.mand :=
+        toFrame_hyps_eq db fr_impl fr_spec h_conv
+      have ⟨lbl, h_lbl_mem, h_convert⟩ := List.mapM_mem (convertHyp db) fr_impl.hyps.toList fr_spec.mand h h_map_eq h_in_mand
 
-      -- This requires a standard List.mapM membership lemma:
-      -- If xs.mapM f = some ys and y ∈ ys, then ∃ x ∈ xs, f x = some y
-      -- Then use well-formedness to look up the formula at that label
-      -- and apply convertHyp_float_from_var
-      sorry  -- Needs: List.mapM membership lemma + WellFormedFrame lookup
+      -- Now lbl ∈ fr_impl.hyps.toList and convertHyp db lbl = some h
+      -- h = floating c_type v_float, so we get the floating case
+      -- Use well-formedness to extract the variable from the hypothesis
+      -- From h_wf and h_lbl_mem, we can look up the hypothesis in fr_impl.hyps and show it's well-formed
+
+      -- Apply convertHyp_float_from_var to extract the Sym.var from v_float
+      sorry  -- Remaining: Use well-formedness to look up the formula at lbl
 
 /-- ✅ Phase 4: Convert DB to spec Database (IMPLEMENTED) -/
 def toDatabase (db : Verify.DB) : Option Spec.Database :=
