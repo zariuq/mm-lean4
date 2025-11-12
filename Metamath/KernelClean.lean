@@ -530,9 +530,94 @@ lemma foldlM_nonempty_preserves_nonempty {σ : Std.HashMap String Verify.Formula
     {c : String} (syms : List Verify.Sym) (result : Verify.Formula)
     (h_fold : syms.foldlM (Formula.substStep σ) #[Verify.Sym.const c] = Except.ok result) :
     0 < result.size := by
-  -- foldlM starting from nonempty array #[const c] produces nonempty result
-  -- since substStep never removes all elements
-  sorry  -- Requires Array.foldlM induction showing monotonicity of size
+  -- Key insight: substStep always appends to the accumulator
+  -- - For const: appends the symbol via acc.push
+  -- - For var: appends the tail of the substitution via Array.push in a fold
+  -- Therefore the array never shrinks, and stays nonempty
+
+  -- Induction on syms
+  induction syms generalizing result with
+  | nil =>
+      -- syms = [] means foldlM doesn't process anything
+      -- So result = #[const c]
+      simp [List.foldlM_nil] at h_fold
+      -- h_fold : ok #[Verify.Sym.const c] = ok result
+      injection h_fold with h_eq
+      rw [← h_eq]
+      -- Now show 0 < #[const c].size
+      decide
+
+  | cons s rest ih =>
+      -- syms = s :: rest
+      -- foldlM (s :: rest) = substStep σ #[const c] s >>= fun a => rest.foldlM (Formula.substStep σ) a
+      simp only [List.foldlM_cons] at h_fold
+
+      -- h_fold : (Formula.substStep σ #[Verify.Sym.const c] s) >>= fun a => rest.foldlM (Formula.substStep σ) a = ok result
+
+      -- Case on whether substStep succeeds
+      have h_step : Formula.substStep σ #[Verify.Sym.const c] s = Except.ok ?acc := by
+        -- substStep either returns ok or error
+        -- We need to extract the successful case
+        cases h_step : Formula.substStep σ #[Verify.Sym.const c] s with
+        | ok acc =>
+            exact ⟨acc, rfl⟩
+        | error err =>
+            -- If substStep fails, the bind fails, contradicting h_fold
+            simp [h_step] at h_fold
+
+      obtain ⟨acc, h_step_ok⟩ := h_step
+      rw [h_step_ok] at h_fold
+      -- Now h_fold: ok acc >>= fun a => rest.foldlM (Formula.substStep σ) a = ok result
+      simp at h_fold
+      -- h_fold : rest.foldlM (Formula.substStep σ) acc = ok result
+
+      -- Key: acc has size > 0 because substStep appends to nonempty array
+      have h_acc_nonempty : 0 < acc.size := by
+        -- substStep σ #[const c] s appends to #[const c]
+        -- - If s is const, it appends the symbol
+        -- - If s is var, it appends elements from the substitution
+        -- In both cases, size increases from 1
+        cases s with
+        | const c' =>
+            -- substStep σ #[const c] (const c') = ok (#[const c].push (const c'))
+            simp [Formula.substStep] at h_step_ok
+            rw [h_step_ok]
+            simp [Array.size_push]
+        | var v =>
+            -- substStep σ #[const c] (var v) either errors or appends tail of substitution
+            cases lookup : σ[v]? with
+            | none =>
+                -- substStep fails, contradiction
+                simp [Formula.substStep, lookup] at h_step_ok
+            | some e =>
+                -- substStep σ #[const c] (var v) = ok (e.foldl Array.push #[const c] 1)
+                simp [Formula.substStep, lookup] at h_step_ok
+                rw [h_step_ok]
+                -- e.foldl Array.push #[const c] 1 starts with #[const c] and appends elements
+                -- Its size is at least 1 (from the initial #[const c])
+                have : 1 ≤ (e.foldl Array.push #[Verify.Sym.const c] 1).size := by
+                  -- Array.foldl starting from #[const c] preserves size >= 1
+                  have h_init : 0 < (#[Verify.Sym.const c] : Verify.Formula).size := by decide
+                  clear *
+                  -- General fact: foldl on nonempty array with push stays nonempty
+                  induction e with
+                  | nil =>
+                      simp [List.foldl_nil]
+                      decide
+                  | cons s' rest' ih' =>
+                      simp only [List.foldl_cons]
+                      -- foldl processes s' then rest'
+                      -- After processing s', we push s'
+                      -- This maintains size >= 1
+                      have : 1 ≤ (#[Verify.Sym.const c].push s').size := by decide
+                      omega
+                omega
+
+      -- By induction hypothesis on rest with acc
+      have h_rest : 0 < result.size :=
+        ih acc h_fold
+
+      exact h_rest
 
 /-- Helper: foldlM with substStep preserves head constant -/
 lemma foldlM_substStep_preserves_head_const {σ : Std.HashMap String Verify.Formula}
