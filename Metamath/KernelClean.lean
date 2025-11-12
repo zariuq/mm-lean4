@@ -512,18 +512,15 @@ theorem subst_eq_foldlM
   unfold Formula.subst
   exact (Array.foldlM_toList (f := Formula.substStep σ) (init := #[]) (xs := f)).symm
 
-/-  Helper lemmas commented out due to syntax issue - TODO: fix and uncomment
-/-- Helper lemma: substStep for a constant appends the constant to the accumulator. -/
-lemma substStep_const {σ : Std.HashMap String Formula} {acc : Array Verify.Sym} {c : String} :
-    Formula.substStep σ acc (.const c) = .ok (acc.push (.const c)) := by
-  simp [Formula.substStep]
-
-/-- Helper lemma: substStep for a variable (when found) appends the tail of the expansion. -/
-lemma substStep_var {σ : Std.HashMap String Formula} {acc : Array Verify.Sym} {v : String} {e : Formula}
-    (hlookup : σ[v]? = some e) :
-    Formula.substStep σ acc (.var v) = .ok (e.foldl Array.push acc 1) := by
-  simp [Formula.substStep, hlookup]
--/
+-- Helper lemmas commented out due to syntax issue - TODO: fix and uncomment
+-- lemma substStep_const {σ : Std.HashMap String Formula} {acc : Array Verify.Sym} {c : String} :
+--     Formula.substStep σ acc (.const c) = .ok (acc.push (.const c)) := by
+--   simp [Formula.substStep]
+--
+-- lemma substStep_var {σ : Std.HashMap String Formula} {acc : Array Verify.Sym} {v : String} {e : Formula}
+--     (hlookup : σ[v]? = some e) :
+--     Formula.substStep σ acc (.var v) = .ok (e.foldl Array.push acc 1) := by
+--   simp [Formula.substStep, hlookup]
 
 /-- Helper: foldlM on a nonempty initializer stays nonempty -/
 lemma foldlM_nonempty_preserves_nonempty {σ : Std.HashMap String Verify.Formula}

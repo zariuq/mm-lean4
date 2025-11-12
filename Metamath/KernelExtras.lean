@@ -10,6 +10,7 @@ After Batteries 4.24.0 upgrade (November 2025):
 -/
 
 import Metamath.Spec
+import Metamath.Verify
 import Metamath.ArrayListExt
 import Batteries.Data.List.Lemmas
 import Batteries.Data.Array.Lemmas
@@ -136,6 +137,31 @@ theorem array_foldlM_preserves
     rw [←this]
     exact hfold
   exact list_foldlM_preserves P f arr.toList init res h0 hstep h_list
+
+/-! ## Array fold head preservation
+
+Micro-lemmas for substitution: Show that folding with Array.push preserves
+the head element at index 0, which is critical for substitution correctness.
+-/
+
+/-- Foldl with push preserves the head element.
+    Key micro-lemma for substitution: When folding a list using Array.push,
+    the element at index 0 is never modified since we only append to the end.
+
+    This is used in Formula.substStep to show that when substituting a variable,
+    the constant at position 0 is preserved even after appending expansion symbols. -/
+theorem foldl_from_pos1_preserves_head {a : Metamath.Verify.Formula} (suffix : List Metamath.Verify.Sym) :
+    (suffix.foldl (fun acc x => acc.push x) a)[0]! = a[0]! := by
+  -- List.foldl with Array.push only appends, so position 0 is never touched
+  induction suffix generalizing a with
+  | nil =>
+    -- No processing: result equals input
+    rfl
+  | cons x xs ih =>
+    -- After one push, head is still at position 0
+    simp only [List.foldl_cons]
+    -- Pushing doesn't change position 0, then recurse
+    sorry  -- Lemma: (a.push x)[0]! = a[0]!, then apply IH
 
 /-! ## HashMap Lemmas
 
