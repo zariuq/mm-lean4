@@ -619,15 +619,68 @@ lemma foldlM_nonempty_preserves_nonempty {σ : Std.HashMap String Verify.Formula
 
       exact h_rest
 
+/-- Helper: foldlM starting from position 1 doesn't affect index 0 -/
+lemma foldl_from_pos1_preserves_head {a : Verify.Formula} (suffix : List Verify.Sym) :
+    (suffix.foldl (fun acc x => acc.push x) a 1)[0]! = a[0]! := by
+  -- Array.foldl with start=1 processes elements at positions >= 1
+  -- Position 0 is never touched
+  sorry  -- Requires: Array.foldl mechanics with start parameter
+
 /-- Helper: foldlM with substStep preserves head constant -/
 lemma foldlM_substStep_preserves_head_const {σ : Std.HashMap String Verify.Formula}
     {c : String} (syms : List Verify.Sym) (result : Verify.Formula)
     (h_fold : syms.foldlM (Formula.substStep σ) #[Verify.Sym.const c] = Except.ok result) :
     result[0]! = Verify.Sym.const c := by
-  -- The fold applies substStep repeatedly to symbols in syms
-  -- substStep with const appends, with var appends tail
-  -- Both preserve the head constant via head_append_many_stable
-  sorry  -- Requires unrolling foldlM + applying head_append_many_stable
+  -- Induction on syms - at each step, the accumulator maintains the head constant
+  induction syms generalizing result with
+  | nil =>
+      -- Base: no processing, result is the initial accumulator
+      simp [List.foldlM_nil] at h_fold
+      injection h_fold with h_eq
+      simp [← h_eq]
+
+  | cons s rest ih =>
+      -- Inductive: process s then fold rest
+      simp only [List.foldlM_cons] at h_fold
+
+      -- Extract whether substStep succeeds
+      cases h_step : Formula.substStep σ #[Verify.Sym.const c] s with
+      | error err =>
+          simp [h_step] at h_fold
+      | ok acc =>
+          rw [h_step] at h_fold
+          simp at h_fold
+          -- h_fold : rest.foldlM (Formula.substStep σ) acc = ok result
+
+          -- Key: acc[0]! = const c after the first step
+          have h_acc_head : acc[0]! = Verify.Sym.const c := by
+            cases s with
+            | const c' =>
+                -- substStep σ #[const c] (const c') = ok (#[const c].push (const c'))
+                simp [Formula.substStep] at h_step
+                rw [h_step]
+                -- (#[const c].push c')[0]! = #[const c][0]!
+                simp [Array.getElem!_push_left]
+            | var v =>
+                -- substStep σ #[const c] (var v) = ok (e.foldl Array.push #[const c] 1)
+                cases lookup : σ[v]? with
+                | none =>
+                    simp [Formula.substStep, lookup] at h_step
+                | some e =>
+                    simp [Formula.substStep, lookup] at h_step
+                    rw [h_step]
+                    -- Use helper: foldl from position 1 preserves head
+                    rw [foldl_from_pos1_preserves_head]
+                    simp
+
+          -- By induction hypothesis, rest.foldlM preserves the head
+          have h_rest : result[0]! = acc[0]! := by
+            -- rest.foldlM with acc as init preserves acc[0]!
+            -- This is the IH applied with acc
+            exact ih acc h_fold
+
+          -- Combine: acc[0]! = const c, so result[0]! = const c
+          rw [h_rest, h_acc_head]
 
 /-- Head is preserved once the first symbol is a constant (core lemma).
 
