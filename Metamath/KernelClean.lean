@@ -107,6 +107,29 @@ open Metamath.Verify
 open Metamath.Bridge
 open Metamath.WF
 
+/-! ## Stub Lemmas (Temporarily Commented Out - See Lines 452-731, 1051-1120) -/
+
+/-- Head preservation: When substituting in a formula starting with a constant,
+    the resulting formula also starts with a constant. -/
+theorem subst_preserves_head_of_const0 {σ : Std.HashMap String Formula} {f g : Formula}
+    (hf : 0 < f.size) (hhead : ∃ c, f[0]! = Sym.const c) (h_sub : f.subst σ = Except.ok g) :
+    ∃ (hg : 0 < g.size), g[0]'hg = f[0]'hf :=
+  sorry
+
+/-- Tail correspondence: When substituting, the tail of the result matches
+    the flatMap of the tail with the substitution step. -/
+theorem subst_ok_flatMap_tail {σ : Std.HashMap String Formula} {f g : Formula}
+    (h_sub : f.subst σ = Except.ok g) :
+    g.toList.tail = (f.toList.tail).flatMap fun s =>
+      match s with
+      | .const _ => [s]
+      | .var v =>
+        match σ[v]? with
+        | none => []
+        | some e => e.toList.drop 1 :=
+  sorry
+
+
 /-! ## Core Conversions (WORKING) -/
 
 /-- Convert implementation Sym to spec Sym -/
@@ -758,7 +781,7 @@ theorem subst_preserves_head
     -- TODO: Wire this from ParserInvariants.lean once "all formulas start with const" is proven
     admit
   -- Core head-preservation lemma
-  obtain ⟨hg, hhead⟩ := Verify.Formula.subst_preserves_head_of_const0 hf hconst h_sub
+  obtain ⟨hg, hhead⟩ := subst_preserves_head_of_const0 hf hconst h_sub
   exact ⟨hf, hg, hhead⟩
 
 /-- Convert a single hypothesis label to spec hypothesis.
@@ -932,7 +955,7 @@ theorem List.mapM_mem {α β : Type u_1} (f : α → Option β) (xs : List α) (
               rcases h_mem_or with h_eq | h_mem_tail
               · -- y = y_head': a is the witness
                 -- From h, we can extract that y_head = y_head' by injecting the bind result
-                cases hm : mapM f as with
+                cases hm : List.mapM f as with
                 | none =>
                     -- mapM f as = none, so bind gives none
                     rw [hm] at h
@@ -941,23 +964,31 @@ theorem List.mapM_mem {α β : Type u_1} (f : α → Option β) (xs : List α) (
                     -- mapM f as = some ys', so bind gives some (y_head :: ys')
                     rw [hm] at h
                     simp at h
-                    -- h is now simplified to a conjunction: h_head = y_head' ∧ ys' = ys_tail
+                    -- h is now simplified to a conjunction: y_head = y_head' ∧ ys' = ys_tail
                     obtain ⟨h_head, h_tail⟩ := h
-                    exact ⟨a, by simp, by rw [← h_eq, h_head]; exact h_fa⟩
+                    -- h_eq : y = y_head'
+                    -- h_head : y_head = y_head'
+                    -- h_fa : f a = some y_head
+                    -- So: y = y_head (by transitivity of y = y_head' and y_head = y_head')
+                    have hy : y = y_head := by rw [h_eq, ← h_head]
+                    exact ⟨a, by simp [hy], by rw [hy]; exact h_fa⟩
               · -- y ∈ ys_tail: use induction on tail
                 -- Extract mapM f as = some ys_tail from h
                 have h_as : List.mapM f as = some ys_tail := by
-                  cases hm : mapM f as with
+                  cases hm : List.mapM f as with
                   | none =>
-                      rw [hm] at h
-                      simp at h
+                      -- mapM f as = none, so bind gives none
+                      -- But h says it equals some (y_head :: ys_tail), contradiction
+                      simp [List.mapM_cons, h_fa, hm] at h
                   | some ys' =>
-                      rw [hm] at h
-                      simp at h
-                      -- h is now simplified to a conjunction
-                      obtain ⟨h_head, h_tail⟩ := h
-                      rw [← h_tail]
-                      exact hm
+                      -- mapM f as = some ys', so bind gives some (y_head :: ys')
+                      -- From h and the equalities, we can derive ys' = ys_tail
+                      have h_eq_tails : ys' = ys_tail := by
+                        simp [List.mapM_cons, h_fa, hm] at h
+                        exact h.2
+                      -- Now h_eq_tails : ys' = ys_tail and hm : List.mapM f as = some ys'
+                      -- We need to prove: List.mapM f as = some ys_tail
+                      simp only [← h_eq_tails, hm]
                 -- Apply induction
                 obtain ⟨x, hx_mem, hx_eq⟩ := ih ys_tail h_as h_mem_tail
                 exact ⟨x, by simp [hx_mem], hx_eq⟩
@@ -1117,7 +1148,16 @@ theorem toFrame_some_of_wfFrame (db : Verify.DB) :
 -- 
 --       -- Apply convertHyp_float_from_var to extract the Sym.var from v_float
 --       sorry  -- Remaining: Use well-formedness to look up the formula at lbl
--- 
+--
+
+/-- Variables extracted from toFrame come from Sym.var, not Sym.const. -/
+theorem toFrame_vars_from_var (db : Verify.DB) (fr_impl : Verify.Frame) (fr_spec : Spec.Frame)
+    (h_wf : WellFormedFrame db fr_impl)
+    (h_conv : toFrame db fr_impl = some fr_spec) :
+    ∀ v ∈ fr_spec.vars, ∃ s, v = Spec.Variable.mk s ∧
+                               ∀ c', s ≠ toSym (Verify.Sym.const c') :=
+  sorry
+
 /-- ✅ Phase 4: Convert DB to spec Database (IMPLEMENTED) -/
 def toDatabase (db : Verify.DB) : Option Spec.Database :=
   some (fun label : String =>
@@ -1763,7 +1803,7 @@ theorem subst_correspondence
     -- Tail/syms correspondence
     have h_tail : (concl_impl.toList.tail.map toSym) = (Spec.applySubst vars σ_spec e_spec).syms := by
       -- Use the axiom subst_ok_flatMap_tail to get impl behavior
-      have h_impl_tail := Verify.Formula.subst_ok_flatMap_tail h_subst
+      have h_impl_tail := subst_ok_flatMap_tail h_subst
 
       -- h_impl_tail: concl_impl.toList.tail = f_impl.toList.tail.flatMap (fun s => ...)
       rw [h_impl_tail]
