@@ -165,9 +165,14 @@ end KernelExtras.Array
     Key micro-lemma for substitution: When folding a list using Array.push,
     the element at index 0 is never modified since we only append to the end.
 
+    **Precondition**: Requires a.size > 0 (array is non-empty).
+    This holds in practice since formulas are well-formed and contain at least
+    one symbol (guaranteed by WellFormedFormula).
+
     This is used in Formula.substStep to show that when substituting a variable,
     the constant at position 0 is preserved even after appending expansion symbols. -/
-theorem foldl_from_pos1_preserves_head {a : Metamath.Verify.Formula} (suffix : List Metamath.Verify.Sym) :
+theorem foldl_from_pos1_preserves_head {a : Metamath.Verify.Formula} (suffix : List Metamath.Verify.Sym)
+    (h_nonempty : 0 < a.size) :
     (suffix.foldl (fun acc x => acc.push x) a)[0]! = a[0]! := by
   -- List.foldl with Array.push only appends, so position 0 is never touched
   induction suffix generalizing a with
@@ -182,16 +187,14 @@ theorem foldl_from_pos1_preserves_head {a : Metamath.Verify.Formula} (suffix : L
     -- But first show that (a.push x)[0]! = a[0]!
     have h_head : (a.push x)[0]! = a[0]! := by
       -- Array.push appends at the end, so index 0 is unchanged
-      -- All elements in Formula are non-empty (contain at least one symbol)
-      -- So 0 < a.size always holds
-      apply KernelExtras.Array.getElem!_push_lt
-      -- Need to show 0 < a.size
-      -- For Formula type, this is true (non-empty by construction)
-      sorry  -- 0 < a.size is guaranteed by Formula being non-empty
+      apply KernelExtras.Array.getElem!_push_lt h_nonempty
+    -- Now show (a.push x) is also non-empty for the inductive hypothesis
+    have h_push_nonempty : 0 < (a.push x).size := by
+      simp [Array.size_push, h_nonempty]
     -- Now the IH gives us:
     -- (List.foldl (fun acc y => acc.push y) (a.push x) xs)[0]! = (a.push x)[0]!
     have ih_applied : (List.foldl (fun acc y => acc.push y) (a.push x) xs)[0]! = (a.push x)[0]! :=
-      @ih (a.push x)
+      @ih (a.push x) h_push_nonempty
     rw [← h_head]
     exact ih_applied
 
