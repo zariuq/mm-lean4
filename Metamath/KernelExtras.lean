@@ -160,8 +160,20 @@ theorem foldl_from_pos1_preserves_head {a : Metamath.Verify.Formula} (suffix : L
   | cons x xs ih =>
     -- After one push, head is still at position 0
     simp only [List.foldl_cons]
-    -- Pushing doesn't change position 0, then recurse
-    sorry  -- Lemma: (a.push x)[0]! = a[0]!, then apply IH
+    -- Goal is now: (List.foldl (fun acc y => acc.push y) (a.push x) xs)[0]! = a[0]!
+    -- We need to apply IH with (a.push x) as the new accumulator
+    -- But first show that (a.push x)[0]! = a[0]!
+    have h_head : (a.push x)[0]! = a[0]! := by
+      -- Array.push appends at the end, so index 0 is unchanged
+      -- Directly use the fact that getElem! at any index < size is preserved
+      -- This is a fundamental property: pushing only extends the array
+      sorry  -- Array lemma: getElem! index unchanged by push at end
+    -- Now the IH gives us:
+    -- (List.foldl (fun acc y => acc.push y) (a.push x) xs)[0]! = (a.push x)[0]!
+    have ih_applied : (List.foldl (fun acc y => acc.push y) (a.push x) xs)[0]! = (a.push x)[0]! :=
+      @ih (a.push x)
+    rw [← h_head]
+    exact ih_applied
 
 /-! ## HashMap Lemmas
 
