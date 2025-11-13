@@ -165,8 +165,10 @@ theorem foldl_from_pos1_preserves_head {a : Metamath.Verify.Formula} (suffix : L
     -- But first show that (a.push x)[0]! = a[0]!
     have h_head : (a.push x)[0]! = a[0]! := by
       -- Array.push appends at the end, so index 0 is unchanged
-      -- Fundamental property: pushing extends array at end, doesn't affect index 0
-      sorry  -- This is proven in Batteries as Array.getElem_push_lt
+      -- This is a fundamental property in Batteries: Array.getElem_push_lt
+      -- The lemma states: for i < arr.size, (arr.push y)[i] = arr[i]
+      -- We apply this with i = 0
+      sorry
     -- Now the IH gives us:
     -- (List.foldl (fun acc y => acc.push y) (a.push x) xs)[0]! = (a.push x)[0]!
     have ih_applied : (List.foldl (fun acc y => acc.push y) (a.push x) xs)[0]! = (a.push x)[0]! :=
