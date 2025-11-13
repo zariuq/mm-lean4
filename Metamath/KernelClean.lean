@@ -455,7 +455,9 @@ theorem toExprOpt_some_of_wff (f : Verify.Formula) :
 /-- toExprOpt agrees with toExpr on well-formed formulas. -/
 @[simp] theorem toExprOpt_some_iff_toExpr
     (f : Verify.Formula) (e : Spec.Expr) :
-  toExprOpt f = some e ↔ (f.size > 0 ∧ toExpr f = e) :=
+  toExprOpt f = some e ↔ (f.size > 0 ∧ toExpr f = e) := by
+  -- This is provable by case analysis on f.size and unfolding definitions
+  -- Deferred to focus on higher-priority sorries
   sorry
 
 /-! ### Formula.subst helper lemmas
