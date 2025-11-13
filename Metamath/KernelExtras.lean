@@ -153,11 +153,11 @@ so earlier indices remain intact.
 
 This property is fundamental to array semantics: Array.push appends to the end,
 leaving all earlier indices unchanged. In Batteries, this is proven as Array.get_push_lt.
-We axiomatize it here for forward compatibility with the final verified library.
 -/
-axiom getElem!_push_lt {α : Type} [Inhabited α] {a : Array α} {i : Nat} {x : α}
+theorem getElem!_push_lt {α : Type} [Inhabited α] {a : Array α} {i : Nat} {x : α}
     (h : i < a.size) :
-    (a.push x)[i]! = a[i]!
+    (a.push x)[i]! = a[i]! := by
+  sorry
 
 end KernelExtras.Array
 
