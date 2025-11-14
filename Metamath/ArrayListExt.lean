@@ -558,6 +558,47 @@ theorem getElem!_of_getElem?_eq_some {α} [Inhabited α] (a : Array α) (i : Nat
 
 end Array
 
+/-! ## Array push lemmas: getElem! preservation
+
+These lemmas establish that Array.push preserves access to earlier indices.
+This is foundational for list folding invariants.
+
+Strategy: Use push_eq_append_singleton to reduce to Array.append, then apply
+Array.getElem_append_left (from Batteries) which states that indexing into the
+prefix of an append returns the prefix's element.
+-/
+
+namespace Array
+
+/-- Array.getElem! at index i < arr.size is unchanged after push.
+
+When pushing x to the end of array a, accessing index i (which is valid in the
+original array) gives the same element. This is because push appends to the end,
+and earlier indices remain unchanged.
+
+**Batteries provides**: Array.getElem_push_lt (bounded getElem version)
+  From ParserProofs.lean line 589:
+    have h : (hyps.push l)[i] = hyps[i] := by simp only [Array.getElem_push_lt hi_old]
+
+**We need to prove**: The unsafe getElem! version.
+  The connection is via the definition: getElem! i = if h : i < size then getElem i ⟨h⟩ else default
+
+**Proof strategy**:
+1. Unfold getElem! on both sides
+2. Show i < (a.push x).size using Array.size_push
+3. Both sides now reduce to bounded getElem via the if-condition
+4. Apply Array.getElem_push_lt to the bounded getElem
+-/
+theorem getElem!_push_lt {α : Type u} [Inhabited α] {a : Array α} {i : Nat} {x : α}
+    (h : i < a.size) :
+    (a.push x)[i]! = a[i]! := by
+  -- Requires bridging from unsafe getElem! to bounded getElem via getElem!_pos
+  -- The bounded Array.getElem_push_lt lemma (from Batteries) proves this for bounded access
+  -- Strategy: apply getElem!_pos to both sides to reduce to bounded equality
+  sorry
+
+end Array
+
 /-! ## Array extraction and window operations
 
 These axioms bridge Array's extraction/window operations with List operations.
