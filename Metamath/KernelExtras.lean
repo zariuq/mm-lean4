@@ -144,22 +144,8 @@ Micro-lemmas for substitution: Show that folding with Array.push preserves
 the head element at index 0, which is critical for substitution correctness.
 -/
 
-namespace KernelExtras.Array
-
-/-- Array.getElem! at index i < arr.size is unchanged after push.
-
-This is the foundational property: pushing extends the array at the end,
-so earlier indices remain intact.
-
-This property is fundamental to array semantics: Array.push appends to the end,
-leaving all earlier indices unchanged. In Batteries, this is proven as Array.get_push_lt.
--/
-theorem getElem!_push_lt {α : Type} [Inhabited α] {a : Array α} {i : Nat} {x : α}
-    (h : i < a.size) :
-    (a.push x)[i]! = a[i]! := by
-  sorry
-
-end KernelExtras.Array
+-- Array.getElem!_push_lt is defined in ArrayListExt.lean
+-- It establishes that Array.push preserves access to earlier indices
 
 /-- Foldl with push preserves the head element.
     Key micro-lemma for substitution: When folding a list using Array.push,
@@ -187,10 +173,10 @@ theorem foldl_from_pos1_preserves_head {a : Metamath.Verify.Formula} (suffix : L
     -- But first show that (a.push x)[0]! = a[0]!
     have h_head : (a.push x)[0]! = a[0]! := by
       -- Array.push appends at the end, so index 0 is unchanged
-      apply KernelExtras.Array.getElem!_push_lt h_nonempty
+      apply Array.getElem!_push_lt h_nonempty
     -- Now show (a.push x) is also non-empty for the inductive hypothesis
     have h_push_nonempty : 0 < (a.push x).size := by
-      simp [Array.size_push, h_nonempty]
+      simp [Array.size_push]
     -- Now the IH gives us:
     -- (List.foldl (fun acc y => acc.push y) (a.push x) xs)[0]! = (a.push x)[0]!
     have ih_applied : (List.foldl (fun acc y => acc.push y) (a.push x) xs)[0]! = (a.push x)[0]! :=
