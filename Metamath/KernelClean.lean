@@ -3033,7 +3033,9 @@ theorem preload_sound
         refine ⟨Verify.Object.hyp false f lbl, rfl, ?_⟩
         rw [←h_eq]
         unfold Verify.ProofState.pushHeap
-        simp [Array.back!_push]
+        -- Goal: (pr.heap.push (.fmla f)).back? = some (.fmla f)
+        -- back? returns some of the last element after push
+        simp only [Array.back?_push]
       · -- Essential hypothesis: ess = true
         -- preload throws error "$e found in paren list"
         -- Simplify to expose the contradiction
@@ -3045,7 +3047,9 @@ theorem preload_sound
       refine ⟨Verify.Object.assert f fr_impl lbl, rfl, ?_⟩
       rw [←h_eq]
       unfold Verify.ProofState.pushHeap
-      simp [Array.back!_push]
+      -- Goal: (pr.heap.push (.assert f fr_impl)).back? = some (.assert f fr_impl)
+      -- back? returns some of the last element after push
+      simp only [Array.back?_push]
 
 /-- Phase 8.3: Compressed proof soundness (Simplified statement).
 
