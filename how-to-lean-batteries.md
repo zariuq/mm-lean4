@@ -8,6 +8,7 @@ This document captures practical patterns and techniques learned while working o
 - [HashMap Proofs](#hashmap-proofs)
 - [Case Analysis](#case-analysis)
 - [Pattern Matching with Cases](#pattern-matching-with-cases)
+- [Nested Match Expressions and List.find?](#nested-match-expressions-and-listfind)
 - [Do-Notation and ForIn Loop Proofs](#do-notation-and-forin-loop-proofs)
 - [Array Indexing Equivalence](#array-indexing-equivalence)
 
@@ -360,6 +361,107 @@ theorem proofValid_to_mario {Γ : Database} {fr : Frame} {e : Expr} {steps : Lis
 2. Binds `e` (the expression we need), `h_in` (membership proof), `h_prev` (recursive proof)
 3. Immediately establishes `have` facts using `e` before it goes out of scope
 4. Uses those facts in the rest of the proof
+
+---
+
+## Nested Match Expressions and List.find?
+
+### The Problem: `simp` Fails on Nested Matches
+
+When working with definitions like `List.find?` that produce nested match expressions, `simp` often can't reduce them even when you provide the discriminant value:
+
+```lean
+-- Definition uses nested match
+def String.toMarioSym (s : String) (vars : List MarioVR) : MarioSym :=
+  match vars.find? (fun vr => (MarioVR.toVariable vr).v == s) with
+  | some vr => .var vr
+  | none => .const s
+
+-- After unfolding, goal looks like:
+-- ⊢ (match (match hd.toVariable.v == v.v with
+--       | true => some hd
+--       | false => List.find? ... tl with
+--    | some vr => Sym.var vr
+--    | none => Sym.const v.v) = Sym.var hd
+
+-- Even with hypothesis hHead : (hd.toVariable.v == v.v) = true
+-- simp [hHead] FAILS to reduce the nested match!
+```
+
+**Why simp fails**: `simp` rewrites `p hd` to `true` inside the term, but doesn't trigger the reduction rule for `match true`.
+
+### The Solution: unfold + simp only [p] at + rw
+
+**The Nuclear Option** that always works:
+
+```lean
+-- Step 1: Unfold to expose match structure
+unfold String.toMarioSym List.find?
+
+-- Step 2: Simplify the let-binding in the hypothesis
+simp only [p] at hHead
+
+-- Step 3: Rewrite to substitute the value
+rw [hHead]
+
+-- Step 4: Now the match reduces (often automatically, or use rfl)
+```
+
+**Why this works**:
+1. `unfold` exposes the actual match expressions
+2. `simp only [p] at hHead` eliminates the `let p := ...` wrapper
+3. `rw` forces direct substitution of `true` (or `false`) into the goal
+4. The match now reduces definitionally
+
+### Alternative: dsimp + rw
+
+For definitions (not just hypotheses), try:
+
+```lean
+dsimp [List.find?, String.toMarioSym]  -- definitional simp is more aggressive
+rw [hHead]
+rfl  -- or simp
+```
+
+`dsimp` (definitional simp) can sometimes crack open matches that regular `simp` misses.
+
+### Full Example: String.toMarioSym_finds_var
+
+```lean
+theorem String.toMarioSym_finds_var (v : Variable) (vr : MarioVR) (vars : List MarioVR)
+    (h_in : vr ∈ vars) (h_eq : MarioVR.toVariable vr = v) :
+    ∃ vr', String.toMarioSym v.v vars = .var vr' ∧ MarioVR.toVariable vr' = v := by
+  revert vr h_in h_eq
+  induction vars with
+  | nil => intro vr h_in _; cases h_in
+  | cons hd tl ih =>
+      intro vr_mem h_in h_eq
+
+      let p : MarioVR → Bool := fun vr => (MarioVR.toVariable vr).v == v.v
+
+      by_cases hHead : p hd = true
+
+      · -- Positive case: hd matches
+        have h_names : (MarioVR.toVariable hd).v = v.v := decide_eq_true_eq.mp hHead
+        have h_head_var : MarioVR.toVariable hd = v := variable_eq_of_v_eq h_names
+
+        refine ⟨hd, ?_, h_head_var⟩
+        -- THE BREAKTHROUGH: unfold + simp only [p] at + rw
+        unfold String.toMarioSym List.find?
+        simp only [p] at hHead
+        rw [hHead]
+        -- Goal now reduces! ✅
+```
+
+### Key Insights
+
+1. **Pattern**: When `simp [hypothesis]` fails on nested matches, use `unfold + simp only [let_var] at hypothesis + rw [hypothesis]`
+
+2. **Let bindings block simp**: If your boolean is wrapped in `let p := ...`, you must `simp only [p] at hypothesis` to unwrap it before `rw` works
+
+3. **by_cases vs split**: Use `by_cases h : condition` instead of `split` on the match when possible—it gives you the boolean hypothesis directly
+
+4. **revert for strong IH**: When doing induction on lists where you need a parameterized IH, `revert` the parameters before `induction`
 
 ---
 
