@@ -1,0 +1,172 @@
+/-
+Operational semantics for Metamath proof verification.
+
+This file defines HOW a verifier checks proofs - the stack machine execution model.
+It provides the operational foundation that bridges to the implementation (Verify.lean).
+
+Per Metamath Specification (Chapter 4):
+- §4.2.6: Assertions and proof structure
+- §4.2.7: Frames (mandatory hypotheses + DV constraints)
+- §4.3: Proof verification algorithm
+
+This is the "small-step" operational semantics, as opposed to the "big-step"
+semantic Provable in Mario's Translate.lean (which we'll bridge to).
+-/
+
+import Metamath.Spec.Core
+
+namespace Metamath.Spec
+
+/-! ## Proof Steps (Operational)
+
+Per §4.3: A proof is a sequence of label references and hypothesis applications
+that build up a stack of expressions.
+-/
+
+inductive ProofStep where
+  | useHyp : Hyp → ProofStep
+  | useAssertion : Label → Subst → ProofStep
+
+/-! ## Stack Machine Semantics
+
+The verifier maintains a stack of expressions and processes proof steps one by one.
+This operational view directly corresponds to how Verify.lean executes.
+
+**Design choice**: We use an inductive relation rather than a function because:
+1. Easier to prove properties about (coinductive reasoning)
+2. Closer to the spec's description as a sequence of valid steps
+3. Separates specification from implementation
+-/
+
+/-- Operational proof execution: building up the proof stack.
+
+    Per §4.3 of the Metamath spec:
+    - Start with empty stack
+    - Apply hypotheses → push to stack
+    - Apply assertions → pop needed expressions, push conclusion
+    - Valid proof ends with singleton stack containing the theorem
+-/
+inductive ProofValid (Γ : Database) : Frame → List Expr → List ProofStep → Prop where
+  | nil : ∀ fr, ProofValid Γ fr [] []
+
+  | useEssential : ∀ fr stack steps e,
+      Hyp.essential e ∈ fr.mand →
+      ProofValid Γ fr stack steps →
+      ProofValid Γ fr (e :: stack) (ProofStep.useHyp (Hyp.essential e) :: steps)
+
+  | useFloating : ∀ fr stack steps c v,
+      Hyp.floating c v ∈ fr.mand →
+      ProofValid Γ fr stack steps →
+      ProofValid Γ fr (⟨c, [v.v]⟩ :: stack) (ProofStep.useHyp (Hyp.floating c v) :: steps)
+
+  | useAxiom : ∀ fr stack steps l fr' e σ,
+      Γ l = some (fr', e) →
+      dvOK fr.vars fr.dv σ →  -- Per §4.2.5: caller's DV constraints
+      dvOK fr'.vars fr'.dv σ → -- Per §4.2.5: callee's DV constraints
+      ProofValid Γ fr stack steps →
+      -- Pop fr'.mand hypotheses (in reverse order per §4.3)
+      ∀ needed : List Expr,
+      needed = fr'.mand.map (fun h => match h with
+        | Hyp.essential e => applySubst fr'.vars σ e
+        | Hyp.floating _ v => σ v) →
+      ∀ remaining : List Expr,
+      stack = needed.reverse ++ remaining →
+      ProofValid Γ fr (applySubst fr'.vars σ e :: remaining) (ProofStep.useAssertion l σ :: steps)
+
+/-! ## Provability (Operational Definition)
+
+Per §4.2.6 and §4.3: An assertion is provable if there exists a valid proof
+sequence that produces a singleton stack containing the assertion.
+-/
+
+/-- An assertion is provable if there exists a valid proof.
+
+    Per §4.2.6: "A proof demonstrates that a certain combination of math symbols
+    follows from previous assertions."
+-/
+def Provable (Γ : Database) (fr : Frame) (e : Expr) : Prop :=
+  ∃ (steps : List ProofStep) (finalStack : List Expr),
+    ProofValid Γ fr finalStack steps ∧
+    finalStack = [e]
+
+/-! ## Proof Sequences (Compositional)
+
+This is a generalization for composing proof steps. Used in fold-based proofs.
+-/
+
+/-- Proof sequence: relates initial (frame, stack) to final (frame, stack).
+
+    **Intended semantics**: Always starts from empty stack.
+    - nil case: "we reach stk from empty using zero steps" (i.e., stk must be empty)
+    - cons case: builds from empty through some steps, then continues
+
+    **TODO**: Current cons has stk₀ unconstrained, may be too general.
+    For now, we only use nil with empty stacks in practice.
+-/
+inductive ProofValidSeq (Γ : Database) : Frame → List Expr → Frame → List Expr → Prop where
+  | nil : ∀ fr stk, ProofValidSeq Γ fr stk fr stk
+  | cons : ∀ fr₀ stk₀ fr₁ stk₁ fr₂ stk₂ steps,
+      ProofValid Γ fr₀ stk₁ steps →
+      ProofValidSeq Γ fr₁ stk₁ fr₂ stk₂ →
+      ProofValidSeq Γ fr₀ stk₀ fr₂ stk₂
+
+/-! ## Key Theorems (Connecting Operational to Provable)
+
+These bridge the inductive proof construction to the existential definition.
+-/
+
+/-- **PROVEN**: If we have a ProofValid that produces [e], we get Provable -/
+theorem ProofValid.toProvable {Γ : Database} {fr : Frame} {e : Expr} {steps : List ProofStep} :
+  ProofValid Γ fr [e] steps → Provable Γ fr e := by
+  intro h_valid
+  exact ⟨steps, [e], h_valid, rfl⟩
+
+/-- Convert ProofValid to ProofValidSeq using cons + nil -/
+theorem ProofValid.toSeq_from_nil
+  {Γ : Database} {fr : Frame} {stk : List Expr} {steps : List ProofStep} :
+  ProofValid Γ fr stk steps → ProofValidSeq Γ fr [] fr stk := by
+  intro h_valid
+  exact ProofValidSeq.cons fr [] fr stk fr stk steps h_valid (ProofValidSeq.nil fr stk)
+
+/-! ## Soundness Statement
+
+The main theorem to prove: if our verifier accepts a proof, then the
+assertion is semantically provable.
+
+This connects the operational execution (Verify.lean) to the semantic
+specification (Provable).
+-/
+
+theorem soundness_statement :
+  ∀ (db : Database) (l : Label) (fr : Frame) (e : Expr),
+  -- If the verifier accepts the proof for label l
+  (∃ (verifier_accepts : Bool), verifier_accepts = true) →
+  -- Then the assertion is semantically provable
+  Provable db fr e := by
+  sorry -- To be proven
+
+/-! ## Design Notes
+
+**Why ProofValid over a function?**
+
+We could define proof checking as:
+```lean
+def checkProof : Database → Frame → List ProofStep → Option Expr
+```
+
+But the inductive Prop approach has advantages:
+1. **Proof-oriented**: Properties easier to state and prove
+2. **Spec clarity**: Describes "what is valid" not "how to compute"
+3. **Implementation independence**: Verify.lean can use different data structures
+4. **Coinductive reasoning**: Can compose proofs via ProofValidSeq
+
+**Relationship to Metamath Specification**:
+- §4.3 describes proof as "sequence of labels" - we model as ProofStep sequence
+- §4.2.6 describes substitution constraints - we model in useAxiom constructor
+- §4.2.7 describes frames - our Frame type directly corresponds
+
+**Next layer up**: Mario's Translate.Provable provides the semantic "big-step" view.
+We will prove ProofValid ↔ Mario.Provable in Equivalence.lean.
+-/
+
+end Metamath.Spec
