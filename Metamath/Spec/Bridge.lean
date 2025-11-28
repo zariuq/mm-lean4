@@ -495,21 +495,99 @@ theorem symList_subst_eq : (syms : List String) →
 
   | s :: rest, varList, σ, marioVars, h_wf => by
       -- Recursive case: process head s, then rest
-      -- Expand flatMap on s :: rest
-      simp only [List.flatMap]
-
       -- Split on whether s is a variable
-      by_cases h : Variable.mk s ∈ varList
+      let v := Variable.mk s
+      by_cases h : v ∈ varList
 
       case pos =>
         -- s is a variable in varList
-        -- TODO: Complete variable case proof with String.toMarioSym_finds_var
-        sorry
+        -- Use well-formedness to get vr ∈ marioVars with MarioVR.toVariable vr = v
+        obtain ⟨vr, h_vr_in, h_vr_eq⟩ := h_wf v h
+
+        -- Apply String.toMarioSym_finds_var to get vr' with toMarioSym returning .var vr'
+        obtain ⟨vr', h_sym_eq, h_var_eq⟩ := String.toMarioSym_finds_var v vr marioVars h_vr_in h_vr_eq
+
+        -- Substitute v back to Variable.mk s in the witness hypotheses
+        simp only [v] at h_sym_eq h_var_eq
+
+        -- Build the proof using calc
+        calc ((s :: rest).flatMap (fun s =>
+                if Variable.mk s ∈ varList then (σ (Variable.mk s)).syms else [s]
+              )).map (String.toMarioSym · marioVars)
+            = ((σ v).syms ++ rest.flatMap (fun s =>
+                if Variable.mk s ∈ varList then (σ (Variable.mk s)).syms else [s]
+              )).map (String.toMarioSym · marioVars) := by simp only [List.flatMap, v, if_pos h]
+          _ = (σ v).syms.map (String.toMarioSym · marioVars) ++
+              (rest.flatMap (fun s =>
+                if Variable.mk s ∈ varList then (σ (Variable.mk s)).syms else [s]
+              )).map (String.toMarioSym · marioVars) := by rw [List.map_append]
+          _ = Subst.toMarioSubst σ marioVars vr' ++
+              (rest.flatMap (fun s =>
+                if Variable.mk s ∈ varList then (σ (Variable.mk s)).syms else [s]
+              )).map (String.toMarioSym · marioVars) := by
+                congr 1
+                unfold Subst.toMarioSubst
+                rw [h_var_eq]
+          _ = Subst.toMarioSubst σ marioVars vr' ++
+              Metamath.Expr.subst (Subst.toMarioSubst σ marioVars)
+                (rest.map (String.toMarioSym · marioVars)) := by
+                congr 1
+                exact symList_subst_eq rest varList σ marioVars h_wf
+          _ = Metamath.Expr.subst (Subst.toMarioSubst σ marioVars)
+                (.var vr' :: rest.map (String.toMarioSym · marioVars)) := by rfl
+          _ = Metamath.Expr.subst (Subst.toMarioSubst σ marioVars)
+                (String.toMarioSym s marioVars :: rest.map (String.toMarioSym · marioVars)) := by
+                rw [← h_sym_eq]
+          _ = Metamath.Expr.subst (Subst.toMarioSubst σ marioVars)
+                ((s :: rest).map (String.toMarioSym · marioVars)) := by rw [List.map_cons]
 
       case neg =>
         -- s is a constant (not in varList)
-        -- TODO: Complete constant case proof showing find? returns none
-        sorry
+        -- Show: String.toMarioSym s marioVars = .const s
+        -- This requires: find? returns none, meaning no vr in marioVars maps to Variable.mk s
+        have h_const : String.toMarioSym s marioVars = .const s := by
+          unfold String.toMarioSym
+          have h_find_none : (marioVars.find? fun vr => (MarioVR.toVariable vr).v == s) = none := by
+            -- TODO: Prove find? returns none
+            -- Note: This might require a stronger well-formedness condition OR
+            --       needs to be proven separately without relying on h_wf
+            sorry
+          rw [h_find_none]
+
+        -- Build the proof using calc
+        calc ((s :: rest).flatMap (fun s =>
+                if Variable.mk s ∈ varList then (σ (Variable.mk s)).syms else [s]
+              )).map (String.toMarioSym · marioVars)
+            = ([s] ++ rest.flatMap (fun s =>
+                if Variable.mk s ∈ varList then (σ (Variable.mk s)).syms else [s]
+              )).map (String.toMarioSym · marioVars) := by simp only [List.flatMap, v, if_neg h]
+          _ = [s].map (String.toMarioSym · marioVars) ++
+              (rest.flatMap (fun s =>
+                if Variable.mk s ∈ varList then (σ (Variable.mk s)).syms else [s]
+              )).map (String.toMarioSym · marioVars) := by rw [List.map_append]
+          _ = [String.toMarioSym s marioVars] ++
+              (rest.flatMap (fun s =>
+                if Variable.mk s ∈ varList then (σ (Variable.mk s)).syms else [s]
+              )).map (String.toMarioSym · marioVars) := by rw [List.map_cons, List.map]
+          _ = [.const s] ++
+              (rest.flatMap (fun s =>
+                if Variable.mk s ∈ varList then (σ (Variable.mk s)).syms else [s]
+              )).map (String.toMarioSym · marioVars) := by rw [h_const]
+          _ = [.const s] ++
+              Metamath.Expr.subst (Subst.toMarioSubst σ marioVars)
+                (rest.map (String.toMarioSym · marioVars)) := by
+                congr 1
+                exact symList_subst_eq rest varList σ marioVars h_wf
+          _ = .const s ::
+              Metamath.Expr.subst (Subst.toMarioSubst σ marioVars)
+                (rest.map (String.toMarioSym · marioVars)) := by rfl
+          _ = Metamath.Expr.subst (Subst.toMarioSubst σ marioVars)
+                (.const s :: rest.map (String.toMarioSym · marioVars)) := by rfl
+          _ = Metamath.Expr.subst (Subst.toMarioSubst σ marioVars)
+                (String.toMarioSym s marioVars :: rest.map (String.toMarioSym · marioVars)) := by
+                rw [← h_const]
+          _ = Metamath.Expr.subst (Subst.toMarioSubst σ marioVars)
+                ((s :: rest).map (String.toMarioSym · marioVars)) := by rw [List.map_cons]
 
 /-- Substitution preserves formula structure.
 
