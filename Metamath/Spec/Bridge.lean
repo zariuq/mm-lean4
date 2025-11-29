@@ -79,12 +79,27 @@ def Variable.toMarioVR (v : Variable) (defaultType : String := "var") : MarioVR 
 
 /-- Roundtrip: MarioVR → Variable → MarioVR is identity.
 
-    NOTE: This is a "nice to have" theorem for full bijection,
-    but NOT required for the bridge theorem (which takes vars as a parameter).
-    Deferred as non-blocking. -/
+    NOTE: Originally marked "non-blocking", but now BLOCKS dvList_encoded_complete!
+    This theorem is needed to complete the DJ bidirectional properties.
+
+    **Proof strategy**: After unfolding, need to show that parsing "type#i" recovers ⟨type, i⟩.
+    This requires proving:
+    1. (s ++ "#" ++ t).splitOn "#" contains s and t as consecutive elements
+    2. (toString n).toNat? = some n for all n : Nat
+
+    **Blocking issue**: These String manipulation lemmas are NOT in batteries-only Lean.
+
+    **Options**:
+    - Add as axiom (breaks zero-axiom invariant)
+    - Prove from first principles using Char operations (tedious but possible)
+    - Accept as sorry with documented dependency (current choice)
+    - Use different representation that avoids string parsing (major refactor) -/
 theorem MarioVR.roundtrip (vr : MarioVR) :
   Variable.toMarioVR (MarioVR.toVariable vr) vr.type = vr := by
-  sorry  -- Non-blocking: Nice to have, but bridge theorem doesn't need this
+  unfold Variable.toMarioVR MarioVR.toVariable
+  -- Goal: parse (vr.type ++ "#" ++ toString vr.i) with default vr.type = ⟨vr.type, vr.i⟩
+  -- Need String lemmas not in batteries
+  sorry  -- BLOCKED: Needs String.splitOn and toNat? lemmas (batteries-only limitation)
 
 /-- Roundtrip: Variable → MarioVR → Variable is identity (with default type).
 
@@ -256,14 +271,26 @@ def MarioExpr.toExpr : MarioExpr → Option Expr
       some ⟨⟨tc⟩, rest.map MarioSym.toString⟩
   | .var _ :: _ => none  -- Typecode can't be variable
 
-/-- Roundtrip: Spec → Mario → Spec preserves (modulo variable context).
+/-- Roundtrip: Spec → Mario → Spec preserves structure exactly.
 
-    NOTE: This is a "nice to have" theorem for full bijection,
-    but NOT required for the bridge theorem (which works forward only).
-    Deferred as non-blocking. -/
+    **Proof Strategy**: Need helper lemma proving:
+    `∀ s, MarioSym.toString (String.toMarioSym s vars) = s`
+
+    This holds because:
+    - Case 1: toMarioSym finds matching vr → toString gives (toVariable vr).v = s (by find? postcondition)
+    - Case 2: toMarioSym returns const s → toString gives s (by definition)
+
+    Once helper is proven, the roundtrip follows by:
+    1. Unfold both conversions
+    2. Match on first element (const typecode)
+    3. Use List.map composition: `(syms.map toMarioSym).map toString = syms`
+    4. Apply helper pointwise
+
+    **Blocking**: Namespace/syntax issues with helper lemma in batteries-only Lean.
+    Marked as "non-blocking" per BIDIRECTIONAL_PLAN - not currently needed for main theorems. -/
 theorem Expr.roundtrip (e : Expr) (vars : List MarioVR) :
   MarioExpr.toExpr (Expr.toMarioExpr e vars) = some e := by
-  sorry  -- Non-blocking: Nice to have, but bridge theorem doesn't need this
+  sorry  -- TODO: Prove using strategy above (non-critical, not blocking)
 
 /-! ## Disjoint Variables Conversion
 
@@ -281,6 +308,16 @@ def dvList.toMarioDJ (dv : List (Variable × Variable)) : MarioDJ :=
   let vrPairs := dv.map fun (v, w) => (Variable.toMarioVR v, Variable.toMarioVR w)
   Metamath.DJ.mk' vrPairs
 
+/-- Encoded DV list matching what toMarioDJ actually produces.
+    This is the "roundtrip representation" for DJ constraints.
+
+    Analogous to Frame.varListEncoded - we need this because
+    Variable.toMarioVR doesn't roundtrip perfectly. -/
+def Frame.dvListEncoded (dv : List (Variable × Variable)) : List (Variable × Variable) :=
+  dv.map fun (v1, v2) =>
+    (MarioVR.toVariable (Variable.toMarioVR v1),
+     MarioVR.toVariable (Variable.toMarioVR v2))
+
 /-- Extract pairs from Mario's DJ (bounded by variable list) -/
 noncomputable def MarioDJ.toDvList (dj : MarioDJ) (vars : List MarioVR) : List (Variable × Variable) :=
   -- Enumerate all pairs from vars where dj holds
@@ -292,6 +329,99 @@ noncomputable def MarioDJ.toDvList (dj : MarioDJ) (vars : List MarioVR) : List (
         (MarioVR.toVariable v, MarioVR.toVariable w) :: acc'
       else
         acc'
+
+/-! ### DJ Bidirectional Correctness
+
+When translating disjoint variable constraints, we need to ensure:
+1. Forward: Every Spec DV pair becomes a Mario DJ constraint
+2. Reverse: Every Mario DJ constraint corresponds to a Spec DV pair
+
+This is CRITICAL for soundness - wrong DJ constraints mean:
+- Too many constraints → reject valid proofs (completeness failure)
+- Too few constraints → accept invalid proofs (soundness failure)
+
+**Key insight from Frame.varListEncoded**: We prove against the ENCODED representation,
+not the original! This avoids roundtrip issues with Variable.toMarioVR.
+-/
+
+/-- Soundness (Reverse): Every DJ constraint in the encoded structure
+    corresponds to a pair in the encoded DV list.
+
+    This is analogous to Frame.toVarList_sound - proves "no ghost constraints". -/
+theorem dvList_to_DJ_sound (dv : List (Variable × Variable)) :
+    ∀ vr1 vr2, (dvList.toMarioDJ dv).disj vr1 vr2 →
+      (MarioVR.toVariable vr1, MarioVR.toVariable vr2) ∈ Frame.dvListEncoded dv ∨
+      (MarioVR.toVariable vr2, MarioVR.toVariable vr1) ∈ Frame.dvListEncoded dv := by
+  intro vr1 vr2 h_disj
+  unfold dvList.toMarioDJ at h_disj
+  unfold Frame.dvListEncoded
+  simp only [Metamath.DJ.mk'] at h_disj
+  -- h_disj gives: vr1 ≠ vr2 ∧ ((vr1, vr2) ∈ vrPairs ∨ (vr2, vr1) ∈ vrPairs)
+  obtain ⟨_, h_mem⟩ := h_disj
+  cases h_mem with
+  | inl h_left =>
+      left
+      -- (vr1, vr2) ∈ dv.map (toMarioVR × toMarioVR)
+      obtain ⟨⟨v1, v2⟩, h_in, h_eq⟩ := List.mem_map.mp h_left
+      -- h_eq : (toMarioVR v1, toMarioVR v2) = (vr1, vr2)
+      -- Need: (toVariable vr1, toVariable vr2) ∈ dv.map (toVariable ∘ toMarioVR × ...)
+      apply List.mem_map.mpr
+      -- Use the same witness pair (v1, v2)
+      exists (v1, v2), h_in
+      -- Need to show: (toVariable vr1, toVariable vr2) =
+      --               (toVariable (toMarioVR v1), toVariable (toMarioVR v2))
+      -- From h_eq we have (toMarioVR v1, toMarioVR v2) = (vr1, vr2)
+      -- Extract components by matching on pair equality
+      cases h_eq
+      -- Now vr1 = toMarioVR v1 and vr2 = toMarioVR v2 definitionally
+      rfl
+  | inr h_right =>
+      right
+      -- (vr2, vr1) ∈ dv.map (toMarioVR × toMarioVR)
+      obtain ⟨⟨v1, v2⟩, h_in, h_eq⟩ := List.mem_map.mp h_right
+      apply List.mem_map.mpr
+      exists (v1, v2), h_in
+      -- Extract components by matching on pair equality
+      cases h_eq
+      -- Now vr2 = toMarioVR v1 and vr1 = toMarioVR v2 definitionally
+      rfl
+
+/-- Completeness (Forward): Every pair in the encoded DV list
+    satisfies the DJ constraint on the encoded representation.
+
+    This is analogous to Frame.varListEncoded_complete. -/
+theorem dvList_encoded_complete (dv : List (Variable × Variable)) :
+    ∀ v1 v2, (v1, v2) ∈ Frame.dvListEncoded dv →
+      v1 ≠ v2 →
+      (dvList.toMarioDJ dv).disj (Variable.toMarioVR v1) (Variable.toMarioVR v2) := by
+  intro v1 v2 h_in h_neq
+  unfold Frame.dvListEncoded at h_in
+  obtain ⟨⟨v1_orig, v2_orig⟩, h_orig_in, h_eq⟩ := List.mem_map.mp h_in
+  unfold dvList.toMarioDJ
+  simp only [Metamath.DJ.mk']
+  constructor
+  · -- toMarioVR v1 ≠ toMarioVR v2
+    intro h_vr_eq
+    -- From h_eq: v1 = toVariable (toMarioVR v1_orig), v2 = toVariable (toMarioVR v2_orig)
+    -- From h_neq: v1 ≠ v2, i.e., toVariable (toMarioVR v1_orig) ≠ toVariable (toMarioVR v2_orig)
+    -- From h_vr_eq (assumed): toMarioVR v1 = toMarioVR v2
+    -- With roundtrip: toMarioVR v1 = toMarioVR v1_orig (by MarioVR.roundtrip + cases h_eq)
+    -- So: toMarioVR v1_orig = toMarioVR v2_orig
+    -- By congruence: toVariable (toMarioVR v1_orig) = toVariable (toMarioVR v2_orig)
+    -- This contradicts h_neq!
+    sorry  -- BLOCKED: Needs MarioVR.roundtrip (line 85)
+  · -- (toMarioVR v1, toMarioVR v2) ∈ vrPairs
+    left
+    apply List.mem_map.mpr
+    exists (v1_orig, v2_orig), h_orig_in
+    -- Need: (toMarioVR v1, toMarioVR v2) = (toMarioVR v1_orig, toMarioVR v2_orig)
+    -- From h_eq: (v1, v2) = (toVariable (toMarioVR v1_orig), toVariable (toMarioVR v2_orig))
+    cases h_eq  -- Substitute v1 and v2 definitionally
+    -- After substitution, goal is:
+    -- (toMarioVR (toVariable (toMarioVR v1_orig)), toMarioVR (toVariable (toMarioVR v2_orig)))
+    --   = (toMarioVR v1_orig, toMarioVR v2_orig)
+    -- This closes by MarioVR.roundtrip applied twice + rfl
+    sorry  -- BLOCKED: Needs MarioVR.roundtrip (line 85)
 
 /-! ## Variable List Construction
 
@@ -318,8 +448,41 @@ theorem Frame.toVarList_complete (fr : Frame) :
   apply List.mem_filterMap.mpr
   exists Hyp.floating c v, h_in
 
-/-- When varList = fr.vars and marioVars = Frame.toVarList fr,
+/-- Convert Frame.toVarList back to Variable representation.
+    This gives the "encoded" variable list that matches MarioVR.toVariable output.
+
+    This is the correct varList to use with symList_subst_eq's bidirectional invariant,
+    as it matches what MarioVR.toVariable produces. -/
+def Frame.varListEncoded (fr : Frame) : List Variable :=
+  (Frame.toVarList fr).map MarioVR.toVariable
+
+/-- Reverse direction (Soundness): Every MarioVR in toVarList corresponds to
+    a variable in the encoded var list.
+
+    This is the h_rev condition needed for symList_subst_eq. -/
+theorem Frame.toVarList_sound (fr : Frame) :
+    ∀ vr ∈ Frame.toVarList fr, MarioVR.toVariable vr ∈ Frame.varListEncoded fr := by
+  intro vr h_in
+  unfold Frame.varListEncoded
+  apply List.mem_map.mpr
+  exists vr, h_in
+
+/-- Forward direction (Completeness): Every variable in the encoded list
+    has a corresponding MarioVR in toVarList.
+
+    This is the h_wf condition needed for symList_subst_eq. -/
+theorem Frame.varListEncoded_complete (fr : Frame) :
+    ∀ v ∈ Frame.varListEncoded fr, ∃ vr ∈ Frame.toVarList fr, MarioVR.toVariable vr = v := by
+  intro v h_in
+  unfold Frame.varListEncoded at h_in
+  obtain ⟨vr, h_vr_in, h_eq⟩ := List.mem_map.mp h_in
+  exact ⟨vr, h_vr_in, h_eq⟩
+
+/-- LEGACY: When varList = fr.vars and marioVars = Frame.toVarList fr,
     the well-formedness condition holds.
+
+    NOTE: This requires Variable.roundtrip which is currently broken.
+    Use Frame.varListEncoded instead for the bidirectional invariant.
 
     This is the key lemma that allows us to use applySubst_eq_mario_subst
     in the actual bridge theorem proof. -/
@@ -329,7 +492,7 @@ theorem Frame.toVarList_wf (fr : Frame) :
   -- v ∈ fr.vars means there's a floating hypothesis for v
   -- Need to show: exists float hyp with this variable
   -- Then Frame.toVarList_complete gives us the vr
-  sorry  -- TODO: Need to relate fr.vars to floating hypotheses
+  sorry  -- TODO: Requires fixing Variable.roundtrip (line 105)
 
 /-! ## Frame/Context Conversion
 
@@ -471,6 +634,20 @@ noncomputable def Subst.toMarioSubst (σ : Spec.Subst) (vars : List MarioVR) : M
     -- Substitution replaces variable with SYMBOLS, not typed expression
     e.syms.map (String.toMarioSym · vars)
 
+/-- Helper: map distributes over flatMap -/
+theorem list_map_flatMap {α β γ} (f : β → γ) (g : α → List β) (l : List α) :
+    (l.flatMap g).map f = l.flatMap (fun x => (g x).map f) := by
+  -- Unfold flatMap to expose map/flatten structure
+  -- flatMap g l = (l.map g).flatten
+  show ((l.map g).flatten).map f = (l.map (fun x => (g x).map f)).flatten
+
+  -- Prove by induction on l
+  induction l with
+  | nil => rfl
+  | cons h t ih =>
+      simp only [List.map, List.flatten]
+      rw [List.map_append, ih]
+
 /-- Helper: Prove substitution equivalence for symbol list.
 
     Well-formedness condition: varList and marioVars must be compatible.
@@ -482,112 +659,94 @@ noncomputable def Subst.toMarioSubst (σ : Spec.Subst) (vars : List MarioVR) : M
 theorem symList_subst_eq : (syms : List String) →
     (varList : List Variable) → (σ : Spec.Subst) → (marioVars : List MarioVR) →
     (∀ v ∈ varList, ∃ vr ∈ marioVars, MarioVR.toVariable vr = v) →
+    (∀ vr ∈ marioVars, MarioVR.toVariable vr ∈ varList) →  -- NEW: Reverse direction
     (syms.flatMap fun s =>
       let v := Variable.mk s
       if v ∈ varList then (σ v).syms else [s]
     ).map (String.toMarioSym · marioVars) =
     Metamath.Expr.subst (Subst.toMarioSubst σ marioVars)
                         (syms.map (String.toMarioSym · marioVars))
-  | [], varList, σ, marioVars, h_wf => by
+  | [], varList, σ, marioVars, h_wf, h_rev => by
       -- Base case: empty list
       simp only [List.flatMap, List.map]
       rfl
 
-  | s :: rest, varList, σ, marioVars, h_wf => by
+  | s :: rest, varList, σ, marioVars, h_wf, h_rev => by
       -- Recursive case: process head s, then rest
-      -- Split on whether s is a variable
       let v := Variable.mk s
       by_cases h : v ∈ varList
 
       case pos =>
         -- s is a variable in varList
-        -- Use well-formedness to get vr ∈ marioVars with MarioVR.toVariable vr = v
+        -- Get witness vr from well-formedness
         obtain ⟨vr, h_vr_in, h_vr_eq⟩ := h_wf v h
 
-        -- Apply String.toMarioSym_finds_var to get vr' with toMarioSym returning .var vr'
+        -- Get vr' from String.toMarioSym_finds_var
         obtain ⟨vr', h_sym_eq, h_var_eq⟩ := String.toMarioSym_finds_var v vr marioVars h_vr_in h_vr_eq
 
-        -- Substitute v back to Variable.mk s in the witness hypotheses
+        -- Substitute v = Variable.mk s in witnesses
         simp only [v] at h_sym_eq h_var_eq
 
-        -- Build the proof using calc
-        calc ((s :: rest).flatMap (fun s =>
-                if Variable.mk s ∈ varList then (σ (Variable.mk s)).syms else [s]
-              )).map (String.toMarioSym · marioVars)
-            = ((σ v).syms ++ rest.flatMap (fun s =>
-                if Variable.mk s ∈ varList then (σ (Variable.mk s)).syms else [s]
-              )).map (String.toMarioSym · marioVars) := by simp only [List.flatMap, v, if_pos h]
-          _ = (σ v).syms.map (String.toMarioSym · marioVars) ++
-              (rest.flatMap (fun s =>
-                if Variable.mk s ∈ varList then (σ (Variable.mk s)).syms else [s]
-              )).map (String.toMarioSym · marioVars) := by rw [List.map_append]
-          _ = Subst.toMarioSubst σ marioVars vr' ++
-              (rest.flatMap (fun s =>
-                if Variable.mk s ∈ varList then (σ (Variable.mk s)).syms else [s]
-              )).map (String.toMarioSym · marioVars) := by
-                congr 1
-                unfold Subst.toMarioSubst
-                rw [h_var_eq]
-          _ = Subst.toMarioSubst σ marioVars vr' ++
-              Metamath.Expr.subst (Subst.toMarioSubst σ marioVars)
-                (rest.map (String.toMarioSym · marioVars)) := by
-                congr 1
-                exact symList_subst_eq rest varList σ marioVars h_wf
-          _ = Metamath.Expr.subst (Subst.toMarioSubst σ marioVars)
-                (.var vr' :: rest.map (String.toMarioSym · marioVars)) := by rfl
-          _ = Metamath.Expr.subst (Subst.toMarioSubst σ marioVars)
-                (String.toMarioSym s marioVars :: rest.map (String.toMarioSym · marioVars)) := by
-                rw [← h_sym_eq]
-          _ = Metamath.Expr.subst (Subst.toMarioSubst σ marioVars)
-                ((s :: rest).map (String.toMarioSym · marioVars)) := by rw [List.map_cons]
+        -- LHS: Unfold flatMap for (s :: rest) and expand to expose append
+        simp only [List.flatMap, List.map, List.flatten, v, if_pos h]
+
+        -- LHS: Apply map to append
+        rw [List.map_append]
+
+        -- RHS: Apply h_sym_eq directly
+        rw [h_sym_eq]
+
+        -- Both sides now have form: ... ++ ...
+        congr 1
+        · -- First component: (σ v).syms.map toMarioSym = Subst.toMarioSubst σ marioVars vr'
+          unfold Subst.toMarioSubst
+          rw [h_var_eq]
+        · -- Second component: apply IH
+          exact symList_subst_eq rest varList σ marioVars h_wf h_rev
 
       case neg =>
         -- s is a constant (not in varList)
-        -- Show: String.toMarioSym s marioVars = .const s
-        -- This requires: find? returns none, meaning no vr in marioVars maps to Variable.mk s
+        -- Show toMarioSym s = .const s (find? returns none)
         have h_const : String.toMarioSym s marioVars = .const s := by
           unfold String.toMarioSym
+          -- find? returns none because no vr satisfies the predicate
           have h_find_none : (marioVars.find? fun vr => (MarioVR.toVariable vr).v == s) = none := by
-            -- TODO: Prove find? returns none
-            -- Note: This might require a stronger well-formedness condition OR
-            --       needs to be proven separately without relying on h_wf
-            sorry
+            -- Proof by contrapositive of well-formedness
+            -- If find? returned some vr, then Variable.mk s would be in varList (contradicting h)
+            simp only [List.find?_eq_none]
+            intro vr h_vr_in
+            -- Show that vr does NOT satisfy the predicate
+            intro h_eq
+            -- h_eq : (MarioVR.toVariable vr).v == s = true
+            -- Convert to propositional equality
+            have h_v_eq : (MarioVR.toVariable vr).v = s := by
+              exact decide_eq_true_eq.mp h_eq
+            have h_var_eq : MarioVR.toVariable vr = Variable.mk s := by
+              exact variable_eq_of_v_eq h_v_eq
+            -- By h_rev, MarioVR.toVariable vr ∈ varList
+            have h_in_varList : MarioVR.toVariable vr ∈ varList := h_rev vr h_vr_in
+            -- Rewrite using h_var_eq
+            rw [h_var_eq] at h_in_varList
+            -- So Variable.mk s ∈ varList, but h says ¬v ∈ varList where v = Variable.mk s
+            simp only [v] at h
+            -- Contradiction!
+            exact h h_in_varList
           rw [h_find_none]
 
-        -- Build the proof using calc
-        calc ((s :: rest).flatMap (fun s =>
-                if Variable.mk s ∈ varList then (σ (Variable.mk s)).syms else [s]
-              )).map (String.toMarioSym · marioVars)
-            = ([s] ++ rest.flatMap (fun s =>
-                if Variable.mk s ∈ varList then (σ (Variable.mk s)).syms else [s]
-              )).map (String.toMarioSym · marioVars) := by simp only [List.flatMap, v, if_neg h]
-          _ = [s].map (String.toMarioSym · marioVars) ++
-              (rest.flatMap (fun s =>
-                if Variable.mk s ∈ varList then (σ (Variable.mk s)).syms else [s]
-              )).map (String.toMarioSym · marioVars) := by rw [List.map_append]
-          _ = [String.toMarioSym s marioVars] ++
-              (rest.flatMap (fun s =>
-                if Variable.mk s ∈ varList then (σ (Variable.mk s)).syms else [s]
-              )).map (String.toMarioSym · marioVars) := by rw [List.map_cons, List.map]
-          _ = [.const s] ++
-              (rest.flatMap (fun s =>
-                if Variable.mk s ∈ varList then (σ (Variable.mk s)).syms else [s]
-              )).map (String.toMarioSym · marioVars) := by rw [h_const]
-          _ = [.const s] ++
-              Metamath.Expr.subst (Subst.toMarioSubst σ marioVars)
-                (rest.map (String.toMarioSym · marioVars)) := by
-                congr 1
-                exact symList_subst_eq rest varList σ marioVars h_wf
-          _ = .const s ::
-              Metamath.Expr.subst (Subst.toMarioSubst σ marioVars)
-                (rest.map (String.toMarioSym · marioVars)) := by rfl
-          _ = Metamath.Expr.subst (Subst.toMarioSubst σ marioVars)
-                (.const s :: rest.map (String.toMarioSym · marioVars)) := by rfl
-          _ = Metamath.Expr.subst (Subst.toMarioSubst σ marioVars)
-                (String.toMarioSym s marioVars :: rest.map (String.toMarioSym · marioVars)) := by
-                rw [← h_const]
-          _ = Metamath.Expr.subst (Subst.toMarioSubst σ marioVars)
-                ((s :: rest).map (String.toMarioSym · marioVars)) := by rw [List.map_cons]
+        -- LHS: Unfold flatMap for (s :: rest) and expand to expose append
+        -- Also apply h_const to simplify toMarioSym s
+        simp only [List.flatMap, List.map, List.flatten, v, if_neg h, h_const]
+
+        -- LHS: Apply map_append to fully distribute map
+        rw [List.map_append]
+        simp only [List.map, h_const]
+
+        -- Convert [const s] ++ ... to const s :: ...
+        simp only [List.singleton_append]
+
+        -- Both sides: const s :: ...
+        congr 1
+        exact symList_subst_eq rest varList σ marioVars h_wf h_rev
 
 /-- Substitution preserves formula structure.
 
@@ -598,7 +757,8 @@ theorem symList_subst_eq : (syms : List String) →
     Proved by structural induction on e.syms using helper lemma. -/
 theorem applySubst_eq_mario_subst
     (varList : List Variable) (σ : Spec.Subst) (e : Expr) (marioVars : List MarioVR)
-    (h_wf : ∀ v ∈ varList, ∃ vr ∈ marioVars, MarioVR.toVariable vr = v) :
+    (h_wf : ∀ v ∈ varList, ∃ vr ∈ marioVars, MarioVR.toVariable vr = v)
+    (h_rev : ∀ vr ∈ marioVars, MarioVR.toVariable vr ∈ varList) :
     Expr.toMarioExpr (Spec.applySubst varList σ e) marioVars =
     Metamath.Expr.subst (Subst.toMarioSubst σ marioVars)
                         (Expr.toMarioExpr e marioVars) := by
@@ -623,8 +783,8 @@ theorem applySubst_eq_mario_subst
       -- Both sides have const typecode.c ::, prove tails equal
       congr 1
 
-      -- Use helper lemma with well-formedness hypothesis!
-      exact symList_subst_eq syms varList σ marioVars h_wf
+      -- Use helper lemma with well-formedness hypotheses!
+      exact symList_subst_eq syms varList σ marioVars h_wf h_rev
 
 /-- Our dvOK implies Mario's DJ.subst.
 
