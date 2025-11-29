@@ -11,6 +11,8 @@ This document captures practical patterns and techniques learned while working o
 - [Nested Match Expressions and List.find?](#nested-match-expressions-and-listfind)
 - [Do-Notation and ForIn Loop Proofs](#do-notation-and-forin-loop-proofs)
 - [Array Indexing Equivalence](#array-indexing-equivalence)
+- [List.flatMap and Compiled Forms](#listflatmap-and-compiled-forms)
+- [Bidirectional Well-Formedness for List Correspondences](#bidirectional-well-formedness-for-list-correspondences)
 
 ---
 
@@ -1225,3 +1227,254 @@ theorem property_holds : ∀ e, check_property e = true := by
 - [ ] Use `..` in `IH ..` to let Lean infer arguments
 
 **Sources**: Mario Carneiro's Metamath.Translate.lean, CompCert verification patterns, CreuSAT verification testing
+
+---
+
+## List.flatMap and Compiled Forms
+
+### Problem: Tactics Fail on Compiled flatMap
+
+When proving properties about `List.flatMap`, standard tactics like `simp` and `rw` can fail because Lean compiles `flatMap` to an internal `.flatten` form that blocks pattern matching.
+
+**The Issue**:
+```lean
+-- After simp only [List.flatMap], the goal becomes:
+List.map f ((l.map g).flatten) = ...  -- .flatten blocks List.map_append!
+
+-- Trying rw [List.map_append] fails:
+-- "Did not find an occurrence of the pattern List.map ?f (?a ++ ?b)"
+```
+
+### Solution: Use `show` to Unfold Before Compilation
+
+The key insight from [Lean 4's source code](https://github.com/leanprover/lean4/blob/master/src/Init/Data/List/Basic.lean):
+
+```lean
+def flatMap (f : α → List β) : List α → List β :=
+  fun l => (map f l).flatten
+```
+
+**The Fix**: Use `show` to explicitly unfold `flatMap` BEFORE Lean compiles it:
+
+```lean
+theorem list_map_flatMap {α β γ} (f : β → γ) (g : α → List β) (l : List α) :
+    (l.flatMap g).map f = l.flatMap (fun x => (g x).map f) := by
+  -- Unfold flatMap explicitly using show
+  show ((l.map g).flatten).map f = (l.map (fun x => (g x).map f)).flatten
+  
+  -- Now prove by induction on l
+  induction l with
+  | nil => rfl
+  | cons h t ih =>
+      simp only [List.map, List.flatten]
+      rw [List.map_append, ih]
+```
+
+**Why This Works**:
+1. `show` states the goal after unfolding flatMap's definition
+2. Lean doesn't auto-compile to `.flatten` because we stated it explicitly
+3. Now `List.map_append` can match the pattern `(a ++ b).map f`
+4. Standard induction techniques work cleanly
+
+### Common Pattern: flatMap with Conditionals
+
+When `flatMap` contains a conditional:
+
+```lean
+theorem symList_subst_eq (syms : List String) ... :
+    (syms.flatMap fun s =>
+      if Variable.mk s ∈ varList then (σ (Variable.mk s)).syms else [s]
+    ).map toMarioSym = ... := by
+  
+  -- Induction on syms
+  induction syms with
+  | nil => simp [List.flatMap, List.map]
+  | cons s rest ih =>
+      -- Split on the conditional
+      by_cases h : Variable.mk s ∈ varList
+      
+      · -- Variable case: unfold flatMap and expand structures
+        simp only [List.flatMap, List.map, List.flatten, if_pos h]
+        rw [List.map_append]  -- Now this works!
+        -- ... rest of proof
+      
+      · -- Constant case
+        simp only [List.flatMap, List.map, List.flatten, if_neg h]
+        rw [List.map_append]
+        -- ... rest of proof
+```
+
+**Key Tactics**:
+1. `by_cases h : condition` - Split on the conditional in flatMap
+2. `simp only [List.flatMap, List.map, List.flatten, if_pos h]` - Fully unfold without auto-compiling
+3. `rw [List.map_append]` - Now the pattern is exposed and rewrite works
+4. Apply IH to recursive subgoal
+
+### Converting `[x] ++ l` to `x :: l`
+
+After unfolding, you may need to convert list append to cons:
+
+```lean
+-- Goal: [Sym.const s] ++ rest = Sym.const s :: rest'
+simp only [List.singleton_append]  -- Converts [x] ++ l to x :: l
+congr 1  -- Now splits into head and tail
+```
+
+### Summary: flatMap Proof Pattern
+
+```lean
+theorem about_flatMap : (l.flatMap g).map f = something := by
+  -- Option 1: Use show to unfold before compilation
+  show ((l.map g).flatten).map f = ...
+  induction l with ...
+  
+  -- Option 2: Direct induction with careful simp
+  induction l with
+  | nil => simp [List.flatMap, List.map]
+  | cons h t ih =>
+      simp only [List.flatMap, List.map, List.flatten]  -- Unfold all at once
+      rw [List.map_append]  -- Pattern now visible
+      -- Apply ih
+```
+
+**When to Use This**:
+- Proving `(l.flatMap g).map f = ...`
+- Pattern matching fails on flatMap
+- Error: "Did not find an occurrence of the pattern"
+- Working with nested list operations
+
+**Source**: Bridge theorem (symList_subst_eq) in Metamath.Spec.Bridge.lean, Lean 4 stdlib
+
+
+---
+
+## Bidirectional Well-Formedness for List Correspondences
+
+### Problem: Proving Properties About Parallel Data Structures
+
+When you have two parallel data structures with a mapping between them:
+- `varList : List Variable` and `marioVars : List MarioVR`
+- A conversion function: `MarioVR.toVariable : MarioVR → Variable`
+- Need to prove properties about elements that map between them
+
+**One direction is often not enough!**
+
+### Pattern: Strengthen to Bidirectional Correspondence
+
+Instead of just:
+```lean
+-- Forward direction only (weak)
+(h_wf : ∀ v ∈ varList, ∃ vr ∈ marioVars, MarioVR.toVariable vr = v)
+```
+
+Add **both directions**:
+```lean
+-- Forward: every element in A has corresponding element in B
+(h_wf : ∀ v ∈ varList, ∃ vr ∈ marioVars, MarioVR.toVariable vr = v)
+
+-- Reverse: every element in B maps to element in A
+(h_rev : ∀ vr ∈ marioVars, MarioVR.toVariable vr ∈ varList)
+```
+
+### Why This Helps: Proof by Contradiction
+
+**Example from symList_subst_eq constant case:**
+
+We needed to prove: `find? (fun vr => vr.toVariable.v == s) marioVars = none`
+
+Given: `h : ¬Variable.mk s ∈ varList`
+
+**Proof strategy**:
+```lean
+-- Assume for contradiction that find? returned some vr
+simp only [List.find?_eq_none]
+intro vr h_vr_in h_eq  -- h_eq : (vr.toVariable).v == s = true
+
+-- Convert BEq to propositional equality
+have h_v_eq : (vr.toVariable).v = s := decide_eq_true_eq.mp h_eq
+have h_var_eq : vr.toVariable = Variable.mk s := variable_eq_of_v_eq h_v_eq
+
+-- Use REVERSE direction!
+have h_in_varList : vr.toVariable ∈ varList := h_rev vr h_vr_in
+
+-- Rewrite using h_var_eq
+rw [h_var_eq] at h_in_varList  -- Now: Variable.mk s ∈ varList
+
+-- Contradiction with h!
+exact h h_in_varList  -- h says ¬Variable.mk s ∈ varList ⚡
+```
+
+**Without `h_rev`**: We're stuck! Can't connect `vr ∈ marioVars` to `v ∈ varList`.
+
+**With `h_rev`**: Clean contradiction proof.
+
+### When to Use This Pattern
+
+Use bidirectional correspondence when:
+
+1. **Two parallel lists with a mapping**:
+   - `List A` and `List B` with function `f : B → A`
+   - Need to prove properties about elements that (don't) map between them
+
+2. **Proving negative properties** (element NOT in list):
+   - "If `a ∉ listA`, then no `b ∈ listB` maps to `a`"
+   - Reverse direction enables contradiction proofs
+
+3. **Abstraction/refinement relationships**:
+   - High-level representation and low-level representation
+   - Need to show they stay synchronized
+
+4. **Verification of data structure invariants**:
+   - Internal representation and external view
+   - Both directions ensure consistency
+
+### Examples in Metamath Bridge
+
+1. **symList_subst_eq** (Bridge.lean:496-583) ✅
+   - Forward: `∀ v ∈ varList, ∃ vr ∈ marioVars, ...`
+   - Reverse: `∀ vr ∈ marioVars, vr.toVariable ∈ varList`
+   - Used to prove `find?` returns `none` for constants
+
+2. **Frame.toVarList_wf** (Bridge.lean:326) ⚠️
+   - Currently only proves forward direction
+   - Will likely need reverse direction for frame conversion proofs
+
+### Generalizing the Pattern
+
+```lean
+-- Pattern: List correspondence with mapping f : B → A
+theorem use_bidirectional_correspondence 
+    (listA : List A) (listB : List B) (f : B → A)
+    (h_forward : ∀ a ∈ listA, ∃ b ∈ listB, f b = a)
+    (h_reverse : ∀ b ∈ listB, f b ∈ listA)
+    (x : A) (h_not_in : x ∉ listA) :
+    ∀ b ∈ listB, f b ≠ x := by
+  intro b h_b_in h_eq
+  -- By h_reverse: f b ∈ listA
+  have : f b ∈ listA := h_reverse b h_b_in
+  -- Rewrite using h_eq
+  rw [h_eq] at this  -- Now: x ∈ listA
+  -- Contradiction!
+  exact h_not_in this
+```
+
+### Related Concepts
+
+- **Bijection**: When both directions hold AND mapping is injective/surjective
+- **Galois connection**: More general order-theoretic version
+- **Abstraction function**: In refinement verification (our `f` maps concrete→abstract)
+- **Representation invariant**: Ensures correspondence is maintained
+
+### Summary Checklist
+
+When you have parallel lists:
+- [ ] Identify the mapping function `f : B → A`
+- [ ] Prove forward direction: `∀ a ∈ A, ∃ b ∈ B, f b = a`
+- [ ] **Add reverse direction**: `∀ b ∈ B, f b ∈ A`
+- [ ] Use reverse for contradiction proofs about "not in" properties
+- [ ] Use forward for existence proofs about "in" properties
+
+**Pro tip**: If you're stuck proving a negative property about list membership, check if adding the reverse direction enables a clean contradiction proof!
+
+**Source**: symList_subst_eq proof (Bridge.lean:496-583), verified 2025-11-28
+
