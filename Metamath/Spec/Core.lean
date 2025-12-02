@@ -44,6 +44,14 @@ structure Variable where
   v : Sym
   deriving DecidableEq, Repr
 
+/-- Extensionality for Variables: two variables are equal iff their symbol fields are equal. -/
+theorem Variable.ext (v w : Variable) : v.v = w.v → v = w := by
+  intro h
+  cases v
+  cases w
+  simp only [Variable.v] at h
+  rw [h]
+
 /-! ## Expressions
 
 An expression is a typecode followed by a sequence of symbols.
