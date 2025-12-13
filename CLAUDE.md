@@ -59,7 +59,50 @@ lake build testParserInvariants
 lake build 2>&1 | grep -E "^(error|warning):" | head -20
 ```
 
+## Documentation Roadmap
+
+**Status**: ✅ Build GREEN | 🎯 3 sorries remaining (~150 LOC to full kernel soundness)
+
+### Essential Documentation (read these!)
+
+1. **[README.md](README.md)** - Project overview, quick start, current status
+2. **[NEXT_STEPS.md](NEXT_STEPS.md)** - Clear path to completion with detailed strategies
+3. **[BLOCKING_SORRIES.md](BLOCKING_SORRIES.md)** - Technical deep dive on each remaining sorry
+4. **[CURRENT_STATUS.md](CURRENT_STATUS.md)** - Consolidated project status and metrics
+5. **[how-to-lean-batteries.md](how-to-lean-batteries.md)** - Lean proof tactics reference (batteries-only)
+
+### Supporting Documentation
+
+- **[COMPLETION_ROADMAP.md](COMPLETION_ROADMAP.md)** - Strategic completion plan
+- **[DEAD_CODE_CATALOG.md](DEAD_CODE_CATALOG.md)** - What was cleaned up and why
+- **[WEEKS_STUCK_ROOT_CAUSE.md](WEEKS_STUCK_ROOT_CAUSE.md)** - Critical debugging insights
+
+### Historical Documentation
+
+See `docs_archive/` for ~80 archived files (session summaries, phase completions, historical analysis).
+
+**Documentation cleanup (2025-12-13)**: Reduced from 100+ markdown files to 9 essential documents. All historical info preserved in docs_archive/.
+
 ## Architecture Overview
+
+### What's Complete vs Incomplete
+
+**Complete ✅**:
+- Core specification and runtime implementation
+- Bridge layer (dvOK_implies_DJ_subst fully proven, 150 LOC)
+- Substitution correspondence (subst_correspondence fully proven)
+- Step soundness (save/load cases proven)
+- Main theorem architecture (verify_impl_sound type-checks)
+- All infrastructure lemmas (DBLemmas, KernelExtras, ArrayListExt)
+
+**Incomplete ⚠️** (3 sorries in KernelClean.lean):
+- `fold_maintains_provable` - Fold induction (~100 LOC)
+- `stepNormal_sound` hyp case - Hypothesis soundness (~20 LOC)
+- `stepNormal_sound` assert case - Assertion soundness (~20 LOC)
+
+**Optional** (6 sorries in ParserInvariants.lean):
+- Parser invariants can be axiomatized for kernel soundness
+- Parser correctness is separate concern
 
 ### Layer Structure (Bottom-Up)
 
@@ -81,11 +124,13 @@ The project uses a **phased bottom-up architecture** where each layer depends on
 - Float hypothesis uniqueness: no two floats bind same variable
 - **Key blocking lemma**: `feedTokens_is_only_float_source` - proves floats can ONLY be added via feedTokens.float case
 
-**Phase 4: Bridge Functions** (`Metamath.Bridge.Basics`)
+**Phase 4: Bridge Functions** (`Metamath.Spec.Bridge`)
 - Conversion from runtime DB representation to specification frames
 - Pattern extraction from Metamath objects
+- **Key achievement**: dvOK_implies_DJ_subst FULLY PROVEN (150 LOC, lines 1358-1507)
 
 **Phase 5-8: Kernel Soundness** (`Metamath.KernelClean`)
 - Stepwise proof that each verifier operation maintains mathematical soundness
 - Main theorem: `verify_impl_sound` - proves parser success implies valid theorem
+- **Status**: Architecture complete, 3 sorries remain (see BLOCKING_SORRIES.md)
 

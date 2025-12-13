@@ -28,12 +28,13 @@ lean_lib Metamath where
   -- ParserLoopInduction: Infrastructure for feed loop induction
   -- LoopInvariant: Reusable loop invariant infrastructure (general-purpose)
   -- DBCaseAnalysis: Helpers for complex case analysis in DB operations
+  -- DBLemmas: Basic DB operation lemmas (insert, mkError, withHyps)
   -- CounterexampleInsertError: Proves insert with error can modify DB
   -- ParserOperations: Parser operations as StructurePreservingOps
   -- AutoTest: ATP automation test cases (requires lean-auto, not included in build)
   -- ZipperTest: Zipperposition integration test (requires lean-auto, not included in build)
   -- Tests.ParserInvariantTests: Executable verification tests
-  roots := #[`Metamath.Spec, `Metamath.ByteSliceCompat, `Metamath.Verify, `Metamath.WellFormedness, `Metamath.ParserBasics, `Metamath.ParserCorrectness, `Metamath.ArrayListExt, `Metamath.Bridge, `Metamath.KernelExtras, `Metamath.AllM, `Metamath.KernelClean, `Metamath.ValidateDB, `Metamath.ParserInvariants, `Metamath.ParserProofs, `Metamath.HashMapLemmas, `Metamath.ParserLoopInduction, `Metamath.LoopInvariant, `Metamath.DBCaseAnalysis, `Metamath.CounterexampleInsertError, `Metamath.ParserInvariantsStep1, `Metamath.ParserOperations]
+  roots := #[`Metamath.Spec, `Metamath.ByteSliceCompat, `Metamath.Verify, `Metamath.WellFormedness, `Metamath.ParserBasics, `Metamath.ParserCorrectness, `Metamath.ArrayListExt, `Metamath.Bridge, `Metamath.KernelExtras, `Metamath.DBLemmas, `Metamath.AllM, `Metamath.KernelClean, `Metamath.ValidateDB, `Metamath.ParserInvariants, `Metamath.ParserProofs, `Metamath.HashMapLemmas, `Metamath.ParserLoopInduction, `Metamath.LoopInvariant, `Metamath.DBCaseAnalysis, `Metamath.CounterexampleInsertError, `Metamath.ParserInvariantsStep1, `Metamath.ParserOperations]
 
 @[default_target]
 lean_lib MetamathExperimental where

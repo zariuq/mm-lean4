@@ -21,7 +21,7 @@ theorem mkError_sets_error (db : DB) (pos : Pos) (msg : String) :
 
 /-- mkError preserves the error flag when already set -/
 theorem mkError_preserves_error (db : DB) (pos : Pos) (msg : String)
-    (h : db.error = true) :
+    (_h : db.error = true) :
     (db.mkError pos msg).error = true := by
   unfold DB.mkError DB.error
   simp
@@ -104,24 +104,20 @@ theorem withHyps_preserves_dj (db : DB) (f : Array String → Array String) :
 
 /-! ## insert lemmas -/
 
-/-- insert with error already set returns unchanged db -/
+/-- insert with error already set keeps error = true -/
 theorem insert_with_error (db : DB) (pos : Pos) (label : String) (obj : String → Object)
     (h : db.error = true) :
-    db.insert pos label obj = db := by
-  unfold DB.insert
-  -- After const check (which may or may not modify db), we check db.error
-  -- Since db.error = true, after the const check, error is still true
-  -- (either unchanged or mkError was called, both give error = true)
-  -- So the "if db.error then db else ..." returns db
+    (db.insert pos label obj).error = true := by
+  unfold DB.insert DB.error at *
   split
-  · -- const case: either mkError called or db unchanged
+  · -- const case
     split
-    · -- mkError called: need to show this equals db
-      simp [DB.mkError, DB.error, h]
-    · -- db unchanged
-      simp [h]
-  · -- non-const case: db unchanged
-    simp [h]
+    · -- mkError called
+      simp [DB.mkError]
+    · -- no mkError
+      simp [*]
+  · -- non-const case
+    simp [*]
 
 /-- When insert succeeds (no error), it updates objects -/
 theorem insert_success_updates_objects (db : DB) (pos : Pos) (label : String) (obj : String → Object)
@@ -132,7 +128,7 @@ theorem insert_success_updates_objects (db : DB) (pos : Pos) (label : String) (o
   -- Need to prove that insert doesn't error, then use DB.insert_no_dup_objects
   -- The h_not_const_inner hypothesis ensures the const check doesn't fail
   have h_no_err_after : (db.insert pos label obj).error = false := by
-    unfold DB.insert DB.error DB.mkError
+    unfold DB.insert DB.error at *
     split
     · -- const case
       split
@@ -140,10 +136,10 @@ theorem insert_success_updates_objects (db : DB) (pos : Pos) (label : String) (o
         exfalso
         apply h_not_const_inner
         simp_all
-      · -- const check passes
-        simp [h_no_error, h_no_dup]
-    · -- non-const case
-      simp [h_no_error, h_no_dup]
+      · -- const check passes - db unchanged, continue with if-then-else
+        simp_all
+    · -- non-const case - db unchanged, continue with if-then-else
+      simp_all
   exact DB.insert_no_dup_objects db pos label obj h_no_error h_no_dup h_no_err_after
 
 /-- When insert succeeds, find? label returns the inserted object -/
@@ -154,13 +150,13 @@ theorem insert_success_find? (db : DB) (pos : Pos) (label : String) (obj : Strin
     (db.insert pos label obj).find? label = some (obj label) := by
   -- Prove that insert doesn't error, then use DB.insert_find?_self
   have h_no_err_after : (db.insert pos label obj).error = false := by
-    unfold DB.insert DB.error DB.mkError
+    unfold DB.insert DB.error at *
     split
     · -- const case
       split
       · exfalso; apply h_not_const_inner; simp_all
-      · simp [h_no_error, h_no_dup]
-    · simp [h_no_error, h_no_dup]
+      · simp_all
+    · simp_all
   exact DB.insert_find?_self db pos label obj h_no_error h_no_dup h_no_err_after
 
 /-- insert preserves error=false when no error conditions -/
@@ -169,7 +165,7 @@ theorem insert_preserves_no_error (db : DB) (pos : Pos) (label : String) (obj : 
     (h_no_dup : db.find? label = none)
     (h_not_const_inner : ¬(match obj label with | .const _ => !db.permissive && db.scopes.size > 0 | _ => false)) :
     (db.insert pos label obj).error = false := by
-  unfold DB.insert DB.error DB.mkError
+  unfold DB.insert DB.error at *
   split
   · -- const case
     split
@@ -178,8 +174,8 @@ theorem insert_preserves_no_error (db : DB) (pos : Pos) (label : String) (obj : 
       apply h_not_const_inner
       simp_all
     · -- const check passes
-      simp [h_no_error, h_no_dup]
+      simp_all
   · -- non-const case
-    simp [h_no_error, h_no_dup]
+    simp_all
 
 end Metamath.DBLemmas

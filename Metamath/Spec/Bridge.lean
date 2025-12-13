@@ -270,6 +270,11 @@ theorem List.head_mem_takeWhile_of_ne {α : Type _} [DecidableEq α]
   rw [h_tw]
   exact List.Mem.head (tl.takeWhile (· ≠ vr))
 
+/- NOTE: The stronger theorem toMarioSym_finds_var_exact is not needed.
+   The weaker theorem toMarioSym_finds_var (below) is sufficient and proven.
+   See WEEKS_STUCK_ROOT_CAUSE.md for analysis. -/
+
+/-  -- COMMENTED OUT: Unused theorem with sorries (see WEEKS_STUCK_ROOT_CAUSE.md)
 /-- If vr is the first element in vars that converts to v, then toMarioSym returns it. -/
 theorem String.toMarioSym_finds_var_exact (v : Variable) (vr : MarioVR) (vars : List MarioVR)
     (h_in : vr ∈ vars)
@@ -356,7 +361,7 @@ theorem String.toMarioSym_finds_var_exact (v : Variable) (vr : MarioVR) (vars : 
                 apply h_not_in_full
                 -- Show: vr' ∈ (hd :: tl).takeWhile (· ≠ vr) from vr' ∈ tl.takeWhile (· ≠ vr)
                 sorry  -- Need: relationship between (hd::tl).takeWhile and tl.takeWhile
-
+-/
 /-- If a VR is in the vars list and converts to v, then toMarioSym finds SOME vr'
     that also converts to v.
 
