@@ -305,7 +305,7 @@ theorem insert_no_dup_objects
   -- Case split on obj l to handle const check
   cases h_obj : obj l with
   | const s =>
-    simp only [h_obj]
+    simp only
     -- First split: const check
     split
     · -- Const check failed, creates error - contradiction with h_no_err
@@ -319,11 +319,11 @@ theorem insert_no_dup_objects
     · -- Const check passed - db.error = false reduces if to else branch
       simp only [h_no_prior_err, Bool.false_eq_true, ite_false, h_no_dup]
   | var s =>
-    simp only [h_obj, h_no_prior_err, Bool.false_eq_true, ite_false, h_no_dup]
+    simp only [h_no_prior_err, Bool.false_eq_true, ite_false, h_no_dup]
   | hyp ess f s =>
-    simp only [h_obj, h_no_prior_err, Bool.false_eq_true, ite_false, h_no_dup]
+    simp only [h_no_prior_err, Bool.false_eq_true, ite_false, h_no_dup]
   | assert f frame s =>
-    simp only [h_obj, h_no_prior_err, Bool.false_eq_true, ite_false, h_no_dup]
+    simp only [h_no_prior_err, Bool.false_eq_true, ite_false, h_no_dup]
 
 /-- Equation lemma: insert find? self when no duplicate and no error. -/
 theorem insert_find?_self

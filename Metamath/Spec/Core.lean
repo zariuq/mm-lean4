@@ -49,7 +49,7 @@ theorem Variable.ext (v w : Variable) : v.v = w.v → v = w := by
   intro h
   cases v
   cases w
-  simp only [Variable.v] at h
+  simp only at h
   rw [h]
 
 /-! ## Expressions
