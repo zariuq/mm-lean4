@@ -5,7 +5,7 @@ package «mm-lean4» where
   -- TODO: Enable strict mode once Verify.lean is updated
   -- moreLeanArgs := #["-DwarningAsError=true", "-DautoImplicit=false"]
 
-require batteries from git "https://github.com/leanprover-community/batteries" @ "v4.24.0"
+require batteries from git "https://github.com/leanprover-community/batteries" @ "v4.27.0-rc1"
 
 @[default_target]
 lean_lib Metamath where
@@ -34,7 +34,7 @@ lean_lib Metamath where
   -- AutoTest: ATP automation test cases (requires lean-auto, not included in build)
   -- ZipperTest: Zipperposition integration test (requires lean-auto, not included in build)
   -- Tests.ParserInvariantTests: Executable verification tests
-  roots := #[`Metamath.Spec, `Metamath.ByteSliceCompat, `Metamath.Verify, `Metamath.WellFormedness, `Metamath.ParserBasics, `Metamath.ParserCorrectness, `Metamath.ArrayListExt, `Metamath.Bridge, `Metamath.KernelExtras, `Metamath.DBLemmas, `Metamath.AllM, `Metamath.KernelClean, `Metamath.ValidateDB, `Metamath.ParserInvariants, `Metamath.ParserProofs, `Metamath.HashMapLemmas, `Metamath.ParserLoopInduction, `Metamath.LoopInvariant, `Metamath.DBCaseAnalysis, `Metamath.CounterexampleInsertError, `Metamath.ParserInvariantsStep1, `Metamath.ParserOperations]
+  roots := #[`Metamath.Spec, `Metamath.ByteSliceCompat, `Metamath.Verify, `Metamath.WellFormedness, `Metamath.ParserBasics, `Metamath.ArrayListExt, `Metamath.Bridge, `Metamath.KernelExtras, `Metamath.DBLemmas, `Metamath.AllM, `Metamath.KernelClean, `Metamath.ValidateDB, `Metamath.ParserInvariants, `Metamath.HashMapLemmas, `Metamath.ParserCorrectness, `Metamath.ParserLoopInduction, `Metamath.LoopInvariant, `Metamath.DBCaseAnalysis, `Metamath.CounterexampleInsertError, `Metamath.ParserInvariantsStep1]
 
 @[default_target]
 lean_lib MetamathExperimental where

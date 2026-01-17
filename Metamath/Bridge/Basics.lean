@@ -131,7 +131,7 @@ All proofs are straightforward by filterMap definition.
 - Base case (nil): contradiction (no floating hyp in empty list)
 - Inductive case: If h = floating c v, then (c, v) is kept by filterMap
                    If h = essential e, recurse on tail
-**Status:** Straightforward (~15-20 lines), using sorry for Phase 3 -/
+**Status:** Proven. -/
 theorem floats_complete (fr : Spec.Frame) :
     ∀ c v, Hyp.floating c v ∈ fr.mand → (c, v) ∈ floats fr := by
   intro c v h_mem
@@ -146,7 +146,7 @@ theorem floats_complete (fr : Spec.Frame) :
 - Base case (nil): contradiction (filterMap on empty list is empty)
 - Inductive case: If h = floating c' v', check if (c,v) = (c',v') or recurse
                    If h = essential e, recurse on tail (filterMap filters it out)
-**Status:** Straightforward (~15-20 lines), using sorry for Phase 3 -/
+**Status:** Proven. -/
 theorem floats_sound (fr : Spec.Frame) :
     ∀ c v, (c, v) ∈ floats fr → Hyp.floating c v ∈ fr.mand := by
   intro c v h_mem
@@ -171,7 +171,7 @@ theorem floats_sound (fr : Spec.Frame) :
 - Base case (nil): contradiction (no essential hyp in empty list)
 - Inductive case: If h = essential e, then e is kept by filterMap
                    If h = floating c v, recurse on tail
-**Status:** Straightforward (~15-20 lines), using sorry for Phase 3 -/
+**Status:** Proven. -/
 theorem essentials_complete (fr : Spec.Frame) :
     ∀ e, Hyp.essential e ∈ fr.mand → e ∈ essentials fr := by
   intro e h_mem
@@ -185,7 +185,7 @@ theorem essentials_complete (fr : Spec.Frame) :
 - Base case (nil): contradiction (filterMap on empty list is empty)
 - Inductive case: If h = essential e', check if e = e' or recurse
                    If h = floating c v, recurse on tail (filterMap filters it out)
-**Status:** Straightforward (~15-20 lines), using sorry for Phase 3 -/
+**Status:** Proven. -/
 theorem essentials_sound (fr : Spec.Frame) :
     ∀ e, e ∈ essentials fr → Hyp.essential e ∈ fr.mand := by
   intro e h_mem

@@ -23,21 +23,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build & Test Commands
 
+### Resource limits (recommended for Lean builds)
+```bash
+ulimit -Sv 6291456        # 6GB memory cap
+export LAKE_JOBS=3        # limit parallel jobs (CPU usage)
+```
+
 ### Build the project
 ```bash
-lake build
+nice -n 19 lake build
 ```
 
 ### Build specific modules
 ```bash
-lake build Metamath.Verify           # Parser implementation
-lake build Metamath.KernelClean      # Main soundness proof
-lake build Metamath.ParserInvariants # Parser correctness theorems
+nice -n 19 lake build Metamath.Verify           # Parser implementation
+nice -n 19 lake build Metamath.KernelClean      # Main soundness proof
+nice -n 19 lake build Metamath.ParserInvariants # Parser correctness theorems
 ```
 
 ### Check a single file for errors (without building dependencies)
 ```bash
-lean /path/to/file.lean
+nice -n 19 lean /path/to/file.lean
 ```
 
 ### Run the verifier executable
@@ -61,7 +67,7 @@ lake build 2>&1 | grep -E "^(error|warning):" | head -20
 
 ## Documentation Roadmap
 
-**Status**: ✅ Build GREEN | 🎯 3 sorries remaining (~150 LOC to full kernel soundness)
+**Status**: Build green; sorries remain. Use `rg` or `BLOCKING_SORRIES.md` for current list.
 
 ### Essential Documentation (read these!)
 
@@ -91,18 +97,17 @@ See `docs_archive/` for ~80 archived files (session summaries, phase completions
 - Core specification and runtime implementation
 - Bridge layer (dvOK_implies_DJ_subst fully proven, 150 LOC)
 - Substitution correspondence (subst_correspondence fully proven)
-- Step soundness (save/load cases proven)
-- Main theorem architecture (verify_impl_sound type-checks)
+- Step soundness (float/essential/assert lemmas proven)
+- Main theorem for normal proofs (verify_impl_sound proven)
 - All infrastructure lemmas (DBLemmas, KernelExtras, ArrayListExt)
 
-**Incomplete ⚠️** (3 sorries in KernelClean.lean):
-- `fold_maintains_provable` - Fold induction (~100 LOC)
-- `stepNormal_sound` hyp case - Hypothesis soundness (~20 LOC)
-- `stepNormal_sound` assert case - Assertion soundness (~20 LOC)
+**Incomplete ⚠️** (KernelClean sorries remain; use `rg` for exact list):
+- `checkHyp_loop_alignment` - k = i case(s)
+- `compressed_proof_sound`
+- `verify_compressed_sound`
 
-**Optional** (6 sorries in ParserInvariants.lean):
-- Parser invariants can be axiomatized for kernel soundness
-- Parser correctness is separate concern
+**Optional** (ParserInvariants sorries remain):
+- Parser correctness is a separate concern; kernel uses these lemmas as inputs
 
 ### Layer Structure (Bottom-Up)
 
@@ -132,5 +137,4 @@ The project uses a **phased bottom-up architecture** where each layer depends on
 **Phase 5-8: Kernel Soundness** (`Metamath.KernelClean`)
 - Stepwise proof that each verifier operation maintains mathematical soundness
 - Main theorem: `verify_impl_sound` - proves parser success implies valid theorem
-- **Status**: Architecture complete, 3 sorries remain (see BLOCKING_SORRIES.md)
-
+- **Status**: Sorries remain; see `BLOCKING_SORRIES.md` or `rg -n "\\bsorry\\b"`.

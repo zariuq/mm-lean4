@@ -117,11 +117,14 @@ def varsInExpr (vars : List Variable) (e : Expr) : List Variable :=
     let v := Variable.mk s
     if v ∈ vars then some v else none
 
-def dvOK (vars : List Variable) (dv : List (Variable × Variable)) (σ : Subst) : Prop :=
-  ∀ (v w : Variable), (v, w) ∈ dv →
+def dvRel (dv : List (Variable × Variable)) (v w : Variable) : Prop :=
+  v ≠ w ∧ ((v, w) ∈ dv ∨ (w, v) ∈ dv)
+
+def dvOK (vars : List Variable) (dvSource dvTarget : List (Variable × Variable)) (σ : Subst) : Prop :=
+  ∀ (v w : Variable), (v, w) ∈ dvSource →
     let vs := varsInExpr vars (σ v)
     let ws := varsInExpr vars (σ w)
-    ∀ x, x ∈ vs → x ∉ ws
+    ∀ x ∈ vs, ∀ y ∈ ws, dvRel dvTarget x y
 
 /-- A substitution `σ` is the identity on a set of variables `vs` if
     for every `v ∈ vs`, we have `σ v = ⟨(σ v).typecode, [v.v]⟩`.

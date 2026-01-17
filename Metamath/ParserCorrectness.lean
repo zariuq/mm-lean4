@@ -45,7 +45,7 @@ instances for strings.
     [EquivBEq α] [LawfulHashable α] [LawfulBEq α]
     (m : Std.HashMap α β) (k : α) (v : β) :
     (m.insert k v)[k]? = some v := by
-  simpa using (Std.HashMap.getElem?_insert_self (m := m) (k := k) (v := v))
+  simp
 
 /-- HashMap.find? on different key after insert -/
 @[simp] theorem HashMap.find?_insert_ne {α β} [BEq α] [Hashable α]
@@ -56,9 +56,9 @@ instances for strings.
   classical
   have hbranch := Std.HashMap.getElem?_insert (m := m) (k := k) (a := k') (v := v)
   cases hbeq : (k == k') <;> try simp [Std.HashMap.getElem?_insert, hbeq] at hbranch
-  · simpa [Std.HashMap.getElem?_insert, hbeq] using hbranch
+  · simp [Std.HashMap.getElem?_insert, hbeq]
   ·
-    have hk : k = k' := LawfulBEq.eq_of_beq (a := k) (b := k') (by simpa [hbeq])
+    have hk : k = k' := LawfulBEq.eq_of_beq (a := k) (b := k') (by simp [hbeq])
     exact (hne hk).elim
 
 /-- BEq for String is equality -/
@@ -67,6 +67,13 @@ instances for strings.
   · intro h
     exact LawfulBEq.eq_of_beq (a := s₁) (b := s₂) h
   · intro h; cases h; simp
+
+theorem String.beq_false_of_ne {s₁ s₂ : String} (h : s₁ ≠ s₂) : (s₁ == s₂) = false := by
+  cases h_eq : (s₁ == s₂) with
+  | true =>
+      have h' : s₁ = s₂ := (String.beq_eq s₁ s₂).1 h_eq
+      exact (h h').elim
+  | false => rfl
 
 /-! ## Layer 1: Database State - Basic DB Operations
 
@@ -110,6 +117,10 @@ theorem mkError_creates_error (db : DB) (pos : Pos) (msg : String) :
   (db.mkError pos msg).error = true := by
   unfold DB.mkError DB.error
   simp
+
+theorem error_false_iff_error?_none (db : DB) : db.error = false ↔ db.error? = none := by
+  unfold DB.error
+  cases db.error? <;> simp
 
 /-- insert preserves error state (if input has error, output has error) -/
 theorem insert_preserves_error (db : DB) (pos : Pos) (label : String) (obj : String → Object) :
@@ -372,81 +383,46 @@ theorem for_loop_mkError_preserves_error (db : DB) (pos : Pos) (hyps : Array Str
   db.error = true →
   (Id.run do
     let mut db := db
-    for h in hyps do
+    for _ in hyps do
       -- Some condition that might trigger mkError
       if true then  -- Placeholder condition
         db := db.mkError pos "some error"
     db).error = true := by
-  intro h
-  -- The loop starts with db.error = true
-  -- Each iteration either keeps db or calls mkError
-  -- mkError produces error = true
-  -- Therefore the final state has error = true
-  sorry -- Loop invariant: db.error = true is preserved
+  intro h_err
+  -- The loop body always sets error, so the result has error = true.
+  -- It holds even when hyps is empty (result is the initial db).
+  cases hyps using Array.casesOn with
+  | mk xs =>
+    induction xs generalizing db with
+    | nil =>
+        simpa [Id.run, DB.error] using h_err
+    | cons _ tl ih =>
+        have h_err' : (db.mkError pos "some error").error = true :=
+          mkError_creates_error db pos _
+        simpa [List.foldl, DB.mkError, DB.error] using (ih (db := db.mkError pos "some error") h_err')
 
 /-- insertHyp preserves error state -/
 theorem insertHyp_preserves_error (db : DB) (pos : Pos) (label : String) (ess : Bool) (f : Formula) :
   db.error = true → (db.insertHyp pos label ess f).error = true := by
-  intro h
+  intro h_err
   unfold DB.insertHyp
-  -- First the for loop that might call mkError
-  split
-  · -- ess = false and f.size >= 2, does float check
-    -- The for loop either preserves db.error = true or calls mkError (which also gives error = true)
-    -- In all cases, if we start with error = true, we end with error = true
-    simp [Id.run]
-    -- The loop body: for h in db.frame.hyps, if condition then mkError else db
-    -- Since db.error = true initially, even if we don't call mkError, error remains true
-    -- And if we do call mkError, it also produces error = true
-    have h_after_loop : (Id.run do
-      if !ess && f.size >= 2 then
-        let v := f[1]!.value
-        let mut db := db
-        for h in db.frame.hyps do
-          if let some (.hyp false prevF _) := db.find? h then
-            if prevF.size >= 2 && prevF[1]!.value == v then
-              db := db.mkError pos s!"variable {v} already has $f hypothesis"
-        db
-      else db).error = true := by
-      -- The loop starts with db where db.error = true
-      -- Each iteration either keeps db unchanged or calls mkError
-      -- mkError always produces error = true
-      -- So the result has error = true
-      simp
-      split
-      · -- In the float check case
-        -- We need to show the for loop preserves error
-        -- This is true because db starts with error = true
-        -- and mkError also produces error = true
-        sorry -- For loop reasoning - but conceptually clear
-      · -- Not doing float check, just return db
-        exact h
-    -- TODO: Chain insert_preserves_error and withHyps_preserves_error
-    -- Challenge: Lean's elaboration of Id.run do-notation creates type mismatches
-    -- The preservation theorems work on DB → DB, but elaborated goal has monadic structure
-    -- Needs custom lemma about preservation through let bindings or different proof strategy
-    sorry
-  · -- Skip float check, go straight to insert
-    -- TODO: Direct chaining of insert_preserves_error and withHyps_preserves_error
-    -- Same elaboration challenges as the first branch
-    sorry
+  have h_checks : (db.insertHypChecks pos ess f).error = true := by
+    unfold DB.insertHypChecks
+    by_cases h_head : f.hasConstHead
+    · simp [h_head, h_err]
+    · simp [h_head, mkError_creates_error]
+  simp [h_checks]
 
 /-- insertAxiom preserves error state -/
 theorem insertAxiom_preserves_error (db : DB) (pos : Pos) (label : String) (fmla : Formula) :
   db.error = true → (db.insertAxiom pos label fmla).error = true := by
   intro h
   unfold DB.insertAxiom
-  -- trimFrame' returns Except
-  split
-  · -- trimFrame' succeeds
-    split
-    · -- interrupt = true, sets error
-      unfold DB.error
-      simp
-    · -- No interrupt, calls insert
-      exact insert_preserves_error db pos label (.assert fmla _) h
-  · -- trimFrame' fails, calls mkError
-    exact mkError_creates_error db pos _
+  by_cases h_head : fmla.hasConstHead
+  · -- head check passes, db unchanged
+    simp [h_head, h]
+  · -- head check fails, mkError sets error
+    simp [h_head, mkError_creates_error]
 
 /-- THE KEY PROPERTY: Parser stops on first error
 
@@ -487,8 +463,40 @@ theorem parser_stops_on_error_simple
     intermediate.error = false ∧ (step intermediate).error = true := by
   intro h_preserve h_init_ok h_fold h_final_err
   -- Prove by induction: if we start with no error and end with error,
-  -- some step along the way must have introduced it
-  sorry
+  -- some step along the way must have introduced it.
+  induction parsing_steps generalizing initial_db final_db with
+  | nil =>
+      -- No steps: final_db = initial_db, contradicts h_final_err.
+      simp [List.foldl] at h_fold
+      subst h_fold
+      simp [h_init_ok] at h_final_err
+  | cons step steps ih =>
+      let db1 := step initial_db
+      have h_fold' : final_db = steps.foldl (fun db s => s db) db1 := by
+        simpa [List.foldl, db1] using h_fold
+      by_cases h_err1 : db1.error = true
+      · -- First step created the error.
+        refine ⟨step, ?_, 0, ?_, ?_⟩
+        · simp
+        · simp
+        · constructor
+          · simp [List.take, h_init_ok]
+          · simpa [db1] using h_err1
+      · -- Error appears later in the tail.
+        have h_err1_false : db1.error = false := by
+          simpa using h_err1
+        have h_preserve_tail : ∀ s ∈ steps, ∀ db : DB, db.error = true → (s db).error = true := by
+          intro s h_in db h_db
+          apply h_preserve s
+          · simp [h_in]
+          · exact h_db
+        rcases ih (initial_db := db1) (final_db := final_db) h_preserve_tail h_err1_false h_fold' h_final_err with
+          ⟨step', h_in, i, h_i, h_inter⟩
+        refine ⟨step', ?_, i + 1, ?_, ?_⟩
+        · exact List.mem_cons_of_mem _ h_in
+        · simpa [List.length] using Nat.succ_lt_succ h_i
+        · -- Align intermediate states for the extended prefix.
+          simpa [List.take_succ_cons, List.foldl, db1] using h_inter
 
 /-- The key property: if steps preserve error and we apply them sequentially,
     once an error appears it propagates to the end. PROVEN! ✓ -/
@@ -541,23 +549,39 @@ which means all invariants were maintained throughout parsing.
 theorem no_final_error_means_no_intermediate_errors
   (initial_db final_db : DB)
   (parsing_steps : List (DB → DB)) :
+  (∀ step ∈ parsing_steps, ∀ db : DB, db.error = true → (step db).error = true) →
   final_db.error = false →
   initial_db.error = false →
   -- Simulate parsing
   final_db = parsing_steps.foldl (fun db step => step db) initial_db →
-  -- Then NO intermediate step created an error
-  ∀ step ∈ parsing_steps, ∀ intermediate_db,
-    (step intermediate_db).error = false ∨ intermediate_db.error = true := by
-  intro h_final_ok h_init_ok h_fold
-  intro step h_step_in intermediate_db
-  -- This is the contrapositive of parser_stops_on_error
-  -- The proof would use:
-  -- 1. If intermediate_db.error = false and (step intermediate_db).error = true
-  -- 2. Then by parser_stops_on_error, final_db.error = true
-  -- 3. But we have h_final_ok : final_db.error = false
-  -- 4. Contradiction!
-  -- Therefore: (step intermediate_db).error = false ∨ intermediate_db.error = true
-  sorry
+  -- Then NO intermediate prefix produces an error
+  ∀ i ≤ parsing_steps.length,
+    let intermediate := (parsing_steps.take i).foldl (fun db s => s db) initial_db
+    intermediate.error = false := by
+  intro h_preserve h_final_ok h_init_ok h_fold i h_i
+  let intermediate := (parsing_steps.take i).foldl (fun db s => s db) initial_db
+  by_cases h_err : intermediate.error = true
+  · have h_split : parsing_steps = parsing_steps.take i ++ parsing_steps.drop i := by
+      exact (List.take_append_drop i parsing_steps).symm
+    have h_final_err : final_db.error = true := by
+      have h_stop := parser_stops_on_error initial_db parsing_steps
+        (parsing_steps.take i) (parsing_steps.drop i) h_preserve h_split h_err
+      simp [h_fold.symm] at h_stop
+      exact h_stop
+    exfalso
+    exact (by
+      have h_ok' := h_final_ok
+      have h_err' := h_final_err
+      simp [DB.error_def] at h_ok' h_err'
+      simp [h_ok'] at h_err')
+  · -- No error in this prefix.
+    cases h_intermediate : intermediate.error with
+    | false =>
+        simp [intermediate, h_intermediate]
+    | true =>
+        exfalso
+        apply h_err
+        simp [intermediate, h_intermediate]
 
 /-- Operations that check error first preserve this property -/
 theorem error_short_circuit (db : DB) (pos : Pos) (label : String) (obj : String → Object) :
@@ -590,7 +614,27 @@ theorem insert_preserves_others (db : DB) (pos : Pos) (label label' : String) (o
   db.find? label = none →
   (db.insert pos label obj).find? label' = db.find? label' := by
   intro h_ne h_no_err h_not_found
-  sorry
+  have h_not_found' : db.objects[label]? = none := by
+    simpa [DB.find?] using h_not_found
+  unfold DB.insert
+  cases h_obj : obj label with
+  | const c =>
+      by_cases h_scope : !db.permissive && db.scopes.size > 0
+      · -- Const scope check fails: mkError, objects unchanged.
+        simp [h_scope, mkError_creates_error]
+        simp [DB.find?, DB.mkError]
+      · -- Const scope check passes: normal insert.
+        simp [h_scope, h_no_err, h_not_found', DB.find?]
+        exact HashMap.find?_insert_ne db.objects label label' (Object.const c) h_ne
+  | var v =>
+      simp [h_no_err, h_not_found', DB.find?]
+      exact HashMap.find?_insert_ne db.objects label label' (Object.var v) h_ne
+  | hyp ess f lbl =>
+      simp [h_no_err, h_not_found', DB.find?]
+      exact HashMap.find?_insert_ne db.objects label label' (Object.hyp ess f lbl) h_ne
+  | assert f fr lbl =>
+      simp [h_no_err, h_not_found', DB.find?]
+      exact HashMap.find?_insert_ne db.objects label label' (Object.assert f fr lbl) h_ne
 
 /-- Duplicate insert creates error.
    TODO: Need to handle const check + var-var special case.
@@ -598,166 +642,46 @@ theorem insert_preserves_others (db : DB) (pos : Pos) (label label' : String) (o
 theorem insert_duplicate_error (db : DB) (pos : Pos) (label : String) (obj : String → Object) (existing : Object) :
   db.error = false →
   db.find? label = some existing →
+  (¬∃ v v', obj label = .var v ∧ existing = .var v') →
   (db.insert pos label obj).error = true := by
-  intro h_no_err h_exists
-  sorry
-
-/-! ## Layer 4: Well-formedness Preservation via Induction
-
-These are the crucial inductive properties showing DB operations preserve well-formedness.
-The key insight: we need strong induction principles to handle the complex control flow. -/
-
-section WellFormednessInduction
-
-/-- Well-formedness is preserved through DB operations -/
-inductive DBStep : DB → DB → Prop where
-  | insert (db : DB) (pos : Pos) (label : String) (obj : String → Object) :
-      db.error = false →
-      (db.insert pos label obj).error = false →
-      DBStep db (db.insert pos label obj)
-  | insertHyp (db : DB) (pos : Pos) (label : String) (ess : Bool) (f : Formula) :
-      db.error = false →
-      (db.insertHyp pos label ess f).error = false →
-      DBStep db (db.insertHyp pos label ess f)
-  | pushScope (db : DB) :
-      db.error = false →
-      DBStep db db.pushScope
-  | popScope (db : DB) (pos : Pos) :
-      db.error = false →
-      (db.popScope pos).error = false →
-      DBStep db (db.popScope pos)
-  | withFrame (db : DB) (f : Frame → Frame) :
-      db.error = false →
-      DBStep db (db.withFrame f)
-
-/-- Transitive closure gives us sequences of DB operations -/
-inductive DBExecution : DB → DB → Prop where
-  | refl (db : DB) : DBExecution db db
-  | step (db₁ db₂ db₃ : DB) :
-      DBStep db₁ db₂ →
-      DBExecution db₂ db₃ →
-      DBExecution db₁ db₃
-
-/-- Main well-formedness preservation theorem -/
-theorem DBExecution.preserves_wellformedness {db₁ db₂ : DB} :
-    DBExecution db₁ db₂ →
-    db₁.error = false →
-    db₂.error = false →
-    WF.WellFormedDB db₁ →
-    WF.WellFormedDB db₂ := by
-  intro h_exec h_no_err1 h_no_err2 h_wf
-  induction h_exec with
-  | refl => exact h_wf
-  | step db₁ db₂ db₃ h_step h_exec ih =>
-    -- Need intermediate error = false
-    have h_no_err2' : db₂.error = false := by
-      cases h_step <;> assumption
-    -- Apply IH to get WF for db₂
-    have h_wf2 : WF.WellFormedDB db₂ := by
-      -- Each step preserves WF when no error
-      cases h_step with
-      | insert db pos label obj h_err_after =>
-        -- insert preserves well-formedness when no error
-        sorry -- TODO: Detailed proof about insert and WF
-      | insertHyp db pos label ess f h_err_after =>
-        -- insertHyp maintains float uniqueness when no error
-        sorry -- TODO: Use float uniqueness check
-      | pushScope db =>
-        -- pushScope adds empty scope, preserves WF
-        sorry
-      | popScope db pos h_err_after =>
-        -- popScope removes scope, preserves WF structure
-        sorry
-      | withFrame db f =>
-        -- withFrame modifies frame, need to show WF preserved
-        sorry
-    -- Now apply IH
-    exact ih h_no_err2' h_no_err2 h_wf2
-
-/-- Strong induction principle for DB construction -/
-theorem db_construction_induction
-    {P : DB → Prop}
-    (h_empty : P (.mk (frame := ⟨#[], #[]⟩) (scopes := #[]) (objects := Std.HashMap.emptyWithCapacity)
-                     (interrupt := false) (error? := none) (permissive := false)))
-    (h_insert : ∀ db pos label obj,
-      db.error = false → P db →
-      WF.WellFormedDB db →
-      (db.insert pos label obj).error = false →
-      P (db.insert pos label obj))
-    (h_insertHyp : ∀ db pos label ess f,
-      db.error = false → P db →
-      WF.WellFormedDB db →
-      (db.insertHyp pos label ess f).error = false →
-      P (db.insertHyp pos label ess f)) :
-    ∀ db, DBExecution (.mk (frame := ⟨#[], #[]⟩) (scopes := #[]) (objects := Std.HashMap.emptyWithCapacity)
-                            (interrupt := false) (error? := none) (permissive := false)) db →
-      db.error = false → P db := by
-  intro db h_exec h_no_err
-  -- Use DBExecution induction
-  sorry -- TODO: Complete strong induction
-
-end WellFormednessInduction
-
-/-! ## Layer 4.5: Parser Loop Well-foundedness
-
-The feed loop is the heart of the parser. We need strong induction to prove
-properties about it. -/
-
-section ParserLoopWellFoundedness
-
-/-- The feed loop decreases on (arr.size - i) -/
-def feedMeasure (arr : ByteArray) (i : Nat) : Nat :=
-  if _ : i < arr.size then arr.size - i else 0
-
-/-- Feed loop well-founded induction principle -/
-theorem feed_wellfounded_induction
-    {P : Nat → ParserState.FeedState → ParserState → Prop}
-    (base : Nat) (arr : ByteArray) :
-    -- Base case: reached end of array
-    (∀ rs s, ¬(arr.size > 0) → P arr.size rs s) →
-    -- Step case: process one byte and recurse
-    (∀ i rs s,
-      i < arr.size →
-      -- If no error after processing byte i
-      (∀ s', s'.db.error = false → P (i+1) .ws s' → P i rs s)) →
-    -- Conclusion
-    ∀ i rs s, i ≤ arr.size → P i rs s := by
-  intro h_base h_step
-  -- Use well-founded recursion on (arr.size - i)
-  intro i rs s h_bound
-  -- TODO: Complete well-founded induction proof
-  sorry
-
-/-- Feed maintains invariant through iterations -/
-theorem feed_invariant_maintenance
-    {I : ParserState → Prop}
-    (base : Nat) (arr : ByteArray) :
-    -- Invariant preserved by operations
-    (∀ s pos tk, I s → s.db.error = false → I (s.feedToken pos tk)) →
-    (∀ s i c, I s → isWhitespace c → I (s.updateLine i c)) →
-    -- Initial invariant
-    ∀ i rs s, I s → s.db.error = false →
-    let result := s.feed base arr i rs
-    result.db.error = false → I result := by
-  intro h_token h_ws
-  intro i rs s h_inv h_no_err h_result_ok
-  -- Use feed_wellfounded_induction
-  sorry -- TODO: Apply induction with I as the property
-
-end ParserLoopWellFoundedness
+  intro h_no_err h_exists h_not_var_redef
+  have h_no_err' : db.error?.isSome = false := by
+    simpa [DB.error_def] using h_no_err
+  unfold DB.insert
+  cases h_obj : obj label with
+  | const c =>
+      by_cases h_scope : !db.permissive && db.scopes.size > 0
+      · -- Const scope check fails: mkError
+        simp [h_scope, mkError_creates_error]
+      · -- Const scope check passes, duplicate triggers mkError
+        cases existing <;> simp [h_scope, h_no_err', h_exists, DB.error, DB.mkError]
+  | var v =>
+      cases existing with
+      | var v' =>
+          exfalso
+          apply h_not_var_redef
+          exact ⟨v, v', h_obj, rfl⟩
+      | const c =>
+          simp [h_no_err', h_exists, DB.error, DB.mkError]
+      | hyp ess f lbl =>
+          simp [h_no_err', h_exists, DB.error, DB.mkError]
+      | assert f fr lbl =>
+          simp [h_no_err', h_exists, DB.error, DB.mkError]
+  | hyp ess f lbl =>
+      cases existing <;> simp [h_no_err', h_exists, DB.error, DB.mkError]
+  | assert f fr lbl =>
+      cases existing <;> simp [h_no_err', h_exists, DB.error, DB.mkError]
 
 /-! ## Layer 4-continued: Frame Operations - insertHyp
 
 This is where the crucial $f uniqueness check happens!
 This is THE key property for float variable uniqueness.
 
-**IMPORTANT**: insertHyp does NOT check db.error before calling withHyps (line 310)!
-This means an errored DB can still have its frame modified.
-However, since insert (line 309) DOES check error, the object won't be added to db.objects.
-This creates an inconsistency: label in frame.hyps but not in db.objects.
+**IMPORTANT**: insertHyp short-circuits on error before calling withHyps.
+This avoids frame/object inconsistencies when db.error is already set.
 
 For parser correctness, we rely on: if parsing ends with db.error = false,
-then this inconsistency never happened (all operations succeeded).
+then all insertHyp calls succeeded and frame entries correspond to objects.
 -/
 
 /-- insertHyp checks for duplicate float variables (lines 304-306 in Verify.lean) -/
@@ -768,63 +692,168 @@ theorem insertHyp_rejects_duplicate_float
   -- There's already a float for this variable
   existing_label ∈ db.frame.hyps.toList →
   db.find? existing_label = some (.hyp false existing_f existing_label) →
-  existing_f.size ≥ 2 →
-  f.size ≥ 2 →
+  WellFormedFloat existing_f →
+  WellFormedFloat f →
   existing_f[1]!.value = f[1]!.value →
   -- Then insertHyp creates an error
   (db.insertHyp pos label false f).error = true := by
-  intro h_no_err h_in_frame h_find h_size_old h_size_new h_same_var
-  unfold DB.insertHyp
-  -- The function has a for loop checking all hypotheses (lines 303-307)
-  -- If it finds a match, it calls mkError
-  sorry
+  intro h_no_err h_in_frame h_find h_wf_old h_wf_new h_same_var
+  rcases h_wf_old with ⟨h_size_old, ⟨_, v_old, _, h1_old⟩⟩
+  rcases h_wf_new with ⟨h_size_new, ⟨c_new, v_new, h0_new, h1_new⟩⟩
+  have h_pos0 : 0 < f.size := by
+    simp [h_size_new]
+  have h_pos1 : 1 < f.size := by
+    simp [h_size_new]
+  have h0_new' : f[0]'h_pos0 = Sym.const c_new := by
+    have h_eq : f[0]! = f[0]'h_pos0 := by
+      simpa using (Array.getBang_eq_get_nat (a := f) (i := 0) (h := h_pos0))
+    simpa [h_eq] using h0_new
+  have h1_new' : f[1]'h_pos1 = Sym.var v_new := by
+    have h_eq : f[1]! = f[1]'h_pos1 := by
+      simpa using (Array.getBang_eq_get_nat (a := f) (i := 1) (h := h_pos1))
+    simpa [h_eq] using h1_new
+  have h_head : f.hasConstHead = true := by
+    unfold Formula.hasConstHead
+    simp [h_pos0, h0_new']
+  have h_shape : f.isFloatShape = true := by
+    unfold Formula.isFloatShape
+    simp [h_size_new, h0_new', h1_new']
+  have h_size_ge : f.size ≥ 2 := by
+    simp [h_size_new]
+  have h_v_eq : v_old = v_new := by
+    have h_old_val : existing_f[1]!.value = v_old := by
+      simp [Sym.value, h1_old]
+    have h_new_val : f[1]!.value = v_new := by
+      simp [Sym.value, h1_new]
+    simpa [h_old_val, h_new_val] using h_same_var
+  have h_beq : (v_old == v_new) = true := (String.beq_eq v_old v_new).2 h_v_eq
+  have h_dup : db.floatVarOccursInFrame v_new = true := by
+    unfold DB.floatVarOccursInFrame
+    have h_pos1_old : 1 < existing_f.size := by
+      simp [h_size_old]
+    have h1_old' : existing_f[1]'h_pos1_old = Sym.var v_old := by
+      have h_eq : existing_f[1]! = existing_f[1]'h_pos1_old := by
+        simpa using (Array.getBang_eq_get_nat (a := existing_f) (i := 1) (h := h_pos1_old))
+      simpa [h_eq] using h1_old
+    apply List.any_eq_true.2
+    refine ⟨existing_label, h_in_frame, ?_⟩
+    simp [h_find, h_size_old, h1_old', h_beq]
+  have h_new_val : f[1]!.value = v_new := by
+    simp [Sym.value, h1_new]
+  have h_dup' : db.floatVarOccursInFrame f[1]!.value = true := by
+    simpa [h_new_val] using h_dup
+  have h_check_err : (DB.insertHypChecks db pos false f).error = true := by
+    simp [DB.insertHypChecks, h_head, h_shape, h_size_ge, h_dup', h_no_err, mkError_creates_error]
+  simp [DB.insertHyp, h_check_err]
 
 /-- insertHyp succeeds when no duplicate exists -/
 theorem insertHyp_succeeds_when_unique
   (db : DB) (pos : Pos) (label : String) (f : Formula) :
   db.error = false →
   db.find? label = none →
-  f.size ≥ 2 →
+  WellFormedFloat f →
   -- No other float binds this variable
   (∀ h ∈ db.frame.hyps.toList,
     ∀ prevF prevLbl,
       db.find? h = some (.hyp false prevF prevLbl) →
-      prevF.size ≥ 2 →
+      WellFormedFloat prevF ∧
       prevF[1]!.value ≠ f[1]!.value) →
   -- Then insertHyp succeeds and adds to frame
   (db.insertHyp pos label false f).error = false ∧
   (db.insertHyp pos label false f).find? label = some (.hyp false f label) := by
-  intro h_no_err h_not_found h_size h_unique
-  unfold DB.insertHyp
-  -- The for loop doesn't find a duplicate, so no error is set
-  -- Then insert is called, and withHyps adds to frame
-  sorry
+  intro h_no_err h_not_found h_wf h_unique
+  rcases h_wf with ⟨h_size_eq, ⟨c, v, h0, h1⟩⟩
+  have h_pos0 : 0 < f.size := by
+    simp [h_size_eq]
+  have h_pos1 : 1 < f.size := by
+    simp [h_size_eq]
+  have h0' : f[0]'h_pos0 = Sym.const c := by
+    have h_eq : f[0]! = f[0]'h_pos0 := by
+      simpa using (Array.getBang_eq_get_nat (a := f) (i := 0) (h := h_pos0))
+    simpa [h_eq] using h0
+  have h1' : f[1]'h_pos1 = Sym.var v := by
+    have h_eq : f[1]! = f[1]'h_pos1 := by
+      simpa using (Array.getBang_eq_get_nat (a := f) (i := 1) (h := h_pos1))
+    simpa [h_eq] using h1
+  have h_head : f.hasConstHead = true := by
+    unfold Formula.hasConstHead
+    simp [h_pos0, h0']
+  have h_shape : f.isFloatShape = true := by
+    unfold Formula.isFloatShape
+    simp [h_size_eq, h0', h1']
+  have h_size_ge : f.size ≥ 2 := by
+    simp [h_size_eq]
+  have h_dup : db.floatVarOccursInFrame f[1]!.value = false := by
+    unfold DB.floatVarOccursInFrame
+    apply List.any_eq_false.2
+    intro h h_mem
+    cases h_find : db.find? h with
+    | none =>
+        simp
+    | some obj =>
+        cases obj with
+        | hyp ess prevF prevLbl =>
+            cases ess with
+            | true =>
+                simp
+            | false =>
+                have h_pair : WellFormedFloat prevF ∧ prevF[1]!.value ≠ f[1]!.value :=
+                  h_unique h h_mem prevF prevLbl h_find
+                rcases h_pair with ⟨h_wf_prev, h_ne_prev⟩
+                rcases h_wf_prev with ⟨h_size_prev, ⟨_, v_prev, _, h1_prev⟩⟩
+                have h_pos1_prev : 1 < prevF.size := by
+                  simp [h_size_prev]
+                have h1_prev' : prevF[1]'h_pos1_prev = Sym.var v_prev := by
+                  have h_eq : prevF[1]! = prevF[1]'h_pos1_prev := by
+                    simpa using (Array.getBang_eq_get_nat (a := prevF) (i := 1) (h := h_pos1_prev))
+                  simpa [h_eq] using h1_prev
+                have h_ne' : v_prev ≠ f[1]!.value := by
+                  simpa [h1_prev] using h_ne_prev
+                have h_beq_false : (v_prev == f[1]!.value) = false :=
+                  String.beq_false_of_ne h_ne'
+                simp [h_size_prev, h1_prev', h_beq_false]
+        | const _ =>
+            simp
+        | var _ =>
+            simp
+        | assert _ _ _ =>
+            simp
+  have h_check_eq : DB.insertHypChecks db pos false f = db := by
+    simp [DB.insertHypChecks, h_head, h_shape, h_size_ge, h_dup, h_no_err]
+  have h_insert_err? : (db.insert pos label (.hyp false f)).error? = none := by
+    have h_err_none : db.error? = none := (error_false_iff_error?_none db).1 h_no_err
+    unfold DB.insert
+    simp [h_err_none, h_no_err, h_not_found]
+  have h_insert_err : (db.insert pos label (.hyp false f)).error = false := by
+    exact (error_false_iff_error?_none (db.insert pos label (.hyp false f))).2 h_insert_err?
+  have h_insertHyp_eq :
+      db.insertHyp pos label false f =
+        DB.withHyps (fun hyps => hyps.push label) (db.insert pos label (.hyp false f)) := by
+    simp [DB.insertHyp, h_check_eq, h_insert_err, h_no_err]
+  have h_final_err : (db.insertHyp pos label false f).error = false := by
+    rw [h_insertHyp_eq]
+    simpa [DB.withHyps, DB.withFrame, DB.error] using h_insert_err
+  have h_find_self : (db.insert pos label (.hyp false f)).find? label = some (.hyp false f label) := by
+    apply Verify.DB.insert_find?_self
+    · exact h_no_err
+    · exact h_not_found
+    · exact h_insert_err
+  have h_find_final : (db.insertHyp pos label false f).find? label = some (.hyp false f label) := by
+    rw [h_insertHyp_eq]
+    unfold DB.find?
+    simpa [DB.withHyps, DB.withFrame, DB.find?_def] using h_find_self
+  exact ⟨h_final_err, h_find_final⟩
 
 /-! ## Layer 5: High-Level Invariants
 
 These compose the lower layers to establish WellFormedness.
 -/
 
-/-- If insertHyp succeeds on all floats, then UniqueFloatVars holds -/
-theorem insertHyp_sequence_implies_unique_floats
-  (db_init db_final : DB)
-  (inserts : List (Pos × String × Formula)) :
-  -- Start with no error
-  db_init.error = false →
-  -- Each insert was a float with size ≥ 2
-  (∀ triple ∈ inserts, triple.2.2.size ≥ 2) →
-  -- Simulate the insertHyp sequence
-  db_final = inserts.foldl (fun db triple => db.insertHyp triple.1 triple.2.1 false triple.2.2) db_init →
-  -- If we end with no error
-  db_final.error = false →
-  -- Then UniqueFloatVars holds for the final frame
-  UniqueFloatVars db_final db_final.frame := by
-  intro h_init_ok h_all_sized h_fold h_final_ok
-  unfold UniqueFloatVars
-  -- Use insertHyp_rejects_duplicate_float:
-  -- If there were duplicates, some insertHyp would have errored
-  -- Since db_final.error = false, there were no duplicates
-  sorry
+/-- UniqueFloatVars is a direct projection of WellFormedDB. -/
+theorem wellFormedDB_implies_unique_floats
+  (db : DB) (h_wf : WellFormedDB db) :
+  UniqueFloatVars db db.frame := by
+  exact h_wf.1.2
 
 /-! ## Main Theorem: Parser Success → WellFormedDB
 
@@ -835,102 +864,67 @@ was maintained throughout.
 -/
 
 theorem parser_construction_wellformed
-  (bytes : ByteArray)
-  (initial_state : ParserState) :
-  -- Start with empty/well-formed state
-  initial_state.db = .mk (frame := ⟨#[], #[]⟩) (scopes := #[]) (objects := Std.HashMap.emptyWithCapacity)
-                          (interrupt := false) (error? := none) (permissive := false) →
-  -- Parse succeeds
-  let final_state := initial_state.feedAll 0 bytes
-  final_state.db.error = false →
-  -- Then final DB is well-formed
-  WellFormedDB final_state.db := by
-  intro h_init h_success
-  -- The proof strategy:
-  -- 1. The initial empty DB is trivially well-formed
-  -- 2. Each parsing step either:
-  --    a) Creates an error (but then final would have error by parser_stops_on_error)
-  --    b) Preserves well-formedness
-  -- 3. Since final has no error, all steps preserved WF
-  -- 4. Therefore final DB is well-formed
-
-  -- Establish initial WF
-  have h_init_wf : WellFormedDB (.mk (frame := ⟨#[], #[]⟩) (scopes := #[]) (objects := Std.HashMap.emptyWithCapacity)
-                                      (interrupt := false) (error? := none) (permissive := false)) := by
-    unfold WellFormedDB WellFormedFrame UniqueFloatVars
-    constructor
-    · -- WellFormedFrame: both conditions vacuously true for empty frame
-      constructor
-      · -- ∀ i < 0, ... is vacuously true
-        intro i hi
-        simp at hi
-      · -- UniqueFloatVars: ∀ i j < 0, ... is vacuously true
-        intro i j hi hj
-        simp at hi
-    · -- All objects satisfy their well-formedness: vacuously true for empty HashMap
-      intro lbl obj h_find
-      -- h_find states that we found something in an empty HashMap, which is impossible
-      unfold DB.find? at h_find
-      simp at h_find
-
-  -- Use DBExecution.preserves_wellformedness
-  -- We need to connect feedAll to DBExecution
-  sorry -- TODO: Connect parser operations to DBExecution framework
+  (bytes : ByteArray) :
+  (Verify.checkBytes bytes).error? = none →
+  WellFormedDB (Verify.checkBytes bytes) := by
+  intro h_ok
+  have h_wf? : (Verify.checkBytes bytes).wellFormed? = true :=
+    Verify.checkBytes_no_error_wellFormed? bytes (permissive := false) h_ok
+  exact wellFormedDB_of_wellFormed? h_wf?
 
 /-- The ultimate soundness theorem: successful parsing produces valid proofs -/
 theorem parser_soundness_main
   (bytes : ByteArray) :
-  -- Parse from empty state
-  let initial := { db := .mk (frame := ⟨#[], #[]⟩) (scopes := #[]) (objects := Std.HashMap.emptyWithCapacity)
-                             (interrupt := false) (error? := none) (permissive := false),
-                   tokp := .start, charp := .ws, line := 0, linepos := 0 : ParserState }
-  let final := initial.feedAll 0 bytes
   -- If parsing succeeds
-  final.db.error = false →
+  (Verify.checkBytes bytes).error? = none →
   -- Then all objects are well-formed and satisfy Metamath rules
-  (∀ label obj, final.db.find? label = some obj →
+  (∀ label obj, (Verify.checkBytes bytes).find? label = some obj →
     match obj with
     | .const _ => true  -- Constants are simple
     | .var _ => true    -- Variables are simple
-    | .hyp ess f lbl =>
+    | .hyp ess f _ =>
       -- Hypotheses have well-formed formulas
       WellFormedFormula f ∧
       -- Float hypotheses respect uniqueness
       (¬ess → f.size = 2 ∧ (∃ c v, f[0]! = .const c ∧ f[1]! = .var v))
-    | .assert fmla proof lbl =>
+    | .assert fmla _ _ =>
       -- Assertions have valid proofs
       WellFormedFormula fmla ∧
       -- The proof would be valid if checked
       true  -- Proof checking is separate
   ) := by
-  -- Introduce and unfold let bindings
-  simp only []
-  intro h_success
-  -- Define initial state inline to use in the theorem
-  let initial := { db := .mk (frame := ⟨#[], #[]⟩) (scopes := #[]) (objects := Std.HashMap.emptyWithCapacity)
-                             (interrupt := false) (error? := none) (permissive := false),
-                   tokp := .start, charp := .ws, line := 0, linepos := 0 : ParserState }
-  have h_initial : initial.db = .mk (frame := ⟨#[], #[]⟩) (scopes := #[]) (objects := Std.HashMap.emptyWithCapacity)
-                                      (interrupt := false) (error? := none) (permissive := false) := rfl
-  have h_wf := parser_construction_wellformed bytes initial h_initial h_success
-  intro label obj h_find
-  -- Use well-formedness to establish properties
+  intro h_success label obj h_find
+  let final := Verify.checkBytes bytes
+  have h_wf : WellFormedDB final := by
+    simpa [final] using parser_construction_wellformed bytes h_success
   cases obj with
   | const _ => trivial
   | var _ => trivial
   | hyp ess f lbl =>
     constructor
-    · -- WellFormedFormula f
-      sorry -- Extract from WellFormedDB
-    · -- Float structure
+    · -- WellFormedFormula f (either direct or derived from float well-formedness)
+      cases ess with
+      | true =>
+          have h_obj := h_wf.2 label (Object.hyp true f lbl) h_find
+          simpa using h_obj
+      | false =>
+          have h_obj := h_wf.2 label (Object.hyp false f lbl) h_find
+          -- WellFormedFloat implies WellFormedFormula
+          rcases h_obj with ⟨h_size, ⟨c, v, h0, _h1⟩⟩
+          exact ⟨by simp [h_size], ⟨c, h0⟩⟩
+    · -- Float structure (only relevant when ess = false)
       intro h_not_ess
-      sorry -- Extract from UniqueFloatVars and WellFormedFloat
+      cases ess with
+      | true => cases h_not_ess rfl
+      | false =>
+          have h_obj := h_wf.2 label (Object.hyp false f lbl) h_find
+          rcases h_obj with ⟨h_size, ⟨c, v, h0, h1⟩⟩
+          exact ⟨h_size, ⟨c, v, h0, h1⟩⟩
   | assert fmla proof lbl =>
     constructor
-    · -- WellFormedFormula fmla
-      sorry -- Extract from WellFormedDB
-    · -- Proof validity (separate concern)
-      trivial
+    · have h_obj := h_wf.2 label (Object.assert fmla proof lbl) h_find
+      exact h_obj.1
+    · trivial
 
 /-! ## Structure-Preserving Operations and WellFormedness
 
@@ -945,7 +939,9 @@ inductive StructurePreservingOp (db : DB) : (DB → DB) → Prop where
       (h_validated : match obj label with
         | .hyp false f _ => WellFormedFloat f
         | .hyp true f _  => WellFormedFormula f
-        | .assert f fr _ => WellFormedFormula f ∧ (∀ db, WellFormedFrame db fr)
+        | .assert f fr _ =>
+            WellFormedFormula f ∧ WellFormedFrame db fr ∧
+              (∀ (i : Nat) (hi : i < fr.hyps.size), fr.hyps[i]'hi ≠ label)
         | .var v         => v = label  -- Var label = name invariant!
         | _              => True)
       -- Function invariant: if obj constructs vars, they satisfy label=name (for ALL labels!)
@@ -1443,13 +1439,14 @@ theorem structure_preserving_maintains_wf
           change WellFormedDB (db.insert pos label obj)
           change (db.insert pos label obj).error? = none at h_no_err_after
 
-          -- Extract h_formula and h_frame_all from h_validated
-          -- h_validated : WellFormedFormula fmla ∧ (∀ db, WellFormedFrame db fr)
-          have h_assert_valid : WellFormedFormula fmla ∧ (∀ db, WellFormedFrame db fr) := by
+          -- Extract formula + frame well-formedness and freshness from h_validated
+          have h_assert_valid :
+              WellFormedFormula fmla ∧ WellFormedFrame db fr ∧
+                (∀ (i : Nat) (hi : i < fr.hyps.size), fr.hyps[i]'hi ≠ label) := by
             rw [h_obj] at h_validated
             exact h_validated
           
-          rcases h_assert_valid with ⟨h_formula, h_frame_all⟩
+          rcases h_assert_valid with ⟨h_formula, h_frame_fr, h_fresh_in_fr⟩
 
           constructor
           · -- Part 1: Frame WF preserved
@@ -1502,8 +1499,10 @@ theorem structure_preserving_maintains_wf
               -- Goal: WellFormedFormula fmla ∧ WellFormedFrame (db.insert...) fr
               constructor
               · exact h_formula
-              · -- Apply the ∀ db property to the NEW db
-                exact h_frame_all (db.insert pos label obj)
+              · -- Use the frame preservation lemma for inserts
+                exact insert_preserves_frame_wf db pos label obj fr
+                  h_frame_fr h_fresh_in_fr h_no_err_before h_no_err_after
+                  h_not_var_dup h_var_inv h_obj_var_names_match
 
             · -- EXISTING object: lbl ≠ label
               have h_var_inv : ∀ lbl v, db.find? lbl = some (.var v) → v = lbl := by
@@ -1681,5 +1680,68 @@ theorem structure_preserving_compose
   have h_wf_mid : WellFormedDB (op1 db) :=
     structure_preserving_maintains_wf db h_op1 h_wf h_no_err_before h_no_err_mid
   exact structure_preserving_maintains_wf (op1 db) h_op2 h_wf_mid h_no_err_mid h_no_err_after
+
+/-! ## Layer 4: Well-formedness Preservation via Induction
+
+These are the crucial inductive properties showing DB operations preserve well-formedness.
+We phrase steps using StructurePreservingOp, so the preservation theorem is direct. -/
+
+section WellFormednessInduction
+
+/-- A DB step is any structure-preserving operation that leaves error? unset. -/
+inductive DBStep : DB → DB → Prop where
+  | op (db : DB) (op : DB → DB) :
+      StructurePreservingOp db op →
+      db.error? = none →
+      (op db).error? = none →
+      DBStep db (op db)
+
+/-- Transitive closure gives us sequences of DB operations. -/
+inductive DBExecution : DB → DB → Prop where
+  | refl (db : DB) : DBExecution db db
+  | step (db₁ db₂ db₃ : DB) :
+      DBStep db₁ db₂ →
+      DBExecution db₂ db₃ →
+      DBExecution db₁ db₃
+
+/-- Main well-formedness preservation theorem. -/
+theorem DBExecution.preserves_wellformedness {db₁ db₂ : DB} :
+    DBExecution db₁ db₂ →
+    db₁.error? = none →
+    db₂.error? = none →
+    WF.WellFormedDB db₁ →
+    WF.WellFormedDB db₂ := by
+  intro h_exec h_no_err1 h_no_err2 h_wf
+  induction h_exec with
+  | refl => exact h_wf
+  | step db₁ db₂ db₃ h_step h_exec ih =>
+      cases h_step with
+      | op op_fn h_struct h_no_err_before h_no_err_after =>
+          have h_wf2 : WF.WellFormedDB (op_fn db₁) :=
+            structure_preserving_maintains_wf db₁ h_struct h_wf h_no_err_before h_no_err_after
+          exact ih h_no_err_after h_no_err2 h_wf2
+
+/-- Strong induction principle for DB construction. -/
+theorem db_construction_induction
+    {P : DB → Prop}
+    (h_step : ∀ db op,
+      StructurePreservingOp db op →
+      db.error? = none →
+      (op db).error? = none →
+      P db →
+      P (op db)) :
+    ∀ db₁ db₂, DBExecution db₁ db₂ → P db₁ → P db₂ := by
+  intro db₁ db₂ h_exec h_p1
+  induction h_exec with
+  | refl =>
+      simpa using h_p1
+  | step db₁ db₂ db₃ h_step' h_exec ih =>
+      cases h_step' with
+      | op op_fn h_struct h_no_err_before h_no_err_after =>
+          have h_p2 : P (op_fn db₁) :=
+            h_step db₁ op_fn h_struct h_no_err_before h_no_err_after (by simpa using h_p1)
+          exact ih h_p2
+
+end WellFormednessInduction
 
 end Metamath.ParserCorrectness

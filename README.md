@@ -2,7 +2,12 @@
 
 A formal verification in Lean 4 proving that a Metamath proof checker correctly validates mathematical theorems. This project implements a bottom-up verifier from first principles, with each phase proving the previous layer correct.
 
-**Status**: ✅ Build GREEN | 🎯 3 sorries remaining (~150 LOC to full kernel soundness)
+**Status**: `lake build Metamath.KernelClean` succeeds; sorries remain across kernel and parser. Use the commands below for current counts.
+
+Quick reality check commands:
+- `rg -n "^\\s*sorry" Metamath/KernelClean.lean` (KernelClean local TODOs)
+- `rg -n "^\\s*sorry" Metamath -S --glob='*.lean' | wc -l` (Metamath/ total)
+- `lake build Metamath.KernelClean 2>&1 | rg "declaration uses 'sorry'"` (what the build actually depends on)
 
 ---
 
@@ -27,7 +32,7 @@ lake build testParserInvariants
 
 ---
 
-## Project Status (2025-12-13)
+## Project Status (use commands for current state)
 
 ### What's Complete ✅
 
@@ -41,50 +46,25 @@ lake build testParserInvariants
 **Major proven theorems**:
 - ✅ `dvOK_implies_DJ_subst` - Bridge layer (150 LOC, fully proven)
 - ✅ `subst_correspondence` - Substitution correctness (fully proven)
-- ✅ `stepNormal_sound` (save/load cases) - 2/4 proof step cases proven
+- ✅ `stepNormal_sound` for normal proofs (float/essential/assert cases)
 - ✅ All infrastructure lemmas in DBLemmas, KernelExtras, ArrayListExt
 
 **Build quality**:
 - ✅ Build: GREEN (exit code 0)
-- ✅ Warnings: Only sorry declarations (no style warnings)
-- ✅ Tests: All passing
-- ✅ Axioms: ZERO (pure proof-based verification)
+- ⚠️ Warnings: Includes `sorry` warnings (and some linter warnings)
+- ⚠️ Tests: Run manually (see above)
 
 ### What Remains ⚠️
 
-**3 blocking sorries** in `Metamath/KernelClean.lean`:
-1. `fold_maintains_provable` (line 3994) - Fold induction over proof steps (~100 LOC)
-2. `stepNormal_sound` hyp case (line 3973) - Hypothesis lookup soundness (~20 LOC)
-3. `stepNormal_sound` assert case (line 3978) - Assertion application soundness (~20 LOC)
-
-**Parser invariants** (6 sorries in `Metamath/ParserInvariants.lean`):
-- Optional for kernel soundness (can be axiomatized)
-- Parser correctness is separate concern
-- Kernel soundness independent of parser details
-
-**Total estimated effort**: 150-200 LOC to complete kernel soundness proof
+This is still a large proof-engineering effort. The current bottlenecks are:
+- Parser correctness / invariants (`Metamath/ParserInvariants.lean`, `Metamath/ParserLoopInduction.lean`, `Metamath/ParserCorrectness.lean`)
+- Kernel soundness glue (`Metamath/KernelClean.lean`: checkHyp loop alignment, compressed proof soundness)
+- Documentation drift (older notes claim specific counts; use the commands above as the source of truth)
 
 ---
 
 ## Documentation
-
-### Essential Reading
-
-1. **[NEXT_STEPS.md](NEXT_STEPS.md)** - Clear path to completion with detailed strategies
-2. **[BLOCKING_SORRIES.md](BLOCKING_SORRIES.md)** - Technical deep dive on each remaining sorry
-3. **[CURRENT_STATUS.md](CURRENT_STATUS.md)** - Overall project status and metrics
-4. **[CLAUDE.md](CLAUDE.md)** - Build instructions and architecture overview
-5. **[how-to-lean-batteries.md](how-to-lean-batteries.md)** - Lean proof tactics reference
-
-### Supporting Documentation
-
-- **[COMPLETION_ROADMAP.md](COMPLETION_ROADMAP.md)** - Strategic completion plan
-- **[DEAD_CODE_CATALOG.md](DEAD_CODE_CATALOG.md)** - What was cleaned up and why
-- **[WEEKS_STUCK_ROOT_CAUSE.md](WEEKS_STUCK_ROOT_CAUSE.md)** - Critical debugging insights
-
-### Historical Documentation
-
-See `docs_archive/` for session summaries, phase completions, and historical analysis (~80 archived files).
+This repo contains a lot of historical notes. The most reliable “status” is the build output + `rg` counts.
 
 ---
 
@@ -132,41 +112,10 @@ Phase 1: Specification (Spec.Valid, Spec.Provable)
 ---
 
 ## Completion Strategies
-
-### Strategy A: Quick Kernel Soundness (Recommended)
-
-**Goal**: Complete kernel soundness proof in 1-2 days
-
-**Steps**:
-1. Complete sorries 2&3 (~50 LOC) - Glue code connecting parser invariants to step_ok lemmas
-2. Complete sorry 1 (~100 LOC) - Fold induction infrastructure
-3. Axiomatize parser invariants temporarily
-
-**Outcome**: Full kernel soundness theorem proven (modulo parser axioms)
-
-**Benefits**:
-- Quick win (kernel verification complete!)
-- Parser correctness becomes separate proof obligation
-- Follows "correct by construction" philosophy
-- Publication-ready: kernel is formally verified
-
-### Strategy B: Full Unconditional Soundness
-
-**Goal**: Complete all proofs (kernel + parser)
-
-**Steps**:
-1. Do Strategy A first (kernel soundness)
-2. Prove 6 parser invariants (~150-300 LOC)
-3. Replace axioms with theorems
-
-**Outcome**: Full unconditional soundness (zero axioms)
-
-**Benefits**:
-- Stronger result (no axioms)
-- Parser correctness formally verified
-- Complete end-to-end verification
-
-**Effort**: Medium-High (additional 150-300 LOC after kernel)
+The goal is “zero sorries” across the build graph. Practical approach:
+1. Keep `Metamath.KernelClean` building at all times.
+2. Prove/replace sorries in the dependency chain first (parser invariants + kernel glue).
+3. Only then tackle the larger “nice-to-have” modules.
 
 ---
 
@@ -248,7 +197,7 @@ rg "sorry" Metamath/ | wc -l
 1. Read **[NEXT_STEPS.md](NEXT_STEPS.md)** for completion roadmap
 2. Read **[BLOCKING_SORRIES.md](BLOCKING_SORRIES.md)** for technical details
 3. Consult **[how-to-lean-batteries.md](how-to-lean-batteries.md)** for proof tactics
-4. Focus on the 3 blocking sorries in KernelClean.lean
+4. Focus on blocking sorries in KernelClean.lean (use `rg` for the current list)
 
 ### Build Requirements
 
@@ -293,4 +242,4 @@ rg "sorry" Metamath/ | wc -l
 
 ---
 
-**Current Status Summary**: Build GREEN ✅ | 3 sorries (~150 LOC) to full kernel soundness | Parser can be axiomatized | Publication-ready once kernel is complete! 🚀
+**Current Status Summary**: Build green | sorries remain in kernel + parser | use `rg` for current counts

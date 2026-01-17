@@ -206,7 +206,7 @@ We rely on `Std.HashMap.getElem?_insert_self`, which is proven for any
 @[simp] theorem find?_insert_self (m : Std.HashMap α β) (k : α) (v : β)
     [EquivBEq α] [LawfulHashable α] [LawfulBEq α] :
     (m.insert k v)[k]? = some v := by
-  simpa using (Std.HashMap.getElem?_insert_self (m := m) (k := k) (v := v))
+  simp
 
 /-- Looking up a different key is unchanged by insert.
 
@@ -222,12 +222,15 @@ that `k == k'` would imply `k = k'` for lawful `BEq`, contradicting `h`.
     (m.insert k v)[k']? = m[k']? := by
   classical
   have hbranch := Std.HashMap.getElem?_insert (m := m) (k := k) (a := k') (v := v)
-  cases hbeq : (k == k') <;> try simp [Std.HashMap.getElem?_insert, hbeq] at hbranch
-  · -- beq returns false, so lookup is unchanged
-    simpa [Std.HashMap.getElem?_insert, hbeq] using hbranch
-  · -- beq returns true, contradicting key inequality
-    have hk' : k = k' := LawfulBEq.eq_of_beq (a := k) (b := k') (by simpa [hbeq])
-    exact (h hk'.symm).elim
+  cases hbeq : (k == k') with
+  | false =>
+      -- beq returns false, so lookup is unchanged
+      simpa [hbeq] using hbranch
+  | true =>
+      -- beq returns true, contradicting key inequality
+      have hk' : k = k' :=
+        LawfulBEq.eq_of_beq (a := k) (b := k') (by simp [hbeq])
+      exact (h hk'.symm).elim
 
 end HashMap
 

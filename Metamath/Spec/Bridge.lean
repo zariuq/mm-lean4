@@ -1364,7 +1364,7 @@ theorem dvOK_implies_DJ_subst
     (vars : List Variable)
     (dv_source dv_target : List (Variable × Variable))
     (σ : Spec.Subst) (marioVars : List MarioVR)
-    (h_dvOK : Spec.dvOK vars dv_source σ)
+    (h_dvOK : Spec.dvOK vars dv_source dv_target σ)
     (h_complete : ∀ v w : Variable, v ∈ vars → w ∈ vars → v ≠ w →
                     (v, w) ∈ dv_target ∨ (w, v) ∈ dv_target)
     (h_wf_index : ∀ vr ∈ marioVars, vr.i = 0)
@@ -1393,9 +1393,12 @@ theorem dvOK_implies_DJ_subst
       obtain ⟨⟨v, w⟩, h_pair_in, h_vr_eq⟩ := List.mem_map.mp h_fwd
       cases h_vr_eq  -- vr1 = toMarioVR v, vr2 = toMarioVR w
 
-      -- Get disjointness from dvOK
-      have h_disj := h_dvOK v w h_pair_in
-      -- h_disj : ∀ x_var, x_var ∈ varsInExpr vars (σ v) → x_var ∉ varsInExpr vars (σ w)
+      -- Get non-overlap from dvOK (dvRel implies inequality)
+      have h_disj : ∀ x_var ∈ Spec.varsInExpr vars (σ v),
+          x_var ∉ Spec.varsInExpr vars (σ w) := by
+        intro x_var h_x_var h_x_in_w
+        have h_rel := h_dvOK v w h_pair_in x_var h_x_var x_var h_x_in_w
+        exact (h_rel.1 rfl).elim
 
       -- Convert Mario VRs to Variables
       let x_var := MarioVR.toVariable x
@@ -1489,9 +1492,12 @@ theorem dvOK_implies_DJ_subst
       obtain ⟨⟨w, v⟩, h_pair_in, h_vr_eq⟩ := List.mem_map.mp h_bwd
       cases h_vr_eq  -- vr2 = toMarioVR w, vr1 = toMarioVR v
 
-      -- Get disjointness from dvOK (note: (w, v) is in dv_source)
-      have h_disj := h_dvOK w v h_pair_in
-      -- h_disj : ∀ y_var, y_var ∈ varsInExpr vars (σ w) → y_var ∉ varsInExpr vars (σ v)
+      -- Get non-overlap from dvOK (note: (w, v) is in dv_source)
+      have h_disj : ∀ y_var ∈ Spec.varsInExpr vars (σ w),
+          y_var ∉ Spec.varsInExpr vars (σ v) := by
+        intro y_var h_y_var h_y_in_v
+        have h_rel := h_dvOK w v h_pair_in y_var h_y_var y_var h_y_in_v
+        exact (h_rel.1 rfl).elim
 
       -- Convert Mario VRs to Variables (swapped from above)
       let y_var := MarioVR.toVariable y

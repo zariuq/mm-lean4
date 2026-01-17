@@ -117,6 +117,15 @@ def Frame.shrink : Frame → Nat × Nat → Frame
 
 instance : ToString Frame := ⟨fun fr => toString fr.hyps⟩
 
+instance : LawfulBEq String where
+  eq_of_beq := by
+    intro a b hab
+    simp [BEq.beq] at hab
+    exact hab
+  rfl := by
+    intro a
+    simp [BEq.beq]
+
 inductive Sym
   | const (c : String)
   | var (v : String)
@@ -130,9 +139,71 @@ def Sym.value : Sym → String
   | .const c => c
   | .var v => v
 
-instance : BEq Sym := ⟨fun a b => a.value == b.value⟩
+instance : BEq Sym := ⟨fun a b =>
+  match a, b with
+  | .const c1, .const c2 => c1 == c2
+  | .var v1, .var v2 => v1 == v2
+  | _, _ => false⟩
+
+instance : LawfulBEq Sym where
+  eq_of_beq := by
+    intro a b h
+    cases a with
+    | const c =>
+        cases b with
+        | const c' =>
+            have h_eq := h
+            simp [BEq.beq] at h_eq
+            subst h_eq
+            rfl
+        | var v =>
+            have h' := h
+            simp [BEq.beq] at h'
+    | var v =>
+        cases b with
+        | const c =>
+            have h' := h
+            simp [BEq.beq] at h'
+        | var v' =>
+            have h_eq := h
+            simp [BEq.beq] at h_eq
+            subst h_eq
+            rfl
+  rfl := by
+    intro a
+    cases a <;> simp [BEq.beq, -beq_iff_eq]
 
 abbrev Formula := Array Sym
+
+def Formula.hasConstHead (f : Formula) : Bool :=
+  if 0 < f.size then
+    match f[0]! with
+    | .const _ => true
+    | .var _ => false
+  else
+    false
+
+def Formula.isFloatShape (f : Formula) : Bool :=
+  if f.size = 2 then
+    match f[0]!, f[1]! with
+    | .const _, .var _ => true
+    | _, _ => false
+  else
+    false
+
+def Formula.floatVarName (f : Formula) : String :=
+  match f[1]! with
+  | .var v => v
+  | _ => ""
+
+def Formula.floatVarsDistinct? (f g : Formula) : Bool :=
+  if _ : f.size ≥ 2 then
+    if _ : g.size ≥ 2 then
+      !(f.floatVarName == g.floatVarName)
+    else
+      true
+  else
+    true
 
 instance : ToString Formula where
   toString f := Id.run do
@@ -160,6 +231,17 @@ def Formula.foldlVars (self : Formula) (init : α) (f : α → String → α) : 
     match v with
     | .var v => f a v
     | _ => a
+
+def Formula.varsList (self : Formula) : List String :=
+  self.toList.tail.filterMap fun s =>
+    match s with
+    | .var v => some v
+    | _ => none
+
+def Formula.varsIn (self : Formula) (vars : List String) : List String :=
+  self.toList.tail.filterMap fun s =>
+    let name := s.value
+    if name ∈ vars then some name else none
 
 inductive Object
   | const : String → Object
@@ -335,21 +417,92 @@ theorem insert_find?_self
   simp only [find?, insert_no_dup_objects db pos l obj h_no_prior_err h_no_dup h_no_err]
   exact Std.HashMap.getElem?_insert_self
 
-def insertHyp (db : DB) (pos : Pos) (l : String) (ess : Bool) (f : Formula) : DB :=
+/-- Check whether a float variable already appears in the current frame. -/
+def floatVarOccursInFrame (db : DB) (v : String) : Bool :=
+  db.frame.hyps.toList.any fun lbl =>
+    match db.find? lbl with
+    | some (.hyp false prevF _) =>
+        prevF.size >= 2 &&
+          (match prevF[1]! with
+          | .var v' => v'
+          | _ => "") == v
+    | _ => false
+
+def hypOK? (db : DB) (label : String) : Bool :=
+  match db.find? label with
+  | some (.hyp ess f _) => if ess then f.hasConstHead else f.isFloatShape
+  | _ => false
+
+def frameHypsOk? (db : DB) (fr : Frame) : Bool :=
+  (List.range fr.hyps.size).all fun i => db.hypOK? fr.hyps[i]!
+
+def frameFloatVarsUnique? (db : DB) (fr : Frame) : Bool :=
+  let idxs := List.range fr.hyps.size
+  idxs.all fun i =>
+    idxs.all fun j =>
+      if _ : i = j then
+        true
+      else
+        match db.find? fr.hyps[i]!, db.find? fr.hyps[j]! with
+        | some (.hyp false fi _), some (.hyp false fj _) => Formula.floatVarsDistinct? fi fj
+        | _, _ => true
+
+def wellFormedFrame? (db : DB) (fr : Frame) : Bool :=
+  db.frameHypsOk? fr && db.frameFloatVarsUnique? fr
+
+def wellFormedObj? (db : DB) (lbl : String) (obj : Object) : Bool :=
+  match obj with
+  | .const _ => true
+  | .var v => v == lbl
+  | .hyp ess f _ => if ess then f.hasConstHead else f.isFloatShape
+  | .assert f fr _ => f.hasConstHead && db.wellFormedFrame? fr
+
+def wellFormedObjects? (db : DB) : Bool :=
+  db.objects.toList.all fun kv => db.wellFormedObj? kv.1 kv.2
+
+def wellFormed? (db : DB) : Bool :=
+  db.wellFormedFrame? db.frame && db.wellFormedObjects?
+
+def insertHypChecks (db : DB) (pos : Pos) (ess : Bool) (f : Formula) : DB :=
+  -- Validate basic formula shape (used by parser invariants)
+  let db := if f.hasConstHead then db else db.mkError pos "first symbol is not a constant"
+  if db.error then db else
+  let db :=
+    if ess then db
+    else if f.isFloatShape then db
+    else db.mkError pos "expected a constant and a variable"
+  if db.error then db else
   -- For $f statements (ess = false), check that no other $f exists for this variable
-  let db := Id.run do
-    if !ess && f.size >= 2 then
-      let v := f[1]!.value
-      -- Check all existing hypotheses in current frame
-      let mut db := db
-      for h in db.frame.hyps do
-        if let some (.hyp false prevF _) := db.find? h then
-          if prevF.size >= 2 && prevF[1]!.value == v then
-            db := db.mkError pos s!"variable {v} already has $f hypothesis"
-      db
+  if !ess && f.size >= 2 then
+    let v := f[1]!.value
+    if db.floatVarOccursInFrame v then
+      db.mkError pos s!"variable {v} already has $f hypothesis"
     else db
+  else db
+
+def insertHyp (db : DB) (pos : Pos) (l : String) (ess : Bool) (f : Formula) : DB :=
+  let db := db.insertHypChecks pos ess f
+  if db.error then db else
   let db := db.insert pos l (.hyp ess f)
-  db.withHyps fun hyps => hyps.push l
+  if db.error then db else
+    db.withHyps fun hyps => hyps.push l
+
+def trimFrameKeep (db : DB) (vars : HashSet String) (l : String) : Bool :=
+  match db.find? l with
+  | some (.hyp false f _) =>
+      let v := f[1]!.value
+      vars.contains v
+  | _ => true
+
+def trimFrameHypsPairsList (db : DB) (vars : HashSet String) (i : Nat) (ls : List String) :
+    List (Nat × String) :=
+  ((List.zipIdx ls i).filter (fun p => trimFrameKeep db vars p.1)).map (fun p => (p.2, p.1))
+
+def trimFrameHypsPairs (db : DB) (vars : HashSet String) (hyps : Array String) : Array (Nat × String) :=
+  (trimFrameHypsPairsList db vars 0 hyps.toList).toArray
+
+def trimFrameHyps (db : DB) (vars : HashSet String) (hyps : Array String) : Array String :=
+  (trimFrameHypsPairs db vars hyps).map (fun p => p.2)
 
 def trimFrame (db : DB) (fmla : Formula) (fr := db.frame) : Bool × Frame := Id.run do
   let collectVars (fmla : Formula) vars :=
@@ -362,21 +515,16 @@ def trimFrame (db : DB) (fmla : Formula) (fr := db.frame) : Bool × Frame := Id.
   for v in fr.dj do
     if vars.contains v.1 && vars.contains v.2 then
       dj := dj.push v
-  let mut hyps := #[]
+  let hyps := trimFrameHyps db vars fr.hyps
   let mut ok := true
   let mut varsWithF : HashSet String := ∅
   for l in fr.hyps do
-    let ess ←
-      if let some (.hyp false f _) := db.find? l then
-        -- Spec §4.2.4: $f and $e can be interleaved (appearance order)
-        -- No need to enforce "$f before $e" - that's a legacy restriction
-        let v := f[1]!.value
-        if vars.contains v then
-          varsWithF := varsWithF.insert v
-        vars.contains v
-      else
-        true
-    if ess then hyps := hyps.push l
+    if let some (.hyp false f _) := db.find? l then
+      -- Spec §4.2.4: $f and $e can be interleaved (appearance order)
+      -- No need to enforce "$f before $e" - that's a legacy restriction
+      let v := f[1]!.value
+      if vars.contains v then
+        varsWithF := varsWithF.insert v
   -- Check that all variables have a $f hypothesis
   for v in vars do
     unless varsWithF.contains v do ok := false
@@ -388,26 +536,54 @@ def trimFrame' (db : DB) (fmla : Formula) : Except String Frame :=
   else throw s!"out of order hypotheses in frame"
 
 def insertAxiom (db : DB) (pos : Pos) (l : String) (fmla : Formula) : DB :=
-  match db.trimFrame' fmla with
-  | .ok fr =>
-    if db.interrupt then { db with error? := some ⟨.ax pos l fmla fr, default⟩ }
-    else db.insert pos l (.assert fmla fr)
-  | .error msg => db.mkError pos msg
+  let db := if fmla.hasConstHead then db else db.mkError pos "first symbol is not a constant"
+  if db.error then db
+  else
+    match db.trimFrame' fmla with
+    | .ok fr =>
+      if db.interrupt then { db with error? := some ⟨.ax pos l fmla fr, default⟩ }
+      else db.insert pos l (.assert fmla fr)
+    | .error msg => db.mkError pos msg
 
-def mkProofState (db : DB) (pos : Pos) (l : String) (fmla : Formula) (fr : Frame) :
+def mkProofState (_db : DB) (pos : Pos) (l : String) (fmla : Formula) (fr : Frame) :
     ProofState := Id.run do
-  let mut heap := #[]
-  for l in fr.hyps do
-    if let some (.hyp _ f _) := db.find? l then
-      heap := heap.push (.fmla f)
-  ⟨pos, l, fmla, fr, heap, #[], .start⟩
+  ⟨pos, l, fmla, fr, #[], #[], .start⟩
 
 def preload (db : DB) (pr : ProofState) (l : String) : Except String ProofState :=
   match db.find? l with
-  | some (.hyp true _ _) => throw "$e found in paren list"
-  | some (.hyp _ f _) => return pr.pushHeap (.fmla f)
+  | some (.hyp _ f _) =>
+      if l ∈ pr.frame.hyps.toList then
+        return pr.pushHeap (.fmla f)
+      else
+        throw s!"hypothesis {l} not in frame"
   | some (.assert f fr _) => return pr.pushHeap (.assert f fr)
   | _ => throw s!"statement {l} not found"
+
+/-- Extract float variable names from a frame (only well-formed $f hyps contribute). -/
+def frameFloatVars (db : DB) (fr : Frame) : List String :=
+  fr.hyps.toList.filterMap fun lbl =>
+    match db.find? lbl with
+    | some (.hyp false f _) =>
+        if f.isFloatShape then
+          match f[1]! with
+          | .var v => some v
+          | _ => none
+        else
+          none
+    | _ => none
+
+/-- Check that formula symbols respect the frame's float variables.
+
+For each tail symbol in the formula:
+- variables must be declared by some $f in the frame
+- constants must not be declared as frame variables
+-/
+def formulaSymsRespectFrame (db : DB) (f : Formula) (fr : Frame) : Bool :=
+  let vars := frameFloatVars db fr
+  (f.toList.tail).all fun s =>
+    match s with
+    | .var v => decide (v ∈ vars)
+    | .const c => decide (c ∉ vars)
 
 variable (db : DB) (hyps : Array String) (stack : Array Formula)
   (off : {off // off + hyps.size = stack.size}) in
@@ -418,16 +594,30 @@ def checkHyp (i : Nat) (subst : HashMap String Formula) :
       let thm {a b n} : i < a → n + a = b → n + i < b
       | h, rfl => Nat.add_lt_add_left h _
       thm h off.2)
-    if let some (.hyp ess f _) := db.find? hyps[i] then
-      if f[0]! == val[0]! then
-        if ess then
+    if !val.hasConstHead then
+      throw "stack formula has no constant head"
+    else if let some (.hyp ess f _) := db.find? hyps[i] then
+      if ess then
+        if !f.hasConstHead then
+          throw "hypothesis has no constant head"
+        else if !formulaSymsRespectFrame db f (Verify.Frame.mk #[] hyps) then
+          throw "hypothesis symbols not in frame"
+        else if f[0]! == val[0]! then
           if (← f.subst subst) == val then
             checkHyp (i+1) subst
           else throw "type error in substitution"
-        else
-          checkHyp (i+1) (subst.insert f[1]!.value val)
-      else throw s!"bad typecode in substitution {hyps[i]}: {f} / {val}"
-    else unreachable!
+        else throw s!"bad typecode in substitution {hyps[i]}: {f} / {val}"
+      else
+        if !f.isFloatShape then
+          throw "expected a constant and a variable"
+        else if f[0]! == val[0]! then
+          if subst.contains f[1]!.value then
+            throw "duplicate float variable"
+          else
+            checkHyp (i+1) (subst.insert f[1]!.value val)
+        else throw s!"bad typecode in substitution {hyps[i]}: {f} / {val}"
+    else
+      throw s!"hypothesis {hyps[i]} not found"
   else pure subst
 
 /-- Equation lemma: base case when `i ≥ hyps.size`. -/
@@ -451,7 +641,13 @@ def checkHyp (i : Nat) (subst : HashMap String Formula) :
   (h_find : db.find? hyps[i] = some (.hyp true f lbl)) :
   checkHyp db hyps stack off i σ
     =
-  if f[0]! == stack[off.1 + i]![0]! then
+  if !stack[off.1 + i]!.hasConstHead then
+    .error "stack formula has no constant head"
+  else if !f.hasConstHead then
+    .error "hypothesis has no constant head"
+  else if !formulaSymsRespectFrame db f (Verify.Frame.mk #[] hyps) then
+    .error "hypothesis symbols not in frame"
+  else if f[0]! == stack[off.1 + i]![0]! then
     match f.subst σ with
     | .ok s =>
         if s == stack[off.1 + i]! then
@@ -463,25 +659,37 @@ def checkHyp (i : Nat) (subst : HashMap String Formula) :
     .error (s!"bad typecode in substitution {hyps[i]}: {f} / {stack[off.1 + i]!}") := by
   -- Use rw to unfold only the LHS
   rw [checkHyp]
-  simp [h_i, h_find]
+  simp [h_i, h_find, -beq_iff_eq]
   have h_idx : off.1 + i < stack.size := by
     have : off.1 + i < off.1 + hyps.size := Nat.add_lt_add_left h_i _
     simpa [off.2] using this
-  simp [h_idx, bind, Except.bind]
+  simp [h_idx, bind, Except.bind, -beq_iff_eq]
   -- After all simplifications, LHS and RHS are structurally identical
   -- Just need to handle the nested if-then-else and match cases
   split
-  · -- Case: typecode check passes
-    split
-    · -- Case: subst returns error
-      rename_i err heq
-      simp [heq]
-    · -- Case: subst returns ok
-      rename_i val heq
-      simp [heq]
-      split <;> rfl
-  · -- Case: typecode check fails
+  · -- Case: stack formula has no constant head
     rfl
+  · -- Case: stack formula has constant head
+    split
+    · -- Case: hypothesis has no constant head
+      rfl
+    · -- Case: hypothesis has constant head
+      split
+      · -- Case: hypothesis symbols not in frame
+        rfl
+      · -- Case: hypothesis symbols in frame
+        split
+        · -- Case: typecode check passes
+          split
+          · -- Case: subst returns error
+            rename_i err heq
+            simp [heq]
+          · -- Case: subst returns ok
+            rename_i val heq
+            simp [heq]
+            split <;> rfl
+        · -- Case: typecode check fails
+          rfl
 
 /-- Equation lemma when lookup at `hyps[i]` finds a **float** hypothesis. -/
 @[simp] theorem checkHyp_step_hyp_false
@@ -493,40 +701,91 @@ def checkHyp (i : Nat) (subst : HashMap String Formula) :
   (h_find : db.find? hyps[i] = some (.hyp false f lbl)) :
   checkHyp db hyps stack off i σ
     =
-  if f[0]! == stack[off.1 + i]![0]!
-    then checkHyp db hyps stack off (i+1) (σ.insert f[1]!.value (stack[off.1 + i]!))
-    else .error (s!"bad typecode in substitution {hyps[i]}: {f} / {stack[off.1 + i]!}") := by
+  if !stack[off.1 + i]!.hasConstHead then
+    .error "stack formula has no constant head"
+  else if !f.isFloatShape then
+    .error "expected a constant and a variable"
+  else if f[0]! == stack[off.1 + i]![0]! then
+    if σ.contains f[1]!.value then
+      .error "duplicate float variable"
+    else
+      checkHyp db hyps stack off (i+1) (σ.insert f[1]!.value (stack[off.1 + i]!))
+  else
+    .error (s!"bad typecode in substitution {hyps[i]}: {f} / {stack[off.1 + i]!}") := by
   rw [checkHyp]  -- KEY: Use rw not unfold to avoid expanding RHS recursive calls
-  simp [h_i, h_find]
+  simp [h_i, h_find, -beq_iff_eq]
   have h_idx : off.1 + i < stack.size := by
     have : off.1 + i < off.1 + hyps.size := Nat.add_lt_add_left h_i _
     simpa [off.2] using this
-  simp [h_idx]
+  simp [h_idx, -beq_iff_eq]
   -- Float case: simpler than essential case, no do-notation to reduce
-  split <;> rfl
+  split
+  · -- Case: stack formula has no constant head
+    rfl
+  · -- Case: stack formula has constant head
+    split
+    · -- Case: bad float shape
+      rfl
+    · -- Case: float shape ok
+      split
+      · -- Case: typecode check passes
+        split <;> rfl
+      · -- Case: typecode check fails
+        rfl
+
+def dvCheckBool (vars : List String) (djTarget djSource : Array (String × String))
+    (subst : HashMap String Formula) : Bool :=
+  let djList := djTarget.toList
+  let disj s1 s2 := s1 != s2 &&
+    decide ((if s1 < s2 then (s1, s2) else (s2, s1)) ∈ djList)
+  djSource.toList.all (fun (v1, v2) =>
+    match subst[v1]?, subst[v2]? with
+    | some e1, some e2 =>
+        let vars1 := e1.varsIn vars
+        let vars2 := e2.varsIn vars
+        vars1.all (fun s1 => vars2.all (fun s2 => disj s1 s2))
+    | _, _ => false)
+
+def dvCheck (vars : List String) (djTarget djSource : Array (String × String))
+    (subst : HashMap String Formula) : Except String Unit :=
+  if dvCheckBool vars djTarget djSource subst then
+    Except.ok ()
+  else
+    Except.error "disjoint variable violation"
 
 def stepAssert (db : DB) (pr : ProofState) (f : Formula) : Frame → Except String ProofState
-  | ⟨dj, hyps⟩ => do
+  | fr@⟨dj, hyps⟩ => do
     if h : hyps.size ≤ pr.stack.size then
-      let off : {off // off + hyps.size = pr.stack.size} :=
-        ⟨pr.stack.size - hyps.size, Nat.sub_add_cancel h⟩
-      let subst ← checkHyp db hyps pr.stack off 0 ∅
-      let disj s1 s2 := s1 != s2 &&
-        db.frame.dj.contains (if s1 < s2 then (s1, s2) else (s2, s1))
-      for (v1, v2) in dj do
-        let e1 := subst[v1]!
-        let e2 := subst[v2]!
-        let disjoint :=
-          e1.foldlVars (init := true) fun b s1 =>
-            e2.foldlVars b fun b s2 => b && disj s1 s2
-        if !disjoint then throw "disjoint variable violation"
-      let concl ← f.subst subst
-      pure { pr with stack := (pr.stack.shrink off).push concl }
+      if !f.hasConstHead then
+        throw "assertion has no constant head"
+      else if !formulaSymsRespectFrame db f fr then
+        throw "assertion variables not in frame"
+      else
+        let off : {off // off + hyps.size = pr.stack.size} :=
+          ⟨pr.stack.size - hyps.size, Nat.sub_add_cancel h⟩
+        let subst ← checkHyp db hyps pr.stack off 0 ∅
+        let vars := frameFloatVars db pr.frame
+        dvCheck vars pr.frame.dj dj subst
+        let concl ← f.subst subst
+        pure { pr with stack := (pr.stack.shrink off).push concl }
     else throw "stack underflow"
 
 def stepNormal (db : DB) (pr : ProofState) (l : String) : Except String ProofState :=
   match db.find? l with
-  | some (.hyp _ f _) => return pr.push f
+  | some (.hyp ess f _) =>
+      if l ∈ pr.frame.hyps.toList then
+        if ess then
+          if !f.hasConstHead then
+            throw "hypothesis has no constant head"
+          else
+            return pr.push f
+        else
+          if !f.isFloatShape then
+            throw "expected a constant and a variable"
+          else
+            return pr.push f
+      else
+        throw s!"hypothesis {l} not in frame"
   | some (.assert f fr _) => db.stepAssert pr f fr
   | _ => throw s!"statement {l} not found"
 
@@ -629,6 +888,26 @@ def withMath (s : ParserState) (pos : Pos) (tk : ByteSlice)
   if !ok then s.mkError pos s!"invalid math string '{tk}'" else
   f s tk
 
+-- Proof-friendly djvars loop (recursive, avoids forIn elaboration).
+def djvars_loop_aux (arr : Array String) (s : ParserState) (pos : Pos) (tk : String) (i : Nat) : ParserState :=
+  if h : i < arr.size then
+    let tk1 := arr[i]
+    if tk1 == tk then
+      s.mkError pos s!"duplicate disjoint variable {tk}"
+    else
+      let p := if tk1 < tk then (tk1, tk) else (tk, tk1)
+      let s' := s.withDB fun db => db.withDJ fun dj => dj.push p
+      djvars_loop_aux arr s' pos tk (i + 1)
+  else
+    { s with tokp := .djvars (arr.push tk) }
+termination_by arr.size - i
+
+def djvars_loop (arr : Array String) (s : ParserState) (pos : Pos) (tk : String) : ParserState :=
+  if s.db.isVar tk then
+    djvars_loop_aux arr s pos tk 0
+  else
+    s.mkError pos s!"{tk} is not a variable"
+
 def sym (s : ParserState) (pos : Pos) (tk : ByteSlice) (f : String → Object) : ParserState :=
   if tk.eqArray "$.".toAscii then
     { s with tokp := .start }
@@ -644,13 +923,55 @@ def resumeThm (s : ParserState)
   let pr := s.db.mkProofState pos l fmla fr
   { s with tokp := .proof pr }
 
+inductive CompressedAction
+  | step (n : Nat)
+  | save
+  | unknown
+
+/-- Decode a compressed proof token into actions and the updated accumulator. -/
+def decodeCompressed (tk : ByteSlice) (chr : Nat) :
+    Except String (List CompressedAction × Nat) := do
+  let mut chr := chr
+  let mut acts : List CompressedAction := []
+  for c in tk do
+    if 'A'.toUInt8 ≤ c && c ≤ 'Z'.toUInt8 then
+      if c ≤ 'T'.toUInt8 then
+        let n := 20 * chr + (c - 'A'.toUInt8).toNat
+        acts := CompressedAction.step n :: acts
+        chr := 0
+      else if c < 'Z'.toUInt8 then
+        chr := 5 * chr + (c - 'T'.toUInt8).toNat
+      else
+        acts := CompressedAction.save :: acts
+        chr := 0
+    else if c = '?'.toUInt8 then
+      acts := CompressedAction.unknown :: acts
+      chr := 0
+    else
+      throw "proof parse error"
+  return (acts.reverse, chr)
+
+def applyCompressedActions (db : DB) (pr : ProofState) (acts : List CompressedAction) :
+    Except String ProofState :=
+  acts.foldlM (fun pr act =>
+    match act with
+    | .step n =>
+        db.stepProof pr n
+    | .save =>
+        if db.permissive then pr.save
+        else throw "save not allowed in strict mode"
+    | .unknown =>
+        if db.permissive then pure (pr.push pr.fmla)
+        else throw "unknown proof step"
+    ) pr
+
 def feedTokens (s : ParserState) (arr : Array Sym) : TokensParser → ParserState
   | ⟨k, pos, l⟩ => withAt l fun _ => Id.run do
-    unless arr.size > 0 && !arr[0]!.isVar do
+    unless Formula.hasConstHead arr do
       return s.mkError pos "first symbol is not a constant"
     match k with
     | .float =>
-      unless arr.size == 2 && arr[1]!.isVar do
+      unless Formula.isFloatShape arr do
         return s.mkError pos "expected a constant and a variable"
       let s := s.withDB fun db => db.insertHyp pos l false arr
       pure { s with tokp := .start }
@@ -677,8 +998,11 @@ where
   goNormal (pr : ProofState) :=
     -- Check for unknown step marker '?'
     if tk.eqArray "?".toAscii then
-      -- Push formula matching the statement being proved (incomplete proof)
-      pure (pr.push pr.fmla)
+      -- Allow unknown steps only in permissive mode
+      if s.db.permissive then
+        pure (pr.push pr.fmla)
+      else
+        throw "unknown proof step"
     else
       let (ok, tk) := toLabel tk
       if ok then s.db.stepNormal pr tk
@@ -699,24 +1023,8 @@ where
     | .normal => goNormal pr
     | .compressed chr =>
       let mut pr := pr
-      let mut chr := chr
-      for c in tk do
-        if 'A'.toUInt8 ≤ c && c ≤ 'Z'.toUInt8 then
-          if c ≤ 'T'.toUInt8 then
-            let n := 20 * chr + (c - 'A'.toUInt8).toNat
-            pr ← s.db.stepProof pr n
-            chr := 0
-          else if c < 'Z'.toUInt8 then
-            chr := 5 * chr + (c - 'T'.toUInt8).toNat
-          else
-            pr ← pr.save
-            chr := 0
-        else if c = '?'.toUInt8 then
-          -- Unknown step in compressed proof - push the formula being proved
-          pr := pr.push pr.fmla
-          chr := 0
-        else
-          throw "proof parse error"
+      let (acts, chr) ← decodeCompressed tk chr
+      pr ← applyCompressedActions s.db pr acts
       pure { pr with ptp := .compressed chr }
 
 def finishProof (s : ParserState) : ProofState → ParserState
@@ -755,15 +1063,7 @@ def feedToken (s : ParserState) (pos : Nat) (tk : ByteSlice) : ParserState :=
     | .var => s.sym pos tk .var
     | .djvars arr =>
       if tk.eqArray "$.".toAscii then { s with tokp := .start } else
-      s.withMath pos tk fun s tk => Id.run do
-        unless s.db.isVar tk do return s.mkError pos s!"{tk} is not a variable"
-        let mut s := s
-        for tk1 in arr do
-          if tk1 == tk then
-            return s.mkError pos s!"duplicate disjoint variable {tk}"
-          let p := if tk1 < tk then (tk1, tk) else (tk, tk1)
-          s := s.withDB fun db => db.withDJ fun dj => dj.push p
-        { s with tokp := .djvars (arr.push tk) }
+      s.withMath pos tk fun s tk => djvars_loop arr s pos tk
     | .math arr p =>
       if tk.eqArray p.k.delim then
         s.feedTokens arr p
@@ -864,6 +1164,49 @@ def done (s : ParserState) (base : Nat) : DB := Id.run do
   | .proof _ => db.mkError base "unclosed $p proof"
 
 end ParserState
+
+/-! ## Pure Parser Entry Point
+
+`checkBytes` is a pure parser entry point for proofs about parser invariants.
+It processes the full byte array in one pass. This is simpler to reason about
+than chunked IO, and the IO entry point (`check`) delegates to it after
+include-expansion.
+-/
+def checkBytesCore (arr : ByteArray) (permissive : Bool := false) : DB :=
+  let initialDB : DB := { (default : DB) with permissive := permissive }
+  let initialState : ParserState := { (default : ParserState) with db := initialDB }
+  let s := initialState.feedAll 0 arr
+  s.done arr.size
+
+def checkBytes (arr : ByteArray) (permissive : Bool := false) : DB :=
+  let db := checkBytesCore arr permissive
+  if db.error? = none then
+    if db.wellFormed? then
+      db
+    else
+      db.mkError ⟨0, 0⟩ "internal error: ill-formed database after parse"
+  else
+    db
+
+theorem checkBytes_no_error_wellFormed?
+    (arr : ByteArray) (permissive : Bool := false) :
+    (checkBytes arr permissive).error? = none →
+    (checkBytes arr permissive).wellFormed? = true := by
+  intro h_ok
+  let db0 := checkBytesCore arr permissive
+  by_cases h_err : db0.error? = none
+  · by_cases h_wf : db0.wellFormed? = true
+    · simp [checkBytes, db0, h_err, h_wf]
+    · have : False := by
+        have h_ok' : (if db0.wellFormed? then db0 else db0.mkError ⟨0, 0⟩
+            "internal error: ill-formed database after parse").error? = none := by
+          simp [checkBytes, db0, h_err] at h_ok
+          exact h_ok
+        simp [h_wf, DB.mkError] at h_ok'
+      exact this.elim
+  · have : False := by
+      simp [checkBytes, db0, h_err] at h_ok
+    exact this.elim
 
 -- Preprocessor with include support
 -- Processes $[ filename $] directives by recursively loading files
@@ -978,7 +1321,7 @@ partial def expandIncludes (fname : String) (seen : HashSet String) (permissive 
 
       -- Normalize "./" prefix (FilePath doesn't handle it well)
       if includeFile.startsWith "./" then
-        includeFile := includeFile.drop 2
+        includeFile := (includeFile.drop 2).toString
 
       -- Check for empty path after normalization
       if includeFile.isEmpty then
@@ -1013,15 +1356,4 @@ partial def check (fname : String) (permissive : Bool := false) : IO DB := do
     let initialDB : DB := { (default : DB) with permissive := permissive }
     return initialDB.mkError ⟨1, 1⟩ msg
   | .ok (processed, _) =>
-    let rec loop (s : ParserState) (base : Nat) (arr : ByteArray) (off : Nat) : IO DB := do
-      if off >= arr.size then
-        return s.done base
-      else
-        let len := min 1024 (arr.size - off)
-        let buf := arr.extract off (off + len)
-        let s := s.feedAll base buf
-        if s.db.error?.isSome then return s.db
-        else loop s (base + buf.size) arr (off + len)
-    let initialDB : DB := { (default : DB) with permissive := permissive }
-    let initialState : ParserState := { (default : ParserState) with db := initialDB }
-    loop initialState 0 processed 0
+    return checkBytes processed permissive
