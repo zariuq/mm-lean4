@@ -80,10 +80,4 @@ end ByteSliceT
 
 -- String.toAscii helper (was defined alongside ByteSlice)
 def String.toAscii (s : String) : ByteArray :=
-  let rec loop (out : ByteArray) (p : Pos) : ByteArray :=
-    if h : s.atEnd p then out else
-      let c := s.get p
-      have := Nat.sub_lt_sub_left (Nat.gt_of_not_le (mt decide_eq_true h)) (String.lt_next s _)
-      loop (out.push c.toUInt8) (s.next p)
-  termination_by s.endPos.1 - p.1
-  loop ByteArray.empty 0
+  s.toByteArray

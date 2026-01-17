@@ -249,10 +249,6 @@ theorem getElem!_idxOf
   show xs[xs.idxOf x]! = x
   unfold getElem! instGetElem?NatLtLength
   simp [hi]
-  -- Now goal is: xs[idxOf x xs] = x
-  -- and hget says: xs.get ⟨idxOf x xs, hi⟩ = x
-  -- xs[i] is definitionally xs.get ⟨i, proof⟩
-  exact hget
 
 /-! ### forIn bridges (for loop equivalence proofs)
 

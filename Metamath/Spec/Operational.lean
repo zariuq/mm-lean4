@@ -61,8 +61,7 @@ inductive ProofValid (Γ : Database) : Frame → List Expr → List ProofStep �
 
   | useAxiom : ∀ fr stack steps l fr' e σ,
       Γ l = some (fr', e) →
-      dvOK fr.vars fr.dv σ →  -- Per §4.2.5: caller's DV constraints
-      dvOK fr'.vars fr'.dv σ → -- Per §4.2.5: callee's DV constraints
+      dvOK fr.vars fr'.dv fr.dv σ →  -- Per §4.2.5: callee DV in caller context
       ProofValid Γ fr stack steps →
       -- Pop fr'.mand hypotheses (in reverse order per §4.3)
       ∀ needed : List Expr,

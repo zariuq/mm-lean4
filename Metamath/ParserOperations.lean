@@ -26,6 +26,7 @@ namespace ParserOps
 open Verify
 open WF
 open ParserCorrectness
+open Std (HashSet)
 
 /-! ## Core Lemmas
 
@@ -95,8 +96,9 @@ theorem insertHyp_maintains_wf_with_validation
     Given parser validation, the insert of an assert object preserves structure. -/
 theorem insertAxiom_insert_is_structure_preserving
     (db : DB) (pos : Pos) (l : String) (fmla : Formula) (fr : Frame)
-    -- Parser validation: formula is well-formed and frame is well-formed for all DBs
-    (h_validates : WellFormedFormula fmla ∧ (∀ db_any, WellFormedFrame db_any fr))
+    -- Parser validation: formula and frame are well-formed, and the label is not in the frame
+    (h_validates : WellFormedFormula fmla ∧ WellFormedFrame db fr ∧
+      (∀ (i : Nat) (hi : i < fr.hyps.size), fr.hyps[i]'hi ≠ l))
     -- Parser freshness: label doesn't exist yet
     (h_fresh_db : db.find? l = none)
     -- Parser freshness: label not in current frame
@@ -108,7 +110,7 @@ theorem insertAxiom_insert_is_structure_preserving
     StructurePreservingOp db (fun db' => db'.insert pos l (fun _ => .assert fmla fr l)) := by
   apply StructurePreservingOp.insert
   · -- h_validated: prove the object is well-formed
-    exact ⟨h_validates.1, h_validates.2⟩
+    exact ⟨h_validates.1, h_validates.2.1, h_validates.2.2⟩
   · -- h_obj_var_names_match: trivial for assert (not a var)
     intro lbl v h_eq
     cases h_eq
@@ -125,7 +127,8 @@ theorem insertAxiom_maintains_wf_with_validation
     (h_wf : WellFormedDB db)
     (h_no_err_before : db.error? = none)
     -- Parser provides these guarantees:
-    (h_validates : WellFormedFormula fmla ∧ (∀ db_any, WellFormedFrame db_any fr))
+    (h_validates : WellFormedFormula fmla ∧ WellFormedFrame db fr ∧
+      (∀ (i : Nat) (hi : i < fr.hyps.size), fr.hyps[i]'hi ≠ l))
     (h_fresh_db : db.find? l = none)
     (h_fresh_label : ∀ (i : Nat) (hi : i < db.frame.hyps.size), db.frame.hyps[i]'hi ≠ l)
     (h_fresh_in_asserts : ∀ (lbl : String) (fmla' : Formula) (fr_assert : Frame) (name : String),
@@ -422,6 +425,8 @@ theorem insertAxiom_maintains_wf_from_parser
     (h_fmla_check : fmla.size > 0 ∧ !fmla[0]!.isVar)
     -- Frame well-formedness (from trimFrame' operation):
     (h_frame_wf : WellFormedFrame db fr)
+    -- Label not present in the trimmed frame:
+    (h_fresh_in_frame : ∀ (i : Nat) (hi : i < fr.hyps.size), fr.hyps[i]'hi ≠ l)
     -- Freshness:
     (h_fresh_db : db.find? l = none)
     (h_fresh_label : ∀ (i : Nat) (hi : i < db.frame.hyps.size), db.frame.hyps[i]'hi ≠ l)
@@ -432,36 +437,9 @@ theorem insertAxiom_maintains_wf_from_parser
     (h_insert_ok : (db.insert pos l (fun _ => .assert fmla fr l)).error? = none) :
     WellFormedDB (db.insert pos l (fun _ => .assert fmla fr l)) := by
   -- Derive validation witness
-  have h_validates : WellFormedFormula fmla ∧ (∀ db_any, WellFormedFrame db_any fr) := by
-    constructor
-    · -- Use parser_essential_checks_imply_wellformed
-      exact parser_essential_checks_imply_wellformed fmla h_fmla_check
-    · -- Frame well-formedness
-      -- Note: h_frame_wf gives WellFormedFrame db fr
-      -- The abstract framework asks for ∀ db_any, which is a quirk
-      --
-      -- PROOF STRATEGY (requires framework redesign):
-      -- The issue: StructurePreservingOp.insert for .assert requires:
-      --   ∀ db, WellFormedFrame db fr
-      -- But we have:
-      --   WellFormedFrame db fr
-      --
-      -- The frame fr was extracted from db via trimFrame' (Verify.lean:343-346).
-      -- WellFormedFrame db fr means:
-      --   - All labels in fr.hyps exist in db and are HypOK db
-      --   - UniqueFloatVars db fr holds
-      --
-      -- We CAN'T prove ∀ db_any, WellFormedFrame db_any fr because:
-      --   - fr.hyps contains labels that may not exist in db_any
-      --   - HypOK db fr.hyps[i] depends on db.find? returning the right object
-      --
-      -- SOLUTION: Redesign StructurePreservingOp to use WellFormedFrame db fr
-      -- instead of ∀ db, WellFormedFrame db fr. The universal quantification
-      -- is too strong and doesn't match how frames are actually constructed.
-      --
-      -- For now, marking as sorry with clear design issue documented.
-      intro db_any
-      sorry
+  have h_validates : WellFormedFormula fmla ∧ WellFormedFrame db fr ∧
+      (∀ (i : Nat) (hi : i < fr.hyps.size), fr.hyps[i]'hi ≠ l) := by
+    refine ⟨parser_essential_checks_imply_wellformed fmla h_fmla_check, h_frame_wf, h_fresh_in_frame⟩
   -- Apply the existing theorem
   exact insertAxiom_maintains_wf_with_validation db pos l fmla fr
     h_wf h_no_err_before h_validates h_fresh_db h_fresh_label h_fresh_in_asserts h_insert_ok
@@ -504,6 +482,8 @@ theorem insertAxiom_insert_part_maintains_wf
     (h_first : fmla.size > 0 ∧ !fmla[0]!.isVar)
     -- Frame well-formedness (from trimFrame'):
     (h_frame_wf : WellFormedFrame db fr)
+    -- Label not present in the trimmed frame:
+    (h_fresh_in_frame : ∀ (i : Nat) (hi : i < fr.hyps.size), fr.hyps[i]'hi ≠ l)
     -- Freshness:
     (h_fresh_db : db.find? l = none)
     (h_fresh_label : ∀ (i : Nat) (hi : i < db.frame.hyps.size), db.frame.hyps[i]'hi ≠ l)
@@ -515,7 +495,7 @@ theorem insertAxiom_insert_part_maintains_wf
     WellFormedDB (db.insert pos l (fun _ => .assert fmla fr l)) := by
   -- Direct application of our axiom convenience theorem!
   exact insertAxiom_maintains_wf_from_parser db pos l fmla fr
-    h_wf h_no_err h_first h_frame_wf
+    h_wf h_no_err h_first h_frame_wf h_fresh_in_frame
     h_fresh_db h_fresh_label h_fresh_in_asserts h_insert_ok
 
 /-! ## feedTokens Correctness
@@ -529,22 +509,20 @@ This is the key composition theorem connecting individual operations to parser e
 These lemmas prove that frame operations (withHyps) preserve WellFormedDB.
 -/
 
-/-- withHyps with push preserves WellFormedDB when adding a HypOK label.
-    Requires that if l is a float, its variable doesn't conflict with existing floats in the frame.
+/-- Array.push lemmas used by withHyps proofs. -/
+theorem getElem_push_lt {α : Type u} (arr : Array α) (x : α) (i : Nat)
+    (h : i < arr.size) (h' : i < (arr.push x).size := by simp [Array.size_push, h]) :
+    (arr.push x)[i] = arr[i] := by
+  rcases arr with ⟨lst⟩
+  simp [Array.push, List.getElem_append_left h]
 
-    PROOF STRATEGY (partially completed, blocked on technical Lean issues):
-    - Part 1a (HypOK preservation): ✓ Structure complete, but omega struggles with array size reasoning
-    - Part 1b (UniqueFloatVars): ✓ Structure complete, needs h_fresh_float hypothesis
-    - Part 2 (object well-formedness): ✓ Complete
+theorem getElem_push_eq {α : Type u} (arr : Array α) (x : α)
+    (h : arr.size < (arr.push x).size := by simp [Array.size_push]) :
+    (arr.push x)[arr.size] = x := by
+  rcases arr with ⟨lst⟩
+  simp [Array.push, List.getElem_append_right (Nat.le_refl lst.length)]
 
-    Technical blockers:
-    1. Omega doesn't recognize db.1.hyps.size = db.frame.hyps.size definitionally
-    2. Array index rewriting after case splits causes type issues
-    3. Need more infrastructure for array size reasoning with push
-
-    TODO: Either (a) add more array infrastructure lemmas, or (b) prove insertHyp_full directly
-    without this intermediate lemma by inlining the withHyps reasoning.
--/
+/-- withHyps with push preserves WellFormedDB when adding a HypOK label and a fresh float binder. -/
 theorem withHyps_push_preserves_wf
     (db : DB) (l : String)
     (h_wf : WellFormedDB db)
@@ -558,137 +536,168 @@ theorem withHyps_push_preserves_wf
       let vl := match f_l[1]! with | .var v => v | _ => ""
       vi ≠ vl) :
     WellFormedDB (db.withHyps (·.push l)) := by
-  -- Proof strategy implemented but blocked on Lean technical issues (see docstring)
-  -- The structure is correct: case analysis on index position (i < size or i = size),
-  -- preservation of find? through withHyps, and application of freshness hypothesis.
-  -- Main issues: omega array size reasoning and dependent type rewrites.
-  sorry
-
-/-- withHyps with push preserves WellFormedDB when the pushed label satisfies HypOK.
-
-    This is a simpler version that avoids the h_fresh_float complexity.
-    It assumes the label being pushed already satisfies HypOK in the current db.
-
-    PROOF STRATEGY (blocked on dependent type rewrites):
-
-    Part 1a (HypOK preservation) - structure complete:
-    - Case split on index i:
-      * i < db.frame.hyps.size: Old hyp, use find? preservation
-      * i = db.frame.hyps.size: New hyp (l), use h_hypok + find? preservation
-    - Key lemma: DBCaseAnalysis.DBLemmas.withHyps_preserves_find?
-
-    Part 1b (UniqueFloatVars) - needs 4-way case analysis:
-    - Both i, j < size: Use original UniqueFloatVars
-    - i < size, j = size: Use h_not_in_frame to show variables differ
-    - i = size, j < size: Symmetric case
-    - i = j = size: Contradiction from i ≠ j
-
-    Part 2 (Object well-formedness) - trivial via find? preservation
-
-    Technical blockers:
-    - Line 608: `rw [h_hyps_eq]` fails with dependent type motive error
-    - Line 625: Similar issue
-    - Line 644: Pattern not found in context
-
-    These are the same issues as withHyps_push_preserves_wf - array getElem
-    has dependent types that break after rewrites.
-
-    Solution: Either add better array infrastructure lemmas, or prove the needed
-    theorem more directly by reasoning about the specific withHyps + push operation
-    using computational tactics.
-
-## Array.push Lemmas
-
-These lemmas fill gaps in Batteries' Array infrastructure, specifically for reasoning
-about indexing into arrays after push operations.
--/
-
-theorem Array.getElem_push_lt {α : Type u} (arr : Array α) (x : α) (i : Nat)
-    (h : i < arr.size) (h' : i < (arr.push x).size := by simp [Array.size_push, h]) :
-    (arr.push x)[i] = arr[i] := by
-  rcases arr with ⟨lst⟩
-  simp [Array.push, List.getElem_append_left h]
-
-theorem Array.getElem_push_eq {α : Type u} (arr : Array α) (x : α)
-    (h : arr.size < (arr.push x).size := by simp [Array.size_push]) :
-    (arr.push x)[arr.size] = x := by
-  rcases arr with ⟨lst⟩
-  simp [Array.push, List.getElem_append_right (Nat.le_refl lst.length)]
-
-theorem withHyps_push_maintains_wf_simple
-    (db : DB) (l : String)
-    (h_wf : WellFormedDB db)
-    (h_hypok : HypOK db l)
-    (h_not_in_frame : ∀ (i : Nat) (hi : i < db.frame.hyps.size), db.frame.hyps[i] ≠ l) :
-    WellFormedDB (db.withHyps (·.push l)) := by
   unfold WellFormedDB WellFormedFrame
-  unfold DB.withHyps DB.withFrame
-  simp only []
-
   constructor
   · -- WellFormedFrame for new frame
     constructor
     · -- HypOK for all indices in pushed array
       intro i hi
-      -- Don't simplify hi yet - we need it in correct form
-      have hi' : i < db.frame.hyps.size + 1 := by simp [Array.size_push] at hi; exact hi
-      -- Case split: i < size (old hyp) or i = size (new hyp)
+      dsimp [DB.withHyps, DB.withFrame] at hi ⊢
       by_cases h_old : i < db.frame.hyps.size
-      · -- Old hyp: use Array.getElem_push_lt
-        have : (db.frame.hyps.push l)[i]'hi = db.frame.hyps[i]'h_old := by
-          exact @Array.getElem_push_lt String db.frame.hyps l i h_old hi
-        rw [this]
-        exact h_wf.1.1 i h_old
-      · -- New hyp: must be i = size
-        have h_eq : i = db.frame.hyps.size := by omega
+      · -- Old hyp: use HypOK from original frame
+        have hi' : i < (db.frame.hyps.push l).size := by
+          exact hi
+        have h_label : (db.frame.hyps.push l)[i]'hi' = db.frame.hyps[i]'h_old := by
+          exact getElem_push_lt db.frame.hyps l i h_old hi'
+        have h_old_ok : HypOK db (db.frame.hyps[i]'h_old) := h_wf.1.1 i h_old
+        have h_old_ok' : HypOK (db.withHyps (·.push l)) (db.frame.hyps[i]'h_old) := by
+          simpa [HypOK, DBCaseAnalysis.DBLemmas.withHyps_preserves_find?] using h_old_ok
+        simpa [h_label] using h_old_ok'
+      · -- New hyp: i = size
+        have hi' : i < db.frame.hyps.size + 1 := by
+          simpa [Array.size_push] using hi
+        have h_le : i ≤ db.frame.hyps.size := Nat.le_of_lt_succ hi'
+        have h_ge : db.frame.hyps.size ≤ i := Nat.le_of_not_lt h_old
+        have h_eq : i = db.frame.hyps.size := Nat.le_antisymm h_le h_ge
         subst h_eq
-        have : (db.frame.hyps.push l)[db.frame.hyps.size]'hi = l := by
-          exact @Array.getElem_push_eq String db.frame.hyps l hi
-        rw [this]
-        exact h_hypok
+        have hi'' : db.frame.hyps.size < (db.frame.hyps.push l).size := by
+          exact hi
+        have h_label : (db.frame.hyps.push l)[db.frame.hyps.size]'hi'' = l := by
+          exact getElem_push_eq db.frame.hyps l hi''
+        have h_new_ok : HypOK (db.withHyps (·.push l)) l := by
+          simpa [HypOK, DBCaseAnalysis.DBLemmas.withHyps_preserves_find?] using h_hypok
+        simpa [h_label] using h_new_ok
     · -- UniqueFloatVars
-      -- withHyps only changes frame.hyps, not db.find?, so UniqueFloatVars is preserved
-      -- but we need to map indices correctly
       unfold UniqueFloatVars
       intro i j hi hj h_ne fi fj lbli lblj h_fi h_fj h_sizei h_sizej
-      -- Note: h_fi talks about (db.frame.hyps.push l)[i] and db.find?
-      -- withHyps doesn't change db.find?, so we can use db.find? as-is
-
-      -- 4-way case split on (i,j) positions
+      dsimp [DB.withHyps, DB.withFrame] at hi hj h_fi h_fj ⊢
+      have h_fi' :
+          db.find? (db.frame.hyps.push l)[i] = some (.hyp false fi lbli) := by
+        simpa [DBCaseAnalysis.DBLemmas.withHyps_preserves_find?] using h_fi
+      have h_fj' :
+          db.find? (db.frame.hyps.push l)[j] = some (.hyp false fj lblj) := by
+        simpa [DBCaseAnalysis.DBLemmas.withHyps_preserves_find?] using h_fj
       by_cases hi_old : i < db.frame.hyps.size
       · by_cases hj_old : j < db.frame.hyps.size
-        · -- Both i,j are old indices
+        · -- Both old indices: reuse UniqueFloatVars
+          have hi' : i < (db.frame.hyps.push l).size := by
+            exact hi
+          have hj' : j < (db.frame.hyps.push l).size := by
+            exact hj
           have hi_label : (db.frame.hyps.push l)[i] = db.frame.hyps[i] := by
-            exact @Array.getElem_push_lt String db.frame.hyps l i hi_old hi
+            exact getElem_push_lt db.frame.hyps l i hi_old hi'
           have hj_label : (db.frame.hyps.push l)[j] = db.frame.hyps[j] := by
-            exact @Array.getElem_push_lt String db.frame.hyps l j hj_old hj
-          -- Rewrite h_fi and h_fj to use old indices
-          simp only [hi_label] at h_fi
-          simp only [hj_label] at h_fj
-          -- Now apply original UniqueFloatVars
-          exact h_wf.1.2 i j hi_old hj_old h_ne fi fj lbli lblj h_fi h_fj h_sizei h_sizej
-        · -- i old, j = size (new)
-          -- j is the new label l, i is an old label
-          -- We need to show they bind different variables (or aren't both floats)
-          sorry  -- TODO: This requires understanding what hypothesis l is
-      · -- i = size or beyond (must be exactly size)
-        have hi' : i < db.frame.hyps.size + 1 := by simp [Array.size_push] at hi; exact hi
-        have hi_le : i ≤ db.frame.hyps.size := Nat.le_of_lt_succ hi'
-        have hi_not_lt : ¬(i < db.frame.hyps.size) := hi_old
-        have hi_eq : i = db.frame.hyps.size := Nat.le_antisymm hi_le (Nat.not_lt.mp hi_not_lt)
-        by_cases hj_old : j < db.frame.hyps.size
-        · -- i = size (new), j old
-          sorry  -- TODO: Symmetric to above case
-        · -- Both i,j = size (impossible since i ≠ j)
-          have hj' : j < db.frame.hyps.size + 1 := by simp [Array.size_push] at hj; exact hj
+            exact getElem_push_lt db.frame.hyps l j hj_old hj'
+          have h_fi_old : db.find? db.frame.hyps[i] = some (.hyp false fi lbli) := by
+            simpa [hi_label] using h_fi'
+          have h_fj_old : db.find? db.frame.hyps[j] = some (.hyp false fj lblj) := by
+            simpa [hj_label] using h_fj'
+          exact h_wf.1.2 i j hi_old hj_old h_ne fi fj lbli lblj h_fi_old h_fj_old h_sizei h_sizej
+        · -- i old, j new
+          have hj' : j < db.frame.hyps.size + 1 := by
+            simpa [Array.size_push] using hj
           have hj_le : j ≤ db.frame.hyps.size := Nat.le_of_lt_succ hj'
-          have hj_not_lt : ¬(j < db.frame.hyps.size) := hj_old
-          have hj_eq : j = db.frame.hyps.size := Nat.le_antisymm hj_le (Nat.not_lt.mp hj_not_lt)
-          exact absurd (hi_eq.trans hj_eq.symm) h_ne
+          have hj_ge : db.frame.hyps.size ≤ j := Nat.le_of_not_lt hj_old
+          have hj_eq : j = db.frame.hyps.size := Nat.le_antisymm hj_le hj_ge
+          subst hj_eq
+          have hi' : i < (db.frame.hyps.push l).size := by
+            exact hi
+          have hi_label : (db.frame.hyps.push l)[i] = db.frame.hyps[i] := by
+            exact getElem_push_lt db.frame.hyps l i hi_old hi'
+          have h_fi_old : db.find? db.frame.hyps[i] = some (.hyp false fi lbli) := by
+            simpa [hi_label] using h_fi'
+          have hj'' : db.frame.hyps.size < (db.frame.hyps.push l).size := by
+            exact hj
+          have hj_label : (db.frame.hyps.push l)[db.frame.hyps.size] = l := by
+            exact getElem_push_eq db.frame.hyps l hj''
+          have h_fj_new : db.find? l = some (.hyp false fj lblj) := by
+            simpa [hj_label] using h_fj'
+          exact h_fresh_float i hi_old fi fj lbli lblj h_fi_old h_fj_new h_sizei h_sizej
+      · -- i new
+        have hi' : i < db.frame.hyps.size + 1 := by
+          simpa [Array.size_push] using hi
+        have hi_le : i ≤ db.frame.hyps.size := Nat.le_of_lt_succ hi'
+        have hi_ge : db.frame.hyps.size ≤ i := Nat.le_of_not_lt hi_old
+        have hi_eq : i = db.frame.hyps.size := Nat.le_antisymm hi_le hi_ge
+        subst hi_eq
+        by_cases hj_old : j < db.frame.hyps.size
+        · -- i new, j old
+          have hi' : db.frame.hyps.size < (db.frame.hyps.push l).size := by
+            exact hi
+          have hi_label : (db.frame.hyps.push l)[db.frame.hyps.size] = l := by
+            exact getElem_push_eq db.frame.hyps l hi'
+          have h_fi_new : db.find? l = some (.hyp false fi lbli) := by
+            simpa [hi_label] using h_fi'
+          have hj' : j < (db.frame.hyps.push l).size := by
+            exact hj
+          have hj_label : (db.frame.hyps.push l)[j] = db.frame.hyps[j] := by
+            exact getElem_push_lt db.frame.hyps l j hj_old hj'
+          have h_fj_old : db.find? db.frame.hyps[j] = some (.hyp false fj lblj) := by
+            simpa [hj_label] using h_fj'
+          have h_ne_vars :=
+            h_fresh_float j hj_old fj fi lblj lbli h_fj_old h_fi_new h_sizej h_sizei
+          exact h_ne_vars.symm
+        · -- both new: contradiction with i ≠ j
+          have hj' : j < db.frame.hyps.size + 1 := by
+            simpa [Array.size_push] using hj
+          have hj_le : j ≤ db.frame.hyps.size := Nat.le_of_lt_succ hj'
+          have hj_ge : db.frame.hyps.size ≤ j := Nat.le_of_not_lt hj_old
+          have hj_eq : j = db.frame.hyps.size := Nat.le_antisymm hj_le hj_ge
+          have h_eq : db.frame.hyps.size = j := by
+            simp [hj_eq]
+          exact (h_ne h_eq).elim
   · -- Object well-formedness: withHyps doesn't change find?
     intro lbl obj h_find
-    have : db.find? lbl = some obj := h_find
-    exact h_wf.2 lbl obj this
+    have h_find' : db.find? lbl = some obj := by
+      simpa [DBCaseAnalysis.DBLemmas.withHyps_preserves_find?] using h_find
+    exact h_wf.2 lbl obj h_find'
+
+theorem floatVarOccursInFrame_false_implies
+    (db : DB) (v : String)
+    (h_false : db.floatVarOccursInFrame v = false)
+    (k : Nat) (hk : k < db.frame.hyps.size)
+    (fi : Formula) (lbli : String)
+    (h_find : db.find? db.frame.hyps[k] = some (.hyp false fi lbli))
+    (h_size : fi.size ≥ 2) :
+    let vi := match fi[1]! with | .var v' => v' | _ => ""
+    vi ≠ v := by
+  let pred := fun lbl =>
+    match db.find? lbl with
+    | some (.hyp false prevF _) =>
+        prevF.size >= 2 &&
+          (match prevF[1]! with | .var v' => v' | _ => "") == v
+    | _ => false
+  have h_any : (db.frame.hyps.toList.any pred) = false := by
+    change db.floatVarOccursInFrame v = false
+    exact h_false
+  have h_all : ∀ a ∈ db.frame.hyps.toList, pred a = false := by
+    intro a h_mem
+    have h_not_true : ¬ pred a = true := (List.any_eq_false).1 h_any a h_mem
+    cases h_pred : pred a with
+    | true =>
+        exact (h_not_true (by simp [h_pred])).elim
+    | false => rfl
+  have h_mem : db.frame.hyps[k]! ∈ db.frame.hyps.toList := by
+    simpa using (Array.getElem!_mem_toList db.frame.hyps k hk)
+  have h_pred_false : pred (db.frame.hyps[k]!) = false := h_all _ h_mem
+  have h_find' : db.find? (db.frame.hyps[k]!) = some (.hyp false fi lbli) := by
+    have h_eq : db.frame.hyps[k]! = db.frame.hyps[k]'hk := by
+      simpa using (Array.getBang_eq_get_nat (a := db.frame.hyps) (i := k) (h := hk))
+    simpa [h_eq] using h_find
+  have h_pred_false' :
+      (fi.size >= 2 && (match fi[1]! with | .var v' => v' | _ => "") == v) = false := by
+    simpa [pred, h_find'] using h_pred_false
+  dsimp
+  have h_beq_false :
+      ((match fi[1]! with | .var v' => v' | _ => "") == v) = false := by
+    simpa [h_size] using h_pred_false'
+  intro h_eq
+  have h_beq_true :
+      ((match fi[1]! with | .var v' => v' | _ => "") == v) = true := by
+    exact (beq_iff_eq).2 h_eq
+  have h_false : False := by
+    simp [h_beq_true] at h_beq_false
+  exact h_false
 
 -- Helper: withHyps preserves error? field
 theorem withHyps_preserves_error? (db : DB) (f : Array String → Array String) :
@@ -703,6 +712,9 @@ theorem error_iff_error?_isSome (db : DB) :
   cases db.error? with
   | none => simp
   | some _ => simp
+
+theorem bool_not_eq_true_iff_eq_false {b : Bool} : (!b = true) ↔ b = false := by
+  cases b <;> simp
 
 -- Helper: If insert succeeds, input must have had no error
 theorem insert_success_implies_no_error
@@ -738,9 +750,8 @@ theorem insert_success_implies_no_error
     -- But h_success says it equals none, contradiction
     exact absurd h_success h_insert_error
 
--- NOTE: Float check loop lemma would go here
--- Would prove: If float check succeeds (error? = none), then result = input db
--- This is complex because it involves reasoning about Id.run and for loops
+-- NOTE: Check-phase preservation lemma would go here
+-- Would prove: If the head/shape/dup checks succeed (error? = none), then db is unchanged
 -- For now, we document this as a blocker for insertHyp_full_maintains_wf
 
 -- Helper lemma: Extract success conditions from insertHyp
@@ -748,52 +759,114 @@ theorem insertHyp_success_conditions
     (db : DB) (pos : Pos) (l : String) (ess : Bool) (f : Formula)
     (h_success : (db.insertHyp pos l ess f).error? = none) :
     ∃ (db_after_check : DB),
-      -- Step 1: Float check passed (if applicable)
-      (db_after_check = Id.run do
-        if !ess && f.size >= 2 then
-          let v := f[1]!.value
-          let mut db' := db
-          for h in db.frame.hyps do
-            if let some (.hyp false prevF _) := db'.find? h then
-              if prevF.size >= 2 && prevF[1]!.value == v then
-                db' := db'.mkError pos s!"variable {v} already has $f hypothesis"
-          db'
-        else db) ∧
+      -- Step 1: Head/shape/float checks passed (if applicable)
+      (db_after_check = DB.insertHypChecks db pos ess f) ∧
       db_after_check.error? = none ∧
       -- Step 2: Insert succeeded
       (db_after_check.insert pos l (.hyp ess f)).error? = none := by
-  -- insertHyp does: float check, then insert, then withHyps
+  -- insertHyp does: head/shape checks, float-dup check, then insert, then withHyps
   -- If final result has no error, all steps succeeded
-  unfold DB.insertHyp at h_success
-  -- withHyps only modifies frame.hyps, doesn't touch error?
-  rw [withHyps_preserves_error?] at h_success
-  -- Now h_success : (db_after_check.insert pos l ...).error? = none
-  -- Let db_after_check be the result of the float check
-  exists (Id.run do
-    if !ess && f.size >= 2 then
-      let v := f[1]!.value
-      let mut db' := db
-      for h in db.frame.hyps do
-        if let some (.hyp false prevF _) := db'.find? h then
-          if prevF.size >= 2 && prevF[1]!.value == v then
-            db' := db'.mkError pos s!"variable {v} already has $f hypothesis"
-      db'
-    else db)
-  constructor
-  · rfl
-  · constructor
-    · -- Need to show db_after_check.error? = none
-      -- This comes from the fact that insert checks error first
-      -- If db_after_check had error, insert would preserve it
-      exact insert_success_implies_no_error _ _ _ _ h_success
-    · exact h_success
+  let db_after_check := DB.insertHypChecks db pos ess f
+  have h_def' :
+      DB.insertHypChecks db pos ess f = db_after_check := by
+    rfl
+
+  -- Show the check phase has no error
+  have h_check_ok : db_after_check.error? = none := by
+    cases h_err_opt : db_after_check.error? with
+    | none => rfl
+    | some _ =>
+        have h_err_true : db_after_check.error = true := by
+          exact (error_iff_error?_isSome db_after_check).2 (by simp [h_err_opt])
+        have h_success' := h_success
+        simp [DB.insertHyp, h_def', h_err_true] at h_success'
+        have : False := by
+          simp [h_err_opt] at h_success'
+        exact False.elim this
+
+  have h_check_err : db_after_check.error = false := by
+    simp [DB.error, h_check_ok]
+
+  -- With checks ok, insert must also be error-free
+  have h_insert_ok :
+      (db_after_check.insert pos l (.hyp ess f)).error? = none := by
+    by_cases h_err : (db_after_check.insert pos l (.hyp ess f)).error
+    · have h_err_some : (db_after_check.insert pos l (.hyp ess f)).error? ≠ none :=
+        (error_iff_error?_isSome (db_after_check.insert pos l (.hyp ess f))).1 h_err
+      have h_success' := h_success
+      simp [DB.insertHyp, h_def', h_check_err, h_err] at h_success'
+      exact False.elim (h_err_some h_success')
+    · cases h_err_opt : (db_after_check.insert pos l (.hyp ess f)).error? with
+      | none => rfl
+      | some _ =>
+          have h_err_true : (db_after_check.insert pos l (.hyp ess f)).error = true := by
+            exact (error_iff_error?_isSome (db_after_check.insert pos l (.hyp ess f))).2
+              (by simp [h_err_opt])
+          have : False := by
+            simp [h_err] at h_err_true
+          exact False.elim this
+
+  exact ⟨db_after_check, rfl, h_check_ok, h_insert_ok⟩
+
+theorem insertHypChecks_eq_db_of_no_error
+    (db : DB) (pos : Pos) (ess : Bool) (f : Formula)
+    (h_no_err : (DB.insertHypChecks db pos ess f).error? = none) :
+    DB.insertHypChecks db pos ess f = db := by
+  unfold DB.insertHypChecks at h_no_err ⊢
+  cases h_head : f.hasConstHead with
+  | false =>
+      have h_no_err' :
+          (db.mkError pos "first symbol is not a constant").error? = none := by
+        simp [h_head] at h_no_err
+        exact h_no_err
+      have : False := by
+        simp [DB.mkError] at h_no_err'
+      exact False.elim this
+  | true =>
+      cases h_db_err : db.error with
+      | true =>
+          have h_no_err' : db.error? = none := by
+            simp [h_head, h_db_err] at h_no_err
+            exact h_no_err
+          have h_err_some : db.error? ≠ none := (error_iff_error?_isSome db).1 h_db_err
+          exact False.elim (h_err_some h_no_err')
+      | false =>
+          cases h_ess : ess with
+          | true =>
+              simp [h_db_err]
+          | false =>
+              cases h_shape : f.isFloatShape with
+              | true =>
+                  by_cases h_size : f.size ≥ 2
+                  · cases h_dup : db.floatVarOccursInFrame f[1]!.value with
+                    | true =>
+                      have h_no_err' :
+                          (db.mkError pos
+                            (toString "variable " ++ toString f[1]!.value ++
+                              toString " already has $f hypothesis")).error? = none := by
+                          simp [h_head, h_db_err, h_ess, h_shape, h_size, h_dup] at h_no_err
+                          exact h_no_err
+                      have : False := by
+                        simp [DB.mkError] at h_no_err'
+                      exact False.elim this
+                    | false =>
+                        simp [h_db_err, h_size, h_dup]
+                  · simp [h_db_err, h_size]
+              | false =>
+                  have h_no_err' :
+                      (db.mkError pos "expected a constant and a variable").error? = none := by
+                    simp [h_head, h_db_err, h_ess, h_shape] at h_no_err
+                    exact h_no_err
+                  have : False := by
+                    simp [DB.mkError] at h_no_err'
+                  exact False.elim this
 
 -- First, we need a helper: insertHyp (full) maintains WellFormedDB
 -- This is what we need from Phase A!
 theorem insertHyp_full_maintains_wf
     (db : DB) (pos : Pos) (l : String) (ess : Bool) (arr : Formula)
     (h_wf : WellFormedDB db)
-    (h_no_err : db.error? = none)
+    (_h_no_err : db.error? = none)
     (h_first : arr.size > 0 ∧ !arr[0]!.isVar)
     (h_second : ess = false → (arr.size = 2 ∧ arr[1]!.isVar))
     (h_fresh_db : db.find? l = none)
@@ -807,162 +880,106 @@ theorem insertHyp_full_maintains_wf
   obtain ⟨db_after_check, h_def_check, h_check_ok, h_insert_ok⟩ :=
     insertHyp_success_conditions db pos l ess arr h_success
 
-  -- h_def_check: db_after_check = Id.run do [float check loop]
+  -- h_def_check: db_after_check = [head/shape/dup checks]
   -- h_check_ok: db_after_check.error? = none
   -- h_insert_ok: (db_after_check.insert pos l (.hyp ess arr)).error? = none
 
-  -- Step 2: Key insight - float check loop only calls mkError or returns unchanged
-  -- Since h_check_ok says error? = none, mkError was never called
-  -- Therefore db_after_check = db (structurally)
-  --
-  -- Actually, we can use h_def_check to reason about this
-  -- h_def_check tells us db_after_check = Id.run do [the loop]
-  -- The loop is: if !ess && f.size >= 2 then [check] else db
-  --
-  -- If ess = true OR arr.size < 2, then db_after_check = db (by definition)
-  -- If ess = false AND arr.size >= 2, then the loop runs but h_check_ok = none means no error
-  --
-  -- Key lemma needed: mkError is the ONLY way to set error field
-  -- So if error? = none after loop, loop returned db unchanged
-  --
-  -- For now, assert these as lemmas about the float check:
+  -- Step 2: Check phase preserves the underlying db when it succeeds.
+  have h_checks_no_err : (DB.insertHypChecks db pos ess arr).error? = none := by
+    simpa [h_def_check] using h_check_ok
 
-  -- Helper lemmas about mkError: it only modifies error?, preserves everything else
-  have mkError_preserves_find : ∀ (db : DB) pos msg lbl, (db.mkError pos msg).find? lbl = db.find? lbl := by
-    intro db pos msg lbl
-    unfold DB.mkError
-    rfl
-
-  have mkError_preserves_frame : ∀ (db : DB) pos msg, (db.mkError pos msg).frame = db.frame := by
-    intro db pos msg
-    unfold DB.mkError
-    rfl
-
-  -- Key helper: When the float check condition is false, db_after_check = db
-  have h_loop_no_run : ess = true ∨ arr.size < 2 → db_after_check = db := by
-    intro h_cond
-    rw [h_def_check]
-    simp only [Id.run]
-    split
-    · -- if branch taken (!ess && arr.size >= 2)
-      -- But our assumption h_cond says ess = true OR arr.size < 2
-      -- This is a contradiction
-      cases h_cond with
-      | inl h_ess =>
-        -- ess = true, but split says !ess && arr.size >= 2
-        rename_i h_taken
-        -- h_taken : (!ess && arr.size >= 2) = true
-        simp [h_ess] at h_taken
-      | inr h_size =>
-        -- arr.size < 2, but split says arr.size >= 2
-        rename_i h_taken
-        simp at h_taken
-        omega
-    · -- else branch: returns db
-      rfl
-
-  -- Key lemma: When loop runs and succeeds (error? = none), db_after_check = db
-  have h_loop_eq_db : ess = false → arr.size >= 2 → db_after_check = db := by
-    intro h_ess h_size
-    -- This requires proving that the for loop returns db unchanged when error? = none
-    -- The loop structure:
-    --   for h in db.frame.hyps do
-    --     if let some (.hyp false prevF _) := db'.find? h then
-    --       if prevF.size >= 2 && prevF[1]!.value == v then
-    --         db' := db'.mkError pos ...
-    --
-    -- Since db_after_check.error? = none (from h_check_ok),
-    -- and mkError is the ONLY way to set error,
-    -- the assignment never executed, so db' = db throughout
-    --
-    -- This requires loop induction/reasoning about for loops
-    -- For now, this is the core loop preservation lemma
-    sorry
-
-  -- When loop runs but succeeds (error? = none), prove fields are unchanged
-  have h_find_preserved : ess = false → arr.size >= 2 →
-      ∀ lbl, db_after_check.find? lbl = db.find? lbl := by
-    intro h_ess h_size lbl
-    rw [h_loop_eq_db h_ess h_size]
-
-  have h_frame_preserved : ess = false → arr.size >= 2 →
-      db_after_check.frame = db.frame := by
-    intro h_ess h_size
-    rw [h_loop_eq_db h_ess h_size]
+  have h_check_eq_db : db_after_check = db := by
+    have h_eq := insertHypChecks_eq_db_of_no_error db pos ess arr h_checks_no_err
+    simpa [h_def_check] using h_eq
 
   have h_wf_after_check : WellFormedDB db_after_check := by
-    -- The float check loop preserves WF when it succeeds
-    by_cases h_loop : ess = true ∨ arr.size < 2
-    · -- Loop doesn't run
-      rw [h_loop_no_run h_loop]
-      exact h_wf
-    · -- Loop runs but succeeds
-      have h_and : ess ≠ true ∧ arr.size >= 2 := by
-        constructor; intro h; exact h_loop (Or.inl h); omega
-      have h_ess : ess = false := by
-        have : ess ≠ true := h_and.1
-        cases ess <;> simp at this ⊢
-      have h_size : arr.size >= 2 := h_and.2
-      -- Use h_loop_eq_db to show db_after_check = db
-      rw [h_loop_eq_db h_ess h_size]
-      exact h_wf
+    simpa [h_check_eq_db] using h_wf
 
-  -- Step 3: Show db_after_check has same freshness properties as db
+  -- Step 3: db_after_check has the same freshness properties as db
   have h_no_err_after_check : db_after_check.error? = none := h_check_ok
 
   have h_fresh_db_after_check : db_after_check.find? l = none := by
-    by_cases h_loop : ess = true ∨ arr.size < 2
-    · rw [h_loop_no_run h_loop]; exact h_fresh_db
-    · have h_and : ess ≠ true ∧ arr.size >= 2 := by
-        constructor; intro h; exact h_loop (Or.inl h); omega
-      have h_ess : ess = false := by
-        have : ess ≠ true := h_and.1
-        cases ess <;> simp at this ⊢
-      have h_size : arr.size >= 2 := h_and.2
-      rw [h_find_preserved h_ess h_size l]
-      exact h_fresh_db
+    simpa [h_check_eq_db] using h_fresh_db
 
-  have h_fresh_label_after_check : ∀ (i : Nat) (hi : i < db_after_check.frame.hyps.size),
-      db_after_check.frame.hyps[i]'hi ≠ l := by
-    by_cases h_loop : ess = true ∨ arr.size < 2
-    · intro i hi
-      have h_eq := h_loop_no_run h_loop
-      subst h_eq
-      exact h_fresh_label i hi
-    · intro i hi
-      have h_and : ess ≠ true ∧ arr.size >= 2 := by
-        constructor; intro h; exact h_loop (Or.inl h); omega
-      have h_ess : ess = false := by
-        have : ess ≠ true := h_and.1
-        cases ess <;> simp at this ⊢
-      have h_size : arr.size >= 2 := h_and.2
-      -- Use h_loop_eq_db to show db_after_check = db
-      have h_db_eq := h_loop_eq_db h_ess h_size
-      subst h_db_eq
-      exact h_fresh_label i hi
+  have h_fresh_label_after_check :
+      ∀ (i : Nat) (hi : i < db_after_check.frame.hyps.size),
+        db_after_check.frame.hyps[i]'hi ≠ l := by
+    simpa [h_check_eq_db] using h_fresh_label
 
-  have h_fresh_in_asserts_after_check : ∀ (lbl : String) (fmla : Formula) (fr_assert : Frame) (name : String),
-      db_after_check.find? lbl = some (.assert fmla fr_assert name) →
-      ∀ (i : Nat) (hi : i < fr_assert.hyps.size), fr_assert.hyps[i]'hi ≠ l := by
-    by_cases h_loop : ess = true ∨ arr.size < 2
-    · intro lbl fmla fr_assert name h_find i hi
-      have h_eq := h_loop_no_run h_loop
-      rw [h_eq] at h_find
-      exact h_fresh_in_asserts lbl fmla fr_assert name h_find i hi
-    · intro lbl fmla fr_assert name h_find i hi
-      have h_and : ess ≠ true ∧ arr.size >= 2 := by
-        constructor; intro h; exact h_loop (Or.inl h); omega
-      have h_ess : ess = false := by
-        have : ess ≠ true := h_and.1
-        cases ess <;> simp at this ⊢
-      have h_size : arr.size >= 2 := h_and.2
-      -- Use h_loop_eq_db to show db_after_check = db
-      have h_db_eq := h_loop_eq_db h_ess h_size
-      subst h_db_eq
-      exact h_fresh_in_asserts lbl fmla fr_assert name h_find i hi
+  have h_fresh_in_asserts_after_check :
+      ∀ (lbl : String) (fmla : Formula) (fr_assert : Frame) (name : String),
+        db_after_check.find? lbl = some (.assert fmla fr_assert name) →
+        ∀ (i : Nat) (hi : i < fr_assert.hyps.size), fr_assert.hyps[i]'hi ≠ l := by
+    intro lbl fmla fr_assert name h_find i hi
+    have h_find' : db.find? lbl = some (.assert fmla fr_assert name) := by
+      simpa [h_check_eq_db] using h_find
+    exact h_fresh_in_asserts lbl fmla fr_assert name h_find' i hi
+
+  have h_dup_false :
+      ess = false → db_after_check.floatVarOccursInFrame arr[1]!.value = false := by
+    intro h_ess
+    have h_size_eq : arr.size = 2 := (h_second h_ess).1
+    have h_var1 : arr[1]!.isVar = true := by
+      simpa using (h_second h_ess).2
+    have h_notvar0 : arr[0]!.isVar = false := by
+      cases h_var0 : arr[0]!.isVar with
+      | false => rfl
+      | true =>
+          have : False := by
+            simpa [h_var0] using h_first.2
+          exact False.elim this
+    have h_head : Formula.hasConstHead arr = true := by
+      unfold Formula.hasConstHead
+      have h_pos : 0 < arr.size := by
+        exact h_first.1
+      cases h0 : arr[0]! with
+      | const _ =>
+          simp [h_pos]
+      | var _ =>
+          have : False := by
+            simp [Sym.isVar, h0] at h_notvar0
+          exact False.elim this
+    have h_shape : Formula.isFloatShape arr = true := by
+      unfold Formula.isFloatShape
+      cases h0 : arr[0]! with
+      | const _ =>
+          cases h1 : arr[1]! with
+          | var _ =>
+              simp [h_size_eq]
+          | const _ =>
+              have : False := by
+                simp [Sym.isVar, h1] at h_var1
+              exact False.elim this
+      | var _ =>
+          have : False := by
+            simp [Sym.isVar, h0] at h_notvar0
+          exact False.elim this
+    have h_size_ge : arr.size >= 2 := by
+      simp [h_size_eq]
+    cases h_dup' : db_after_check.floatVarOccursInFrame arr[1]!.value with
+    | true =>
+        have h_dup_db : db.floatVarOccursInFrame arr[1]!.value = true := by
+          simp [h_check_eq_db] at h_dup'
+          exact h_dup'
+        have h_db_no_err : db.error? = none := by
+          simp [h_check_eq_db] at h_check_ok
+          exact h_check_ok
+        have h_db_err : db.error = false := by
+          simp [DB.error, h_db_no_err]
+        have h_no_err' :
+            (db.mkError pos
+              (toString "variable " ++ toString arr[1]!.value ++
+                toString " already has $f hypothesis")).error? = none := by
+          simpa [DB.insertHypChecks, h_head, h_db_err, h_ess, h_shape, h_size_ge, h_dup_db] using h_checks_no_err
+        have : False := by
+          simp [DB.mkError] at h_no_err'
+        exact False.elim this
+    | false =>
+        simp
 
   -- Step 4: Apply insertHyp_insert_part_maintains_wf for the insert step
-  have h_wf_after_insert : WellFormedDB (db_after_check.insert pos l (fun _ => .hyp ess arr l)) := by
+  have h_wf_after_insert :
+      WellFormedDB (db_after_check.insert pos l (fun _ => Object.hyp ess arr l)) := by
     exact insertHyp_insert_part_maintains_wf db_after_check pos l ess arr
       h_wf_after_check h_no_err_after_check
       h_first h_second
@@ -972,29 +989,43 @@ theorem insertHyp_full_maintains_wf
   -- Step 5: Apply withHyps_push to get final result
   -- Goal: WellFormedDB ((db_after_check.insert pos l (fun _ => .hyp ess arr l)).withHyps (·.push l))
 
+  -- Shared insert-success side conditions
+  have h_not_var_dup :
+      ¬(∃ v, (fun _ => Object.hyp ess arr l) l = Object.var v ∧
+        db_after_check.find? l = some (Object.var v)) := by
+    intro ⟨v, h_obj, _⟩
+    cases h_obj
+
+  have h_var_labels_match_names :
+      ∀ lbl v, db_after_check.find? lbl = some (Object.var v) → v = lbl := by
+    intro lbl v h_find
+    exact h_wf_after_check.2 lbl (Object.var v) h_find
+
+  have h_obj_var_names_match :
+      ∀ lbl v, (fun _ => Object.hyp ess arr l) lbl = Object.var v → v = lbl := by
+    intro lbl v h_obj
+    cases h_obj
+
+  have h_find_l_after_insert :
+      (db_after_check.insert pos l (fun _ => Object.hyp ess arr l)).find? l =
+        some (Object.hyp ess arr l) := by
+    apply insert_success_find?_self
+    · exact h_check_ok
+    · exact h_insert_ok
+    · exact h_not_var_dup
+    · exact h_var_labels_match_names
+    · exact h_obj_var_names_match
+
   -- First, prove HypOK for l in the database after insert
-  have h_hypok_after_insert : HypOK (db_after_check.insert pos l (fun _ => .hyp ess arr l)) l := by
+  have h_hypok_after_insert :
+      HypOK (db_after_check.insert pos l (fun _ => Object.hyp ess arr l)) l := by
     -- After insert, l maps to .hyp ess arr l
     -- Need to show this satisfies HypOK
     unfold HypOK
     -- Exists ess, arr, l such that find? returns .hyp ess arr l
     refine ⟨ess, arr, l, ?_, ?_⟩
     · -- Prove find? l = some (.hyp ess arr l)
-      -- We have h_insert_ok: (db_after_check.insert pos l (fun _ => .hyp ess arr l)).error? = none
-      -- And h_check_ok: db_after_check.error? = none
-      apply insert_success_find?_self
-      · exact h_check_ok
-      · exact h_insert_ok
-      · -- h_not_var_dup: .hyp is never .var
-        intro ⟨v, h_hyp, _⟩
-        cases h_hyp
-      · -- h_var_labels_match_names: from WellFormedDB of db_after_check
-        intro lbl v h_find
-        -- h_wf_after_check.2 says: v = lbl (for var objects)
-        exact h_wf_after_check.2 lbl (.var v) h_find
-      · -- h_obj_var_names_match: .hyp is never .var
-        intro lbl v h_hyp
-        cases h_hyp
+      exact h_find_l_after_insert
     · -- And condition: if float then WellFormedFloat, if ess then WellFormedFormula
       refine ⟨?_, ?_⟩
       · -- If float (ess = false), prove WellFormedFloat arr
@@ -1035,31 +1066,87 @@ theorem insertHyp_full_maintains_wf
               simp at h_first
           exact ⟨c, h_c⟩
 
-  -- Second, prove l is not in the frame (frame is unchanged by insert)
-  have h_not_in_frame_after_insert :
-      ∀ (i : Nat) (hi : i < (db_after_check.insert pos l (fun _ => .hyp ess arr l)).frame.hyps.size),
-      (db_after_check.insert pos l (fun _ => .hyp ess arr l)).frame.hyps[i] ≠ l := by
-    -- insert doesn't modify frame, so this follows from h_fresh_label_after_check
-    intro i hi
-    -- Use simp to unfold insert_frame_unchanged in both goal and hypothesis
-    simp only [insert_frame_unchanged] at hi ⊢
-    exact h_fresh_label_after_check i hi
+  -- Fresh-float witness for the push step (derived from the duplicate check)
+  have h_fresh_float_after_insert :
+      ∀ (k : Nat)
+        (hk : k < (db_after_check.insert pos l (fun _ => Object.hyp ess arr l)).frame.hyps.size)
+        (fi f_l : Formula) (lbli lbl_l : String),
+        (db_after_check.insert pos l (fun _ => Object.hyp ess arr l)).find?
+            (db_after_check.insert pos l (fun _ => Object.hyp ess arr l)).frame.hyps[k] =
+          some (Object.hyp false fi lbli) →
+        (db_after_check.insert pos l (fun _ => Object.hyp ess arr l)).find? l =
+          some (Object.hyp false f_l lbl_l) →
+        fi.size ≥ 2 → f_l.size ≥ 2 →
+        let vi := match fi[1]! with | .var v => v | _ => ""
+        let vl := match f_l[1]! with | .var v => v | _ => ""
+        vi ≠ vl := by
+    intro k hk fi f_l lbli lbl_l h_find_k h_find_l h_sizei _h_sizel
+    cases h_ess : ess with
+    | true =>
+        -- ess = true: h_find_l is impossible
+        have h_find_l_after_insert' :
+            (db_after_check.insert pos l (fun _ => Object.hyp ess arr l)).find? l =
+              some (Object.hyp true arr l) := by
+          simpa [h_ess] using h_find_l_after_insert
+        have h_eq : some (Object.hyp false f_l lbl_l) = some (Object.hyp true arr l) := by
+          exact h_find_l.symm.trans h_find_l_after_insert'
+        cases h_eq
+    | false =>
+        -- ess = false: use floatVarOccursInFrame check
+        have h_find_l' :
+            (db_after_check.insert pos l (fun _ => Object.hyp ess arr l)).find? l =
+              some (Object.hyp false arr l) := by
+          simpa [h_ess] using h_find_l_after_insert
+        have h_eq_obj : Object.hyp false f_l lbl_l = Object.hyp false arr l := by
+          exact Option.some.inj (h_find_l.symm.trans h_find_l')
+        cases h_eq_obj
+        have hk_pre : k < db_after_check.frame.hyps.size := by
+          simpa [insert_frame_unchanged] using hk
+        have h_label_ne : db_after_check.frame.hyps[k] ≠ l :=
+          h_fresh_label_after_check k hk_pre
+        have h_find_k' :
+            (db_after_check.insert pos l (fun _ => Object.hyp ess arr l)).find?
+                db_after_check.frame.hyps[k] =
+              some (Object.hyp false fi lbli) := by
+          simpa [insert_frame_unchanged] using h_find_k
+        have h_find_k_pre :
+            db_after_check.find? db_after_check.frame.hyps[k] =
+              some (Object.hyp false fi lbli) := by
+          have h_find_k_ne :
+              (db_after_check.insert pos l (fun _ => Object.hyp ess arr l)).find?
+                  db_after_check.frame.hyps[k] =
+                db_after_check.find? db_after_check.frame.hyps[k] := by
+            exact insert_success_find?_ne db_after_check pos l (db_after_check.frame.hyps[k])
+              (fun _ => Object.hyp ess arr l) h_label_ne h_check_ok h_insert_ok
+              h_not_var_dup h_var_labels_match_names h_obj_var_names_match
+          simpa [h_find_k_ne] using h_find_k'
+        have h_vi_ne :
+            let vi := match fi[1]! with | .var v => v | _ => ""
+            vi ≠ arr[1]!.value := by
+          exact floatVarOccursInFrame_false_implies db_after_check (arr[1]!.value)
+            (h_dup_false h_ess) k hk_pre fi lbli h_find_k_pre h_sizei
+        cases h_sym : arr[1]! with
+        | var v_sym =>
+            simpa [h_sym] using h_vi_ne
+        | const _ =>
+            have h_var : arr[1]!.isVar = true := by
+              simpa using (h_second h_ess).2
+            simp [h_sym, Sym.isVar] at h_var
 
-  -- Now apply withHyps_push_maintains_wf_simple
+  -- Now apply withHyps_push_preserves_wf
   -- Goal: WellFormedDB (db.insertHyp pos l ess arr)
-  -- insertHyp = Id.run (...) then insert then withHyps push
-  -- We know from h_def_check that db_after_check = Id.run (...)
-  --
-  -- Prove the needed form then convert
+  -- insertHyp = [checks] then insert then withHyps push
+  -- We know from h_def_check that db_after_check is the post-check db
 
-  have h_final : WellFormedDB ((db_after_check.insert pos l (fun _ => .hyp ess arr l)).withHyps (·.push l)) :=
-    withHyps_push_maintains_wf_simple
-      (db_after_check.insert pos l (fun _ => .hyp ess arr l)) l
+  have h_final :
+      WellFormedDB ((db_after_check.insert pos l (fun _ => Object.hyp ess arr l)).withHyps (·.push l)) :=
+    withHyps_push_preserves_wf
+      (db_after_check.insert pos l (fun _ => Object.hyp ess arr l)) l
       h_wf_after_insert
       h_hypok_after_insert
-      h_not_in_frame_after_insert
+      h_fresh_float_after_insert
 
-  -- h_final proves: WellFormedDB ((db_after_check.insert pos l (fun _ => .hyp ess arr l)).withHyps (·.push l))
+  -- h_final proves: WellFormedDB ((db_after_check.insert pos l (fun _ => Object.hyp ess arr l)).withHyps (·.push l))
   -- Goal is: WellFormedDB (db.insertHyp pos l ess arr)
   --
   -- Key insight: insertHyp uses `.hyp ess arr` as the object constructor,
@@ -1069,16 +1156,37 @@ theorem insertHyp_full_maintains_wf
   -- - `.hyp ess arr` applied to `l` gives `.hyp ess arr l` (fourth constructor arg)
   -- - `fun _ => .hyp ess arr l` applied to `l` gives `.hyp ess arr l` (ignores arg)
   --
-  -- So they produce the same result! This should just be definitional equality.
-  --
-  -- The problem is that after unfolding insertHyp, h_def_check can't rewrite
-  -- because Id.run expands differently. Just assert as sorry for now.
-  --
-  -- TODO: Fix by either:
-  -- 1. Proving a helper lemma about insertHyp's structure that doesn't unfold the float check
-  -- 2. Using a simp lemma specifically for this Id.run pattern
-  -- 3. Changing how h_def_check is stated to use a more stable form
-  sorry  -- DB equality: insertHyp produces same result modulo h_def_check
+  -- We handle this by rewriting insertHyp with h_def_check and a small insert equality lemma.
+  have h_check_err : db_after_check.error = false := by
+    cases h_err : db_after_check.error with
+    | true =>
+        have h_err_some : db_after_check.error? ≠ none := (error_iff_error?_isSome db_after_check).1 h_err
+        exact False.elim (h_err_some h_check_ok)
+    | false =>
+        rfl
+
+  have h_insert_eq :
+      db_after_check.insert pos l (Object.hyp ess arr) =
+        db_after_check.insert pos l (fun _ => Object.hyp ess arr l) := by
+    have h_obj : (Object.hyp ess arr) l = (fun _ => Object.hyp ess arr l) l := by rfl
+    unfold DB.insert
+    repeat (rw [h_obj])
+  have h_insert_err :
+      (db_after_check.insert pos l (Object.hyp ess arr)).error = false := by
+    simp [DB.error, h_insert_ok]
+
+  have h_insertHyp_eq :
+      db.insertHyp pos l ess arr =
+        (db_after_check.insert pos l (Object.hyp ess arr)).withHyps (·.push l) := by
+    have h_def_check' := h_def_check.symm
+    simp [DB.insertHyp, h_def_check', h_check_err, h_insert_err]
+
+  have h_insertHyp_eq' :
+      db.insertHyp pos l ess arr =
+        (db_after_check.insert pos l (fun _ => Object.hyp ess arr l)).withHyps (·.push l) := by
+    simpa [h_insert_eq] using h_insertHyp_eq
+
+  simpa [h_insertHyp_eq'] using h_final
 
 -- Subsequence: arr2 is a subsequence of arr1 if every element in arr2 exists in arr1
 -- (preserving the string value, though not necessarily the position)
@@ -1111,37 +1219,178 @@ theorem trimFrame'_ok_iff {db : DB} {fmla : Formula} {fr : Frame} :
       rw [h]
       rfl
 
+theorem trimFrameHypsPairsList_mem {db : DB} {vars : HashSet String} {ls : List String}
+    {p : Nat × String} :
+    p ∈ _root_.Metamath.Verify.DB.trimFrameHypsPairsList db vars 0 ls →
+      ∃ h : p.1 < ls.length, ls[p.1] = p.2 := by
+  intro h_mem
+  rcases List.mem_map.1 h_mem with ⟨q, hq, rfl⟩
+  rcases List.mem_filter.1 hq with ⟨hq_zip, _⟩
+  have hq_get : ls[q.2]? = some q.1 := (List.mem_zipIdx_iff_getElem?).1 hq_zip
+  rcases (List.getElem?_eq_some_iff).1 hq_get with ⟨h_lt, h_eq⟩
+  exact ⟨h_lt, h_eq⟩
+
+theorem trimFrameHypsPairsList_nodup (db : DB) (vars : HashSet String) (ls : List String) :
+    (_root_.Metamath.Verify.DB.trimFrameHypsPairsList db vars 0 ls).map Prod.fst |>.Nodup := by
+  have h_sub :
+      List.Sublist
+        (((List.zipIdx ls 0).filter (fun p => _root_.Metamath.Verify.DB.trimFrameKeep db vars p.1)).map Prod.snd)
+        ((List.zipIdx ls 0).map Prod.snd) := by
+    exact List.Sublist.map _ (List.filter_sublist)
+  have h_nodup : ((List.zipIdx ls 0).map Prod.snd).Nodup := by
+    have h_eq : ((List.zipIdx ls 0).map Prod.snd) = List.range' 0 ls.length := by
+      simp [List.zipIdx_map_snd]
+    rw [h_eq]
+    exact List.nodup_range' (s := 0) (n := ls.length)
+  have h_nodup' :
+      (((List.zipIdx ls 0).filter (fun p => _root_.Metamath.Verify.DB.trimFrameKeep db vars p.1)).map Prod.snd).Nodup :=
+    List.Nodup.sublist h_sub h_nodup
+  have h_eq :
+      (_root_.Metamath.Verify.DB.trimFrameHypsPairsList db vars 0 ls).map Prod.fst =
+        ((List.zipIdx ls 0).filter (fun p => _root_.Metamath.Verify.DB.trimFrameKeep db vars p.1)).map Prod.snd := by
+    simp [_root_.Metamath.Verify.DB.trimFrameHypsPairsList, List.map_map]
+  rw [h_eq]
+  exact h_nodup'
+
+theorem trimFrameHyps_subsequence (db : DB) (vars : HashSet String) (hyps : Array String) :
+    IsInjectiveSubsequence hyps (_root_.Metamath.Verify.DB.trimFrameHyps db vars hyps) := by
+  classical
+  let pairs := _root_.Metamath.Verify.DB.trimFrameHypsPairs db vars hyps
+  have h_pairs_list :
+      pairs.toList = _root_.Metamath.Verify.DB.trimFrameHypsPairsList db vars 0 hyps.toList := by
+    simp [_root_.Metamath.Verify.DB.trimFrameHypsPairs, pairs]
+  refine ⟨fun i hi => ?_, ?_, ?_⟩
+  · have hi_pairs : i < pairs.size := by
+      have hi' := hi
+      simp [_root_.Metamath.Verify.DB.trimFrameHyps, Array.size_map] at hi'
+      exact hi'
+    have hi_list : i < pairs.toList.length := by
+      have hi' := hi_pairs
+      simp at hi'
+      exact hi'
+    have h_mem : pairs[i]'hi_pairs ∈ pairs.toList := by
+      have h_mem' : pairs.toList[i] ∈ pairs.toList := List.getElem_mem (by simpa using hi_list)
+      have h_eq : pairs.toList[i] = pairs[i]'hi_pairs := by
+        exact (Array.getElem_toList (xs := pairs) (i := i) hi_pairs)
+      rw [h_eq] at h_mem'
+      exact h_mem'
+    have h_mem' : pairs[i]'hi_pairs ∈ _root_.Metamath.Verify.DB.trimFrameHypsPairsList db vars 0 hyps.toList := by
+      rw [h_pairs_list] at h_mem
+      exact h_mem
+    have h_exists :=
+      trimFrameHypsPairsList_mem (db := db) (vars := vars) (ls := hyps.toList) h_mem'
+    have h_lt : (pairs[i]'hi_pairs).1 < hyps.toList.length := Classical.choose h_exists
+    have h_lt' : (pairs[i]'hi_pairs).1 < hyps.size := by
+      have h := h_lt
+      simp [Array.length_toList] at h
+      exact h
+    exact ⟨(pairs[i]'hi_pairs).1, h_lt'⟩
+  · intro i hi
+    have hi_pairs : i < pairs.size := by
+      have hi' := hi
+      simp [_root_.Metamath.Verify.DB.trimFrameHyps, Array.size_map] at hi'
+      exact hi'
+    have hi_list : i < pairs.toList.length := by
+      have hi' := hi_pairs
+      simp at hi'
+      exact hi'
+    have h_mem : pairs[i]'hi_pairs ∈ pairs.toList := by
+      have h_mem' : pairs.toList[i] ∈ pairs.toList := List.getElem_mem (by simpa using hi_list)
+      have h_eq : pairs.toList[i] = pairs[i]'hi_pairs := by
+        exact (Array.getElem_toList (xs := pairs) (i := i) hi_pairs)
+      rw [h_eq] at h_mem'
+      exact h_mem'
+    have h_mem' : pairs[i]'hi_pairs ∈ _root_.Metamath.Verify.DB.trimFrameHypsPairsList db vars 0 hyps.toList := by
+      rw [h_pairs_list] at h_mem
+      exact h_mem
+    have h_exists :=
+      trimFrameHypsPairsList_mem (db := db) (vars := vars) (ls := hyps.toList) h_mem'
+    have h_lt : (pairs[i]'hi_pairs).1 < hyps.toList.length := Classical.choose h_exists
+    have h_eq :
+        hyps.toList[(pairs[i]'hi_pairs).1] = (pairs[i]'hi_pairs).2 :=
+      Classical.choose_spec h_exists
+    have h_arr2 : (_root_.Metamath.Verify.DB.trimFrameHyps db vars hyps)[i] = (pairs[i]'hi_pairs).2 := by
+      have hi_map : i < (Array.map (fun p => p.2) pairs).size := by
+        simpa [Array.size_map] using hi_pairs
+      simp [_root_.Metamath.Verify.DB.trimFrameHyps, pairs]
+    have h_lt' : (pairs[i]'hi_pairs).1 < hyps.size := by
+      have h := h_lt
+      simp [Array.length_toList] at h
+      exact h
+    have h_arr1 : hyps[(pairs[i]'hi_pairs).1]'h_lt' =
+        (pairs[i]'hi_pairs).2 := by
+      have h_toList :
+          hyps.toList[(pairs[i]'hi_pairs).1] =
+            hyps[(pairs[i]'hi_pairs).1]'h_lt' := by
+        exact
+          (Array.getElem_toList (xs := hyps) (i := (pairs[i]'hi_pairs).1)
+            h_lt')
+      have h := h_eq
+      simp [h_toList] at h
+      exact h
+    exact h_arr2.trans h_arr1.symm
+  · intro i j hi hj h_ne
+    have hi_pairs : i < pairs.size := by
+      have hi' := hi
+      simp [_root_.Metamath.Verify.DB.trimFrameHyps, Array.size_map] at hi'
+      exact hi'
+    have hj_pairs : j < pairs.size := by
+      have hj' := hj
+      simp [_root_.Metamath.Verify.DB.trimFrameHyps, Array.size_map] at hj'
+      exact hj'
+    have h_nodup :
+        (pairs.toList.map Prod.fst).Nodup := by
+      have h := (trimFrameHypsPairsList_nodup (db := db) (vars := vars) (ls := hyps.toList))
+      simp at h
+      exact h
+    have hi_list : i < (pairs.toList.map Prod.fst).length := by
+      simpa [Array.length_toList, List.length_map] using hi_pairs
+    have hj_list : j < (pairs.toList.map Prod.fst).length := by
+      simpa [Array.length_toList, List.length_map] using hj_pairs
+    intro h_eq
+    have h_idx_i : (pairs.toList.map Prod.fst)[i] = (pairs[i]'hi_pairs).1 := by
+      have h_eq_list : pairs.toList[i] = pairs[i]'hi_pairs := by
+        exact (Array.getElem_toList (xs := pairs) (i := i) hi_pairs)
+      have h_len : i < (List.map Prod.fst pairs.toList).length := by
+        simpa [Array.length_toList, List.length_map] using hi_pairs
+      have h := (List.getElem_map (f := Prod.fst) (l := pairs.toList) (i := i) (h := h_len))
+      rw [h_eq_list] at h
+      exact h
+    have h_idx_j : (pairs.toList.map Prod.fst)[j] = (pairs[j]'hj_pairs).1 := by
+      have h_eq_list : pairs.toList[j] = pairs[j]'hj_pairs := by
+        exact (Array.getElem_toList (xs := pairs) (i := j) hj_pairs)
+      have h_len : j < (List.map Prod.fst pairs.toList).length := by
+        simpa [Array.length_toList, List.length_map] using hj_pairs
+      have h := (List.getElem_map (f := Prod.fst) (l := pairs.toList) (i := j) (h := h_len))
+      rw [h_eq_list] at h
+      exact h
+    have h_eq_list : (pairs.toList.map Prod.fst)[i] = (pairs.toList.map Prod.fst)[j] := by
+      calc
+        (pairs.toList.map Prod.fst)[i] = (pairs[i]'hi_pairs).1 := h_idx_i
+        _ = (pairs[j]'hj_pairs).1 := h_eq
+        _ = (pairs.toList.map Prod.fst)[j] := h_idx_j.symm
+    have h_get :
+        (pairs.toList.map Prod.fst)[i]? = (pairs.toList.map Prod.fst)[j]? := by
+      have h_i :
+          (pairs.toList.map Prod.fst)[i]? = some ((pairs.toList.map Prod.fst)[i]) :=
+        List.getElem?_eq_getElem (l := pairs.toList.map Prod.fst) (i := i) hi_list
+      have h_j :
+          (pairs.toList.map Prod.fst)[j]? = some ((pairs.toList.map Prod.fst)[j]) :=
+        List.getElem?_eq_getElem (l := pairs.toList.map Prod.fst) (i := j) hj_list
+      calc
+        (pairs.toList.map Prod.fst)[i]? = some ((pairs.toList.map Prod.fst)[i]) := h_i
+        _ = some ((pairs.toList.map Prod.fst)[j]) := by simp [h_eq_list]
+        _ = (pairs.toList.map Prod.fst)[j]? := h_j.symm
+    have h_eq_ij := List.getElem?_inj (i := i) (j := j) (h₀ := hi_list) h_nodup h_get
+    exact (h_ne h_eq_ij).elim
+
 -- trimFrame produces an INJECTIVE subsequence of the input frame's hypotheses
 theorem trimFrame_produces_subsequence {db : DB} {fmla : Formula} {ok : Bool} {fr : Frame}
     (h : db.trimFrame fmla = (ok, fr)) : IsInjectiveSubsequence db.frame.hyps fr.hyps := by
-  -- trimFrame (Verify.lean:326-337) filters db.frame.hyps by pushing only elements where ess = true
-  -- Each pushed element maintains its string value (line 337: if ess then hyps := hyps.push l)
-  -- This creates an injective subsequence relationship
-  --
-  -- PROOF STRATEGY - Multiple approaches:
-  --
-  -- Approach A (Loop Invariant):
-  -- 1. Unfold trimFrame and expose the for-loop (Verify.lean:326)
-  -- 2. Track the invariant: ∀ i < hyps.size, ∃! j < input_hyps.size, hyps[i] = input_hyps[j] ∧ (no dup j's)
-  -- 3. Show the loop maintains this invariant (conditional push preserves it)
-  -- 4. Apply to final fr.hyps
-  --
-  -- Approach B (Computational Reflection):
-  -- Use `decide` or `native_decide` to verify the property for concrete instances
-  -- Requires decidability instances for IsInjectiveSubsequence
-  --
-  -- Approach C (Axiomatize as Specification):
-  -- Add as axiom that trimFrame produces injective subsequences
-  -- This would be justified by the implementation, but goes against our no-axiom policy
-  --
-  -- Approach D (Rewrite trimFrame):
-  -- Change implementation to return a proof witness along with the frame
-  -- This would require changing Verify.lean (operational code)
-  --
-  -- Current status: Need loop reasoning infrastructure.
-  -- This is a GENERAL problem for any imperative loop proof in Lean.
-  -- Temporary sorry until we build loop infrastructure or choose alternative approach.
-  sorry
+  cases h
+  -- Unfold trimFrame; the returned frame hyps are trimFrameHyps for the computed vars.
+  simp
+  exact trimFrameHyps_subsequence (db := db) (vars := _) (hyps := db.frame.hyps)
 
 -- Lemma 3: trimFrame preserves UniqueFloatVars (subset monotonicity!)
 theorem trimFrame_preserves_uniqueness {db : DB} {fr : Frame}
@@ -1231,54 +1480,42 @@ theorem insertAxiom_success_conditions
       db.trimFrame' arr = .ok fr ∧
       db.interrupt = false ∧
       (db.insert pos l (.assert arr fr)).error? = none := by
-  -- Unfold insertAxiom to see the control flow
   unfold DB.insertAxiom at h_success
-  -- Now h_success has the match/if structure
-  -- We need to analyze: match db.trimFrame' arr with | .ok fr => if db.interrupt then ... else db.insert ...
-  generalize h_trim : db.trimFrame' arr = result at h_success
-  cases result with
-  | error msg =>
-    -- In error case: insertAxiom = db.mkError pos msg
-    -- mkError sets error? to some, contradicts h_success
-    simp only [DB.mkError] at h_success
-    -- h_success now says: some { e := Error.error pos msg, ... } = none
-    -- This is a contradiction - some ≠ none
-    -- Use contradiction to close goal (ex falso quodlibet)
-    exfalso
-    -- Now need to prove False from some = none
-    cases h_success
-  | ok fr =>
-    -- In ok case: insertAxiom = if db.interrupt then ... else db.insert ...
-    -- After the case split, h_trim still says: db.trimFrame' arr = result
-    -- And we know result = Except.ok fr from the case
-    exists fr
-    constructor
-    · -- Show: db.trimFrame' arr = .ok fr
-      -- Rewrite h_trim using the fact that result = Except.ok fr
-      rw [← h_trim]
-    · -- Now need to show: db.interrupt = false ∧ (db.insert pos l (.assert arr fr)).error? = none
-      -- Split on db.interrupt
-      by_cases h_int : db.interrupt
-      · -- Case: db.interrupt = true
-        -- Then insertAxiom sets error?, contradicts h_success
-        -- From insertAxiom definition: if db.interrupt then { db with error? := some ... }
-        simp only [h_int, if_true] at h_success
-        -- h_success now says: some ... = none
-        -- This is a contradiction
-        exfalso
-        cases h_success
-      · -- Case: db.interrupt = false
-        -- h_int : ¬db.interrupt = true, which means db.interrupt = false (for Bool)
-        constructor
-        · -- Show: db.interrupt = false
-          -- Convert ¬(b = true) to b = false for Bool
-          simp [Bool.not_eq_true] at h_int
-          exact h_int
-        · -- Show: (db.insert pos l (.assert arr fr)).error? = none
-          -- In this case: insertAxiom = db.insert pos l (.assert arr fr)
-          -- So h_success gives us exactly what we need
-          simp only [h_int, if_false] at h_success
-          exact h_success
+  cases h_head : Formula.hasConstHead arr with
+  | false =>
+      simp [h_head, DB.mkError] at h_success
+      cases h_success
+  | true =>
+      cases h_db_err : db.error with
+      | true =>
+          have h_db_err_some : db.error? ≠ none := (error_iff_error?_isSome db).1 h_db_err
+          have h_no_err : db.error? = none := by
+            simp [h_head, h_db_err] at h_success
+            exact h_success
+          exact False.elim (h_db_err_some h_no_err)
+      | false =>
+          cases h_trim : db.trimFrame' arr with
+          | error msg =>
+              have h_no_err' :
+                  (db.mkError pos msg).error? = none := by
+                simp [h_head, h_db_err, h_trim] at h_success
+                exact h_success
+              have : False := by
+                simp [DB.mkError] at h_no_err'
+              exact False.elim this
+          | ok fr =>
+              by_cases h_int : db.interrupt
+              · have h_no_err' :
+                    { db with error? := some ⟨.ax pos l arr fr, default⟩ }.error? = none := by
+                  have h_success' := h_success
+                  simp [h_head, h_db_err, h_trim, h_int] at h_success'
+                cases h_no_err'
+              · refine ⟨fr, rfl, ?_, ?_⟩
+                · simp [Bool.not_eq_true] at h_int
+                  exact h_int
+                · have h_success' := h_success
+                  simp [h_head, h_db_err, h_trim, h_int] at h_success'
+                  exact h_success'
 
 theorem insertAxiom_full_maintains_wf
     (db : DB) (pos : Pos) (l : String) (arr : Formula)
@@ -1301,28 +1538,50 @@ theorem insertAxiom_full_maintains_wf
 
   -- First, prove frame well-formedness from trimFrame' success
   have h_frame_wf : WellFormedFrame db fr := trimFrame'_success_implies_wellformed_frame db arr fr h_wf h_trim
+  -- Freshness in the trimmed frame follows from subsequence mapping
+  have h_trim_ok : db.trimFrame arr = (true, fr) := trimFrame'_ok_iff.mp h_trim
+  rcases trimFrame_produces_subsequence h_trim_ok with ⟨f, h_eq, _h_inj⟩
+  have h_fresh_in_frame : ∀ (i : Nat) (hi : i < fr.hyps.size), fr.hyps[i]'hi ≠ l := by
+    intro i hi
+    have h_fresh := h_fresh_label (f i hi).val (f i hi).property
+    have h_eqi := h_eq i hi
+    simpa [h_eqi.symm] using h_fresh
+
+  have h_notvar0 : arr[0]!.isVar = false := by
+    cases h_var0 : arr[0]!.isVar with
+    | false => rfl
+    | true =>
+        have : False := by
+          simpa [h_var0] using h_first.2
+        exact False.elim this
+  have h_head : Formula.hasConstHead arr = true := by
+    unfold Formula.hasConstHead
+    have h_pos : 0 < arr.size := by
+      exact h_first.1
+    cases h0 : arr[0]! with
+    | const _ =>
+        simp [h_pos]
+    | var _ =>
+        have : False := by
+          simp [Sym.isVar, h0] at h_notvar0
+        exact False.elim this
+  have h_db_err : db.error = false := by
+    simp [DB.error, h_no_err]
 
   -- Unfold insertAxiom
   unfold DB.insertAxiom
-  -- Simplify using h_trim and h_no_int
-  -- Note: h_no_int : db.interrupt = false means if db.interrupt evaluates to false
-  simp only [h_trim]
-  -- Now we have: if db.interrupt then ... else db.insert ...
-  rw [if_neg]
-  · -- Goal: WellFormedDB (db.insert pos l (.assert arr fr))
-    -- Use insertAxiom_insert_part_maintains_wf
-    apply insertAxiom_insert_part_maintains_wf db pos l arr fr
-    · exact h_wf
-    · exact h_no_err
-    · exact h_first
-    · exact h_frame_wf
-    · exact h_fresh_db
-    · exact h_fresh_label
-    · exact h_fresh_in_asserts
-    · exact h_insert_ok
-  · -- Goal: ¬db.interrupt = true
-    -- We have h_no_int : db.interrupt = false
-    simp [h_no_int]
+  simp [h_head, h_db_err, h_trim, h_no_int]
+  -- Goal: WellFormedDB (db.insert pos l (.assert arr fr))
+  apply insertAxiom_insert_part_maintains_wf db pos l arr fr
+  · exact h_wf
+  · exact h_no_err
+  · exact h_first
+  · exact h_frame_wf
+  · exact h_fresh_in_frame
+  · exact h_fresh_db
+  · exact h_fresh_label
+  · exact h_fresh_in_asserts
+  · exact h_insert_ok
 
 -- Phase B: feedTokens correctness (blocked on Phase A completion)
 -- TODO: Complete after proving insertHyp_full and insertAxiom_full
@@ -1334,10 +1593,311 @@ theorem insertAxiom_full_maintains_wf
 -- 3. Id.run + unless check (using h_first)
 -- 4. match on tokp.k = .ax
 -- 5. Result: .db = s.db.insertAxiom pos l arr
+@[simp] theorem id_pure_eq {α} (x : α) : (pure x : Id α) = x := rfl
+@[simp] theorem id_do_unit {α} (x : α) : (do PUnit.unit; x : Id α) = x := by rfl
+@[simp] theorem id_run_eq {α} (x : α) : Id.run x = x := rfl
+
 theorem feedTokens_ax_db (s : ParserState) (arr : Array Sym) (pos : Pos) (l : String)
-    (h_first : arr.size > 0 ∧ !arr[0]!.isVar) :
+    (h_first : arr.size > 0 ∧ !arr[0]!.isVar)
+    (h_success : (s.feedTokens arr ⟨.ax, pos, l⟩).db.error? = none) :
     (s.feedTokens arr ⟨.ax, pos, l⟩).db = s.db.insertAxiom pos l arr := by
-  sorry
+  have h_notvar : arr[0]!.isVar = false := by
+    cases h_var : arr[0]!.isVar with
+    | false => rfl
+    | true =>
+        have : False := by
+          simpa [h_var] using h_first.2
+        exact False.elim this
+  have h_pos : 0 < arr.size := by
+    exact h_first.1
+  have h0_eq : arr[0]! = arr[0]'h_pos := by
+    simpa using (Array.getBang_eq_get_nat (a := arr) (i := 0) (h := h_pos))
+  have h_notvar_get : arr[0].isVar = false := by
+    simpa [h0_eq] using h_notvar
+  have h_head : Formula.hasConstHead arr = true := by
+    unfold Formula.hasConstHead
+    cases h_sym : arr[0]! with
+    | const c => simp [h_pos]
+    | var v =>
+        have h_false : False := by
+          simp [Sym.isVar, h_sym] at h_notvar
+        exact False.elim h_false
+
+  -- Compute the inner parser state (before withAt wraps errors).
+  let s_db := s.withDB fun db => db.insertAxiom pos l arr
+  let s_inner : ParserState := { s_db with tokp := .start }
+  have h_s_inner :
+      { db := (ParserState.withDB (fun db => db.insertAxiom pos l arr) s).db, tokp := TokenParser.start,
+        charp := (ParserState.withDB (fun db => db.insertAxiom pos l arr) s).charp,
+        line := (ParserState.withDB (fun db => db.insertAxiom pos l arr) s).line,
+        linepos := (ParserState.withDB (fun db => db.insertAxiom pos l arr) s).linepos } = s_inner := by
+    rfl
+  have h_inner :
+      (if Formula.hasConstHead arr = true then
+          (s_inner : ParserState)
+        else
+          s.mkError pos "first symbol is not a constant") = s_inner := by
+    simp [h_head]
+
+  have h_success_pre :
+      (ParserState.withAt l (fun _ =>
+          if Formula.hasConstHead arr = true then s_inner
+          else s.mkError pos "first symbol is not a constant")).db.error? = none := by
+    simpa [ParserState.feedTokens, h_s_inner] using h_success
+  have h_success' : (ParserState.withAt l (fun _ => s_inner)).db.error? = none := by
+    have h_success_pre' := h_success_pre
+    simp [h_inner] at h_success_pre'
+    exact h_success_pre'
+
+  have h_inner_no_err : s_inner.db.error? = none := by
+    cases h_err : s_inner.db.error? with
+    | none => rfl
+    | some err =>
+        rcases err with ⟨e, idx⟩
+        cases e with
+        | error pos msg =>
+            have h_err_some : (ParserState.withAt l (fun _ => s_inner)).db.error? ≠ none := by
+              simp [ParserState.withAt, ParserState.withDB, h_err]
+            exact (h_err_some h_success').elim
+        | ax pos lbl f fr =>
+            have h_err_some : (ParserState.withAt l (fun _ => s_inner)).db.error? ≠ none := by
+              simp [ParserState.withAt, h_err]
+            exact (h_err_some h_success').elim
+        | thm pos lbl f fr =>
+            have h_err_some : (ParserState.withAt l (fun _ => s_inner)).db.error? ≠ none := by
+              simp [ParserState.withAt, h_err]
+            exact (h_err_some h_success').elim
+
+  have h_db_pre :
+      (s.feedTokens arr ⟨.ax, pos, l⟩).db =
+        (ParserState.withAt l (fun _ =>
+          if Formula.hasConstHead arr = true then s_inner
+          else s.mkError pos "first symbol is not a constant")).db := by
+    simp [ParserState.feedTokens, h_s_inner]
+  calc
+    (s.feedTokens arr ⟨.ax, pos, l⟩).db
+        = (ParserState.withAt l (fun _ =>
+            if Formula.hasConstHead arr = true then s_inner
+            else s.mkError pos "first symbol is not a constant")).db := by
+            exact h_db_pre
+    _ = (ParserState.withAt l (fun _ => s_inner)).db := by
+            simp [h_inner]
+    _ = s_inner.db := by
+            simp [ParserState.withAt, h_inner_no_err]
+    _ = s.db.insertAxiom pos l arr := by
+            rfl
+
+theorem feedTokens_float_db (s : ParserState) (arr : Array Sym) (pos : Pos) (l : String)
+    (h_first : arr.size > 0 ∧ !arr[0]!.isVar)
+    (h_float : arr.size = 2 ∧ arr[1]!.isVar)
+    (h_success : (s.feedTokens arr ⟨.float, pos, l⟩).db.error? = none) :
+    (s.feedTokens arr ⟨.float, pos, l⟩).db = s.db.insertHyp pos l false arr := by
+  have h_notvar : arr[0]!.isVar = false := by
+    cases h_var : arr[0]!.isVar with
+    | false => rfl
+    | true =>
+        have : False := by
+          simpa [h_var] using h_first.2
+        exact False.elim this
+  have h_var1 : arr[1]!.isVar = true := by
+    simpa using h_float.2
+  have h_pos : 0 < arr.size := by
+    exact h_first.1
+  have h0_eq : arr[0]! = arr[0]'h_pos := by
+    simpa using (Array.getBang_eq_get_nat (a := arr) (i := 0) (h := h_pos))
+  have h_notvar_get : arr[0].isVar = false := by
+    simpa [h0_eq] using h_notvar
+  have h_pos1 : 1 < arr.size := by
+    -- from arr.size = 2
+    simp [h_float.1]
+  have h1_eq : arr[1]! = arr[1]'h_pos1 := by
+    simpa using (Array.getBang_eq_get_nat (a := arr) (i := 1) (h := h_pos1))
+  have h_var1_get : arr[1].isVar = true := by
+    simpa [h1_eq] using h_var1
+  have h_head : Formula.hasConstHead arr = true := by
+    unfold Formula.hasConstHead
+    cases h_sym : arr[0]! with
+    | const c => simp [h_pos]
+    | var v =>
+        have h_false : False := by
+          simp [Sym.isVar, h_sym] at h_notvar
+        exact False.elim h_false
+  have h_float_shape : Formula.isFloatShape arr = true := by
+    unfold Formula.isFloatShape
+    cases h0 : arr[0]! with
+    | const c =>
+        cases h1 : arr[1]! with
+        | const c' =>
+            have h_false : False := by
+              simp [Sym.isVar, h1] at h_var1
+            exact False.elim h_false
+        | var v' =>
+            simp [h_float.1]
+    | var v =>
+        have h_false : False := by
+          simp [Sym.isVar, h0] at h_notvar
+        exact False.elim h_false
+
+  let s_db := s.withDB fun db => db.insertHyp pos l false arr
+  let s_inner : ParserState := { s_db with tokp := .start }
+  have h_s_inner :
+      { db := (ParserState.withDB (fun db => db.insertHyp pos l false arr) s).db, tokp := TokenParser.start,
+        charp := (ParserState.withDB (fun db => db.insertHyp pos l false arr) s).charp,
+        line := (ParserState.withDB (fun db => db.insertHyp pos l false arr) s).line,
+        linepos := (ParserState.withDB (fun db => db.insertHyp pos l false arr) s).linepos } = s_inner := by
+    rfl
+  have h_inner :
+      (if Formula.hasConstHead arr = true then
+          if Formula.isFloatShape arr = true then
+            (s_inner : ParserState)
+          else
+            s.mkError pos "expected a constant and a variable"
+        else
+          s.mkError pos "first symbol is not a constant") = s_inner := by
+    simp [h_head, h_float_shape]
+
+  have h_success_pre :
+      (ParserState.withAt l (fun _ =>
+          if Formula.hasConstHead arr = true then
+            if Formula.isFloatShape arr = true then s_inner
+            else s.mkError pos "expected a constant and a variable"
+          else s.mkError pos "first symbol is not a constant")).db.error? = none := by
+    simpa [ParserState.feedTokens, h_s_inner] using h_success
+  have h_success' : (ParserState.withAt l (fun _ => s_inner)).db.error? = none := by
+    have h_success_pre' := h_success_pre
+    simp [h_inner] at h_success_pre'
+    exact h_success_pre'
+
+  have h_inner_no_err : s_inner.db.error? = none := by
+    cases h_err : s_inner.db.error? with
+    | none => rfl
+    | some err =>
+        rcases err with ⟨e, idx⟩
+        cases e with
+        | error pos msg =>
+            have h_err_some : (ParserState.withAt l (fun _ => s_inner)).db.error? ≠ none := by
+              simp [ParserState.withAt, ParserState.withDB, h_err]
+            exact (h_err_some h_success').elim
+        | ax pos lbl f fr =>
+            have h_err_some : (ParserState.withAt l (fun _ => s_inner)).db.error? ≠ none := by
+              simp [ParserState.withAt, h_err]
+            exact (h_err_some h_success').elim
+        | thm pos lbl f fr =>
+            have h_err_some : (ParserState.withAt l (fun _ => s_inner)).db.error? ≠ none := by
+              simp [ParserState.withAt, h_err]
+            exact (h_err_some h_success').elim
+
+  have h_db_pre :
+      (s.feedTokens arr ⟨.float, pos, l⟩).db =
+        (ParserState.withAt l (fun _ =>
+          if Formula.hasConstHead arr = true then
+            if Formula.isFloatShape arr = true then s_inner
+            else s.mkError pos "expected a constant and a variable"
+          else s.mkError pos "first symbol is not a constant")).db := by
+    simp [ParserState.feedTokens, h_s_inner]
+  calc
+    (s.feedTokens arr ⟨.float, pos, l⟩).db
+        = (ParserState.withAt l (fun _ =>
+            if Formula.hasConstHead arr = true then
+              if Formula.isFloatShape arr = true then s_inner
+              else s.mkError pos "expected a constant and a variable"
+            else s.mkError pos "first symbol is not a constant")).db := by
+            exact h_db_pre
+    _ = (ParserState.withAt l (fun _ => s_inner)).db := by
+            simp [h_inner]
+    _ = s_inner.db := by
+            simp [ParserState.withAt, h_inner_no_err]
+    _ = s.db.insertHyp pos l false arr := by
+            rfl
+
+theorem feedTokens_ess_db (s : ParserState) (arr : Array Sym) (pos : Pos) (l : String)
+    (h_first : arr.size > 0 ∧ !arr[0]!.isVar)
+    (h_success : (s.feedTokens arr ⟨.ess, pos, l⟩).db.error? = none) :
+    (s.feedTokens arr ⟨.ess, pos, l⟩).db = s.db.insertHyp pos l true arr := by
+  have h_notvar : arr[0]!.isVar = false := by
+    cases h_var : arr[0]!.isVar with
+    | false => rfl
+    | true =>
+        have : False := by
+          simpa [h_var] using h_first.2
+        exact False.elim this
+  have h_pos : 0 < arr.size := by
+    exact h_first.1
+  have h0_eq : arr[0]! = arr[0]'h_pos := by
+    simpa using (Array.getBang_eq_get_nat (a := arr) (i := 0) (h := h_pos))
+  have h_notvar_get : arr[0].isVar = false := by
+    simpa [h0_eq] using h_notvar
+  have h_head : Formula.hasConstHead arr = true := by
+    unfold Formula.hasConstHead
+    cases h_sym : arr[0]! with
+    | const c => simp [h_pos]
+    | var v =>
+        have h_false : False := by
+          simp [Sym.isVar, h_sym] at h_notvar
+        exact False.elim h_false
+
+  let s_db := s.withDB fun db => db.insertHyp pos l true arr
+  let s_inner : ParserState := { s_db with tokp := .start }
+  have h_s_inner :
+      { db := (ParserState.withDB (fun db => db.insertHyp pos l true arr) s).db, tokp := TokenParser.start,
+        charp := (ParserState.withDB (fun db => db.insertHyp pos l true arr) s).charp,
+        line := (ParserState.withDB (fun db => db.insertHyp pos l true arr) s).line,
+        linepos := (ParserState.withDB (fun db => db.insertHyp pos l true arr) s).linepos } = s_inner := by
+    rfl
+  have h_inner :
+      (if Formula.hasConstHead arr = true then
+          (s_inner : ParserState)
+        else
+          s.mkError pos "first symbol is not a constant") = s_inner := by
+    simp [h_head]
+
+  have h_success_pre :
+      (ParserState.withAt l (fun _ =>
+          if Formula.hasConstHead arr = true then s_inner
+          else s.mkError pos "first symbol is not a constant")).db.error? = none := by
+    simpa [ParserState.feedTokens, h_s_inner] using h_success
+  have h_success' : (ParserState.withAt l (fun _ => s_inner)).db.error? = none := by
+    have h_success_pre' := h_success_pre
+    simp [h_inner] at h_success_pre'
+    exact h_success_pre'
+
+  have h_inner_no_err : s_inner.db.error? = none := by
+    cases h_err : s_inner.db.error? with
+    | none => rfl
+    | some err =>
+        rcases err with ⟨e, idx⟩
+        cases e with
+        | error pos msg =>
+            have h_err_some : (ParserState.withAt l (fun _ => s_inner)).db.error? ≠ none := by
+              simp [ParserState.withAt, ParserState.withDB, h_err]
+            exact (h_err_some h_success').elim
+        | ax pos lbl f fr =>
+            have h_err_some : (ParserState.withAt l (fun _ => s_inner)).db.error? ≠ none := by
+              simp [ParserState.withAt, h_err]
+            exact (h_err_some h_success').elim
+        | thm pos lbl f fr =>
+            have h_err_some : (ParserState.withAt l (fun _ => s_inner)).db.error? ≠ none := by
+              simp [ParserState.withAt, h_err]
+            exact (h_err_some h_success').elim
+
+  have h_db_pre :
+      (s.feedTokens arr ⟨.ess, pos, l⟩).db =
+        (ParserState.withAt l (fun _ =>
+          if Formula.hasConstHead arr = true then s_inner
+          else s.mkError pos "first symbol is not a constant")).db := by
+    simp [ParserState.feedTokens, h_s_inner]
+  calc
+    (s.feedTokens arr ⟨.ess, pos, l⟩).db
+        = (ParserState.withAt l (fun _ =>
+            if Formula.hasConstHead arr = true then s_inner
+            else s.mkError pos "first symbol is not a constant")).db := by
+            exact h_db_pre
+    _ = (ParserState.withAt l (fun _ => s_inner)).db := by
+            simp [h_inner]
+    _ = s_inner.db := by
+            simp [ParserState.withAt, h_inner_no_err]
+    _ = s.db.insertHyp pos l true arr := by
+            rfl
 
 theorem feedTokens_maintains_wf
     (s : ParserState) (arr : Array Sym) (tokp : TokensParser)
@@ -1352,31 +1912,110 @@ theorem feedTokens_maintains_wf
         ∀ (i : Nat) (hi : i < fr_assert.hyps.size), fr_assert.hyps[i]'hi ≠ tokp.label)
     (h_success : (s.feedTokens arr tokp).db.error? = none) :
     WellFormedDB (s.feedTokens arr tokp).db := by
-  -- Case analysis on token kind
-  unfold ParserState.feedTokens
-  cases tokp.k with
-  | float =>
-    -- feedTokens does: s.push arr |>.insertHyp tokp.pos tokp.label false tokp.toFormula
-    -- Need: insertHyp_full_maintains_wf (currently has sorry)
-    sorry
-  | ess =>
-    -- feedTokens does: s.push arr |>.insertHyp tokp.pos tokp.label true tokp.toFormula
-    -- Need: insertHyp_full_maintains_wf (currently has sorry)
-    sorry
-  | ax =>
-    -- TODO: Complete using feedTokens_ax_db helper (currently has sorry)
-    -- Approach:
-    -- 1. Prove feedTokens_ax_db: (s.feedTokens arr ⟨.ax, pos, l⟩).db = s.db.insertAxiom pos l arr
-    -- 2. Use this to rewrite goal and h_success
-    -- 3. Apply insertAxiom_full_maintains_wf (which is COMPLETE!)
-    --
-    -- Blocker: feedTokens_ax_db requires simplifying through withAt, Id.run, unless
-    -- This is computational reduction, should be straightforward but needs careful simp strategy
-    sorry
-  | thm =>
-    -- Proof checking - much more complex, involves checkProof
-    sorry
+  cases tokp with
+  | mk k pos label =>
+    cases k with
+    | float =>
+        have h_shape : arr.size = 2 ∧ arr[1]!.isVar := h_float rfl
+        have h_success' :
+            (s.feedTokens arr ⟨.float, pos, label⟩).db.error? = none := by
+          simpa using h_success
+        have h_db_eq :
+            (s.feedTokens arr ⟨.float, pos, label⟩).db =
+              s.db.insertHyp pos label false arr :=
+          feedTokens_float_db s arr pos label h_first h_shape h_success'
+        have h_insert_ok : (s.db.insertHyp pos label false arr).error? = none := by
+          simpa [h_db_eq] using h_success'
+        have h_second' : (false = false → (arr.size = 2 ∧ arr[1]!.isVar)) := by
+          intro _
+          exact h_shape
+        have h_wf_insert : WellFormedDB (s.db.insertHyp pos label false arr) :=
+          insertHyp_full_maintains_wf s.db pos label false arr
+            h_wf h_no_err h_first h_second' h_fresh_db h_fresh_label h_fresh_in_asserts h_insert_ok
+        simpa [h_db_eq] using h_wf_insert
+    | ess =>
+        have h_success' :
+            (s.feedTokens arr ⟨.ess, pos, label⟩).db.error? = none := by
+          simpa using h_success
+        have h_db_eq :
+            (s.feedTokens arr ⟨.ess, pos, label⟩).db =
+              s.db.insertHyp pos label true arr :=
+          feedTokens_ess_db s arr pos label h_first h_success'
+        have h_insert_ok : (s.db.insertHyp pos label true arr).error? = none := by
+          simpa [h_db_eq] using h_success'
+        have h_second' : (true = false → (arr.size = 2 ∧ arr[1]!.isVar)) := by
+          intro h_false
+          cases h_false
+        have h_wf_insert : WellFormedDB (s.db.insertHyp pos label true arr) :=
+          insertHyp_full_maintains_wf s.db pos label true arr
+            h_wf h_no_err h_first h_second' h_fresh_db h_fresh_label h_fresh_in_asserts h_insert_ok
+        simpa [h_db_eq] using h_wf_insert
+    | ax =>
+        -- Rewrite the parser step to insertAxiom, then reuse the full lemma.
+        have h_success' :
+            (s.feedTokens arr ⟨.ax, pos, label⟩).db.error? = none := by
+          simpa using h_success
+        have h_db_eq :
+            (s.feedTokens arr ⟨.ax, pos, label⟩).db =
+              s.db.insertAxiom pos label arr :=
+          feedTokens_ax_db s arr pos label h_first h_success'
+        have h_insert_ok : (s.db.insertAxiom pos label arr).error? = none := by
+          simpa [h_db_eq] using h_success'
+        have h_wf_insert : WellFormedDB (s.db.insertAxiom pos label arr) :=
+          insertAxiom_full_maintains_wf s.db pos label arr
+            h_wf h_no_err h_first h_fresh_db h_fresh_label h_fresh_in_asserts h_insert_ok
+        simpa [h_db_eq] using h_wf_insert
+    | thm =>
+        -- Successful .thm does not modify the DB (it only moves to proof mode).
+        have h_success' :
+            (s.feedTokens arr ⟨.thm, pos, label⟩).db.error? = none := by
+          simpa using h_success
+        have h_notvar : arr[0]!.isVar = false := by
+          cases h_var : arr[0]!.isVar with
+          | false => rfl
+          | true =>
+              have : False := by
+                simpa [h_var] using h_first.2
+              exact False.elim this
+        have h_pos : 0 < arr.size := h_first.1
+        have h_head : Formula.hasConstHead arr = true := by
+          unfold Formula.hasConstHead
+          cases h_sym : arr[0]! with
+          | const c => simp [h_pos]
+          | var v =>
+              have h_false : False := by
+                simp [Sym.isVar, h_sym] at h_notvar
+              exact False.elim h_false
+        cases h_trim : s.db.trimFrame' arr with
+        | error msg =>
+            have h_bad : (ParserState.withAt label (fun _ => s.mkError pos msg)).db.error? ≠ none := by
+              simp [ParserState.withAt, ParserState.mkError, ParserState.withDB, DB.mkError]
+            have h_success'' :
+                (ParserState.withAt label (fun _ => s.mkError pos msg)).db.error? = none := by
+              simpa [ParserState.feedTokens, h_head, h_trim] using h_success'
+            exact (h_bad h_success'').elim
+        | ok fr =>
+            by_cases h_interrupt : s.db.interrupt
+            · have h_bad :
+                (ParserState.withAt label (fun _ =>
+                  ParserState.withDB
+                    (fun db =>
+                      { db with error? := some ⟨.thm pos label arr fr, default⟩ })
+                    s)).db.error? ≠ none := by
+                simp [ParserState.withAt, ParserState.withDB]
+              have h_success'' :
+                  (ParserState.withAt label (fun _ =>
+                    ParserState.withDB
+                      (fun db =>
+                        { db with error? := some ⟨.thm pos label arr fr, default⟩ })
+                      s)).db.error? = none := by
+                simpa [ParserState.feedTokens, h_head, h_trim, h_interrupt] using h_success'
+              exact (h_bad h_success'').elim
+            · have h_db_eq :
+                (s.feedTokens arr ⟨.thm, pos, label⟩).db = s.db := by
+                simp [ParserState.feedTokens, h_head, h_trim, h_interrupt,
+                  ParserState.resumeThm, ParserState.withAt, h_no_err]
+              simpa [h_db_eq] using h_wf
 
 end ParserOps
 end Metamath
-

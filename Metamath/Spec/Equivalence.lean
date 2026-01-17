@@ -165,12 +165,11 @@ theorem proofValid_to_mario {Γ : Database} {fr : Frame} {e : Expr} {steps : Lis
       -- Goal: Hyp.toMarioFormula (Hyp.floating c v) (Frame.toVarList fr) ∈ (Frame.toMarioContext fr (Frame.toVarList fr)).hyps
       exact Bridge.Hyp.toMarioFormula_mem h_in
 
-  | useAxiom _ _ l frAx eAx σ h_ax h_dv h_dv' h_prev h_needed h_stack_eq =>
+  | useAxiom _ _ l frAx eAx σ h_ax h_dv h_prev h_needed h_stack_eq =>
       -- useAxiom applies substitution σ to axiom (frAx, eAx) and adds to stack
       -- We have:
       --   h_ax : Γ l = some (frAx, eAx)
-      --   h_dv : dvOK fr.vars fr.dv σ
-      --   h_dv' : dvOK frAx.vars frAx.dv σ
+      --   h_dv : dvOK fr.vars frAx.dv fr.dv σ
       --   h_prev : ProofValid for previous stack
       --   h_needed : ∀ h ∈ frAx.mand, ProofValid ...
       --   h_stack_eq : describes final stack structure

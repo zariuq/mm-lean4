@@ -585,15 +585,17 @@ theorem insert_cases (db : DB) (pos : Pos) (label : String) (obj : String → Ob
 
 /-! ## DB.insertHyp Case Analysis
 
-insertHyp (lines 296-310) has additional complexity:
-1. Check for duplicate float variables (lines 303-307)
-2. Call insert
-3. Call withHyps (doesn't check error!)
+insertHyp has additional complexity:
+1. Validate head/shape (early errors)
+2. Check for duplicate float variables (pure boolean check)
+3. Call insert
+4. Call withHyps (guarded by error check)
 -/
 
 /-- Possible outcomes of insertHyp -/
 inductive InsertHypOutcome : Type where
   | error_already : InsertHypOutcome
+  | error_bad_shape : InsertHypOutcome  -- Head/shape checks failed
   | error_duplicate_float : InsertHypOutcome  -- Same variable already has $f
   | error_from_insert : InsertHypOutcome  -- insert failed
   | success : InsertHypOutcome
@@ -613,6 +615,10 @@ def hasFloatBinding (db : DB) (v : String) : Bool :=
 def classifyInsertHyp (db : DB) (_ : Pos) (label : String) (ess : Bool) (f : Formula) : InsertHypOutcome :=
   if db.error then
     .error_already
+  else if f.hasConstHead = false then
+    .error_bad_shape
+  else if !ess && f.isFloatShape = false then
+    .error_bad_shape
   else if !ess && f.size >= 2 then
     match f[1]! with
     | .var v =>
@@ -633,10 +639,10 @@ def classifyInsertHyp (db : DB) (_ : Pos) (label : String) (ess : Bool) (f : For
     else
       .success
 
-/-! ## Helper Lemmas for insertHyp Float Check Loop
+/-! ## Helper Lemmas for insertHyp Float Check
 
-The float check loop (Verify.lean:303-307) iterates over frame.hyps and calls mkError
-if it finds a duplicate float variable. These lemmas connect the loop behavior to hasFloatBinding.
+insertHyp uses a pure check (`floatVarOccursInFrame`) for duplicate $f variables.
+The loop lemmas below are legacy reasoning aids and may be phased out.
 -/
 
 /-- Helper: Tail-recursive float check loop for reasoning -/
@@ -862,7 +868,7 @@ For now: Accept as axioms, prove the spec later via forM induction.
 
 /-- mkError preserves error when already set (local copy for this module) -/
 private theorem mkError_preserves_error_local (db : DB) (pos : Pos) (msg : String)
-    (h : db.error = true) :
+    (_h : db.error = true) :
     (db.mkError pos msg).error = true := by
   unfold DB.mkError DB.error
   simp
@@ -877,11 +883,11 @@ private theorem insert_preserves_error_local (db : DB) (pos : Pos) (label : Stri
   · -- Case: obj label is .const
     split
     · -- mkError case - always has error
-      simp only [Verify.DB.mkError, Option.isSome, ite_true]
+      simp [Verify.DB.mkError]
     · -- no mkError, but error was already set
-      simp only [h, ite_true]
+      simp [h]
   · -- non-const cases
-    simp only [h, ite_true]
+    simp [h]
 
 /-- withHyps preserves error (local copy for this module) -/
 private theorem withHyps_preserves_error_local (db : DB) (f : Array String → Array String)
@@ -1001,49 +1007,12 @@ theorem insertHyp_preserves_error_when_set (db : DB) (pos : Pos) (label : String
     (h_err : db.error = true) :
     (db.insertHyp pos label ess f).error = true := by
   unfold DB.insertHyp
-  -- insertHyp = float_check >> insert >> withHyps
-  -- We show each step preserves error=true:
-  -- 1. Float check (if executed) preserves error
-  -- 2. insert preserves error
-  -- 3. withHyps preserves error
-  simp only [Id.run]
-  -- The float check is: if !ess && f.size >= 2 then (for loop) else db
-  split
-  · -- Float check executed
-    -- After float check, error is still true
-    have h_after_float : (Id.run (do
-        let mut db := db
-        for h in db.frame.hyps do
-          if let some (.hyp false prevF _) := db.find? h then
-            if prevF.size >= 2 && prevF[1]!.value == f[1]!.value then
-              db := db.mkError pos s!"variable {f[1]!.value} already has $f hypothesis"
-        pure db)).error = true := by
-      -- The loop is floatCheckLoop, which preserves error when set
-      have : (Id.run (do
-        let mut db := db
-        for h in db.frame.hyps do
-          if let some (.hyp false prevF _) := db.find? h then
-            if prevF.size >= 2 && prevF[1]!.value == f[1]!.value then
-              db := db.mkError pos s!"variable {f[1]!.value} already has $f hypothesis"
-        pure db)) = floatCheckLoop db pos f[1]!.value := rfl
-      rw [this]
-      exact floatCheckLoop_preserves_error_when_set db pos _ h_err
-    -- After insert, error is still true
-    have h_after_insert : ((Id.run (do
-        let mut db := db
-        for h in db.frame.hyps do
-          if let some (.hyp false prevF _) := db.find? h then
-            if prevF.size >= 2 && prevF[1]!.value == f[1]!.value then
-              db := db.mkError pos s!"variable {f[1]!.value} already has $f hypothesis"
-        pure db)).insert pos label (.hyp ess f)).error = true :=
-      insert_preserves_error_local _ pos label _ h_after_float
-    -- After withHyps, error is still true
-    exact withHyps_preserves_error_local _ _ h_after_insert
-  · -- Float check skipped, db unchanged
-    -- After insert, error is still true
-    have h_after_insert := insert_preserves_error_local db pos label (.hyp ess f) h_err
-    -- After withHyps, error is still true
-    exact withHyps_preserves_error_local _ _ h_after_insert
+  have h_checks : (db.insertHypChecks pos ess f).error = true := by
+    unfold DB.insertHypChecks
+    by_cases h_head : f.hasConstHead
+    · simp [h_head, h_err]
+    · simp [h_head, DBLemmas.mkError_sets_error]
+  simp [h_checks]
 
 /-- hasFloatBinding only matches variables, never constants -/
 theorem hasFloatBinding_const_false (db : DB) (c : String) :
@@ -1059,15 +1028,18 @@ These lemmas describe the behavior of insertHyp without unfolding the monadic fo
 They allow reasoning about insertHyp composition: float_check >> insert >> withHyps.
 -/
 
-/-- When float check is skipped, insertHyp = insert >> withHyps -/
+/-- When float check is skipped for essentials, insertHyp = insert >> withHyps -/
 theorem insertHyp_eq_when_no_float_check (db : DB) (pos : Pos) (label : String) (ess : Bool) (f : Formula)
-    (h_cond : ¬(!ess && f.size >= 2)) :
+    (h_no_err : db.error = false)
+    (h_head : f.hasConstHead = true)
+    (h_ess : ess = true) :
     db.insertHyp pos label ess f =
-      (db.insert pos label (.hyp ess f)).withHyps (fun hyps => hyps.push label) := by
+      if (db.insert pos label (.hyp ess f)).error = true then
+        db.insert pos label (.hyp ess f)
+      else
+        (db.insert pos label (.hyp ess f)).withHyps (fun hyps => hyps.push label) := by
   unfold DB.insertHyp
-  -- The float check condition is false, so it returns db unchanged
-  simp only [h_cond, Id.run]
-  rfl
+  simp [DB.insertHypChecks, h_no_err, h_head, h_ess]
 
 /-! ## Helper Lemmas for insertHyp_cases Branches
 
@@ -1078,15 +1050,13 @@ This avoids fighting with let-bound variables in the match expression.
 /-- Essential hypothesis success case -/
 theorem insertHyp_essential_success (db : DB) (pos : Pos) (label : String) (ess : Bool) (f : Formula)
     (h_no_err : db.error = false)
-    (h_no_float_cond : ¬(!ess && f.size >= 2))
+    (h_head : f.hasConstHead = true)
+    (h_ess : ess = true)
     (h_no_dup : (db.find? label).isSome = false) :
     let db' := db.insertHyp pos label ess f
     db'.find? label = some (.hyp ess f label) ∧ label ∈ db'.frame.hyps := by
   -- Use the structural lemma
-  rw [insertHyp_eq_when_no_float_check db pos label ess f h_no_float_cond]
-
-  -- Now: db' = (db.insert ...).withHyps (push label)
-  -- Use insert_success_new
+  rw [insertHyp_eq_when_no_float_check db pos label ess f h_no_err h_head h_ess]
   have h_no_scope : (match Object.hyp ess f label with
                      | Object.const _ => !db.permissive && db.scopes.size > 0
                      | _ => false) = false := by simp
@@ -1096,7 +1066,9 @@ theorem insertHyp_essential_success (db : DB) (pos : Pos) (label : String) (ess 
     rw [h] at h_no_err
     simp at h_no_err
 
-  have h_insert := insert_success_new db pos label (fun _ => Object.hyp ess f label) h_not_err h_no_dup h_no_scope
+  have h_insert := insert_success_new db pos label (Object.hyp ess f) h_not_err h_no_dup h_no_scope
+  have h_ins_err : (db.insert pos label (.hyp ess f)).error = false := h_insert.2
+  simp [h_ins_err]
 
   constructor
   · -- find? property
@@ -1110,28 +1082,24 @@ theorem insertHyp_essential_success (db : DB) (pos : Pos) (label : String) (ess 
 /-- Essential hypothesis duplicate case -/
 theorem insertHyp_essential_duplicate (db : DB) (pos : Pos) (label : String) (ess : Bool) (f : Formula)
     (h_no_err : db.error = false)
-    (h_no_float_cond : ¬(!ess && f.size >= 2))
+    (h_head : f.hasConstHead = true)
+    (h_ess : ess = true)
     (h_dup : (db.find? label).isSome = true) :
     (db.insertHyp pos label ess f).error = true := by
   -- Use the structural lemma
-  rw [insertHyp_eq_when_no_float_check db pos label ess f h_no_float_cond]
-
-  -- Now: db' = (db.insert ...).withHyps (push label)
-  -- withHyps preserves error, so just need to show insert sets error
+  rw [insertHyp_eq_when_no_float_check db pos label ess f h_no_err h_head h_ess]
   have h_not_err : ¬(db.error = true) := by
     intro h
     rw [h] at h_no_err
     simp at h_no_err
-
   have h_not_var_redef : ¬∃ v v', Object.hyp ess f label = Object.var v ∧ db.find? label = some (Object.var v') := by
     intro ⟨v, v', h_eq, _⟩
-    cases h_eq  -- Object.hyp ≠ Object.var
+    cases h_eq
+  have h_insert_err :=
+    insert_duplicate_error (obj := Object.hyp ess f) db pos label h_not_err h_dup h_not_var_redef
+  rw [h_insert_err]
+  simpa using h_insert_err
 
-  have h_insert_err := insert_duplicate_error db pos label (fun _ => Object.hyp ess f label) h_not_err h_dup h_not_var_redef
-
-  -- withHyps preserves the error
-  rw [DBLemmas.withHyps_preserves_error]
-  exact h_insert_err
 
 /-- Float with const, duplicate label case (note: float check still runs, just won't find const as dup float) -/
 theorem insertHyp_float_const_duplicate (db : DB) (pos : Pos) (label : String) (f : Formula) (c : String)
@@ -1164,16 +1132,8 @@ theorem insertHyp_float_var_dup_float (db : DB) (pos : Pos) (label : String) (f 
     (h_f1_var : f[1]! = .var v)
     (h_has_float : hasFloatBinding db v = true) :
     (db.insertHyp pos label false f).error = true := by
-  unfold DB.insertHyp
-  simp only [h_float_cond, Id.run, ite_true]
-  simp only [h_f1_var]
-  -- The forM loop in the goal is definitionally equal to floatCheckLoop
-  -- We can prove properties about floatCheckLoop and they'll apply
-  have h_loop_err : (floatCheckLoop db pos v).error = true :=
-    float_check_dup_sets_error db pos v h_no_err h_has_float
-  -- Now show goal uses floatCheckLoop
-  show (DB.withHyps (fun hyps => hyps.push label) ((floatCheckLoop db pos v).insert pos label (Object.hyp false f))).error = true
-  sorry -- Complete using h_loop_err and error preservation lemmas
+  -- TODO: Update proof for new insertHyp checks (no floatCheckLoop in impl)
+  sorry
 
 /-- Float with var, no dup float, but insert dup case -/
 theorem insertHyp_float_var_insert_dup (db : DB) (pos : Pos) (label : String) (f : Formula) (v : String)
@@ -1203,7 +1163,8 @@ theorem insertHyp_cases (db : DB) (pos : Pos) (label : String) (ess : Bool) (f :
     let outcome := classifyInsertHyp db pos label ess f
     let db' := db.insertHyp pos label ess f
     match outcome with
-    | .error_already => db'.error = true  -- insertHyp modifies frame even when error is set!
+    | .error_already => db'.error = true
+    | .error_bad_shape => db'.error = true
     | .error_duplicate_float => db'.error = true
     | .error_from_insert => db'.error = true
     | .success =>
@@ -1223,67 +1184,89 @@ theorem insertHyp_cases (db : DB) (pos : Pos) (label : String) (ess : Bool) (f :
       · simp [h] at h_err
     simp [h_no_err]
 
-    by_cases h_float_cond : !ess && f.size >= 2
-    · -- Float case (ess must be false)
-      have h_ess : ess = false := by
-        cases ess <;> simp at h_float_cond <;> try rfl
-      cases h_f1 : f[1]!
-      · -- f[1]! = .const c
-        rename_i c
-        have h_no_float : hasFloatBinding db c = false :=
-          hasFloatBinding_const_false db c
-        have h_float_cond' : !false && f.size >= 2 := by
-          simp [←h_ess] at h_float_cond ⊢
-          exact h_float_cond
-        by_cases h_dup : (db.find? label).isSome
-        · -- Case 2: float-const duplicate
-          have h_dup' : (db.find? label).isSome = true := by simp [h_dup]
-          simp [h_dup, h_ess]
-          exact insertHyp_float_const_duplicate db pos label f c h_no_err h_float_cond' h_f1 h_no_float h_dup'
-        · -- Case 3: float-const success
-          have h_no_dup : (db.find? label).isSome = false := by simp [h_dup]
-          simp [h_dup, h_ess]
-          exact insertHyp_float_const_success db pos label f c h_no_err h_float_cond' h_f1 h_no_float h_no_dup
-      · -- f[1]! = .var v
-        rename_i v
-        have h_float_cond' : !false && f.size >= 2 := by
-          simp [←h_ess] at h_float_cond ⊢
-          exact h_float_cond
-        by_cases h_has_float : hasFloatBinding db v
-        · -- Case 4: error_duplicate_float
-          have h_has_float' : hasFloatBinding db v = true := by simp [h_has_float]
-          have h_size : 2 ≤ f.size := by
-            have h := h_float_cond'
-            simp at h
-            exact h
-          simp [h_has_float, h_ess, h_size]
-          exact insertHyp_float_var_dup_float db pos label f v h_no_err h_float_cond' h_f1 h_has_float'
-        · -- No dup float
-          have h_no_has_float : hasFloatBinding db v = false := by simp [h_has_float]
+    by_cases h_head : f.hasConstHead
+    · -- Const head ok
+      simp [h_head]
+      cases h_ess : ess with
+      | true =>
+          -- Essential hypothesis
+          subst h_ess
           by_cases h_dup : (db.find? label).isSome
-          · -- Case 5: error_from_insert (float-var)
+          · -- error_from_insert
             have h_dup' : (db.find? label).isSome = true := by simp [h_dup]
-            simp [h_has_float, h_dup, h_ess]
-            exact insertHyp_float_var_insert_dup db pos label f v h_no_err h_float_cond' h_f1 h_no_has_float h_dup'
-          · -- Case 6: success (float-var)
+            simp [h_dup]
+            exact insertHyp_essential_duplicate db pos label true f h_no_err h_head rfl h_dup'
+          · -- success
             have h_no_dup : (db.find? label).isSome = false := by simp [h_dup]
-            simp [h_has_float, h_dup, h_ess]
-            exact insertHyp_float_var_success db pos label f v h_no_err h_float_cond' h_f1 h_no_has_float h_no_dup
-    · -- Essential / no float check
-      have h_not_float : ¬(ess = false ∧ 2 ≤ f.size) := by
-        intro ⟨h_ess_false, h_size⟩
-        have : !ess && f.size >= 2 := by
-          simp [h_ess_false, h_size]
-        exact h_float_cond this
-      by_cases h_dup : (db.find? label).isSome
-      · -- Case 7: error_from_insert (essential)
-        have h_dup' : (db.find? label).isSome = true := by simp [h_dup]
-        simp [h_dup, h_not_float]
-        exact insertHyp_essential_duplicate db pos label ess f h_no_err h_float_cond h_dup'
-      · -- Case 8: success (essential)
-        have h_no_dup : (db.find? label).isSome = false := by simp [h_dup]
-        simp [h_dup, h_not_float]
-        exact insertHyp_essential_success db pos label ess f h_no_err h_float_cond h_no_dup
+            simp [h_dup]
+            exact insertHyp_essential_success db pos label true f h_no_err h_head rfl h_no_dup
+      | false =>
+          -- Float hypothesis: require float shape
+          by_cases h_shape : f.isFloatShape
+          · -- Float shape ok
+            have h_float_cond : !false && f.size >= 2 := by
+              -- isFloatShape implies size = 2
+              unfold Verify.Formula.isFloatShape at h_shape
+              by_cases h_size : f.size = 2
+              · -- size = 2
+                have : f.size >= 2 := by simp [h_size]
+                simp [h_size]
+              · -- size ≠ 2 contradicts isFloatShape = true
+                have : False := by
+                  simp [h_size] at h_shape
+                exact False.elim this
+            cases h_f1 : f[1]!
+            · -- f[1]! = .const c (impossible under isFloatShape)
+              rename_i c
+              have : False := by
+                have h_shape' := h_shape
+                unfold Verify.Formula.isFloatShape at h_shape'
+                by_cases h_size : f.size = 2
+                · rw [h_size] at h_shape'
+                  rw [h_f1] at h_shape'
+                  cases h0 : f[0]! <;> simp [h0] at h_shape'
+                · simp [h_size] at h_shape'
+              exact False.elim this
+            · -- f[1]! = .var v
+              rename_i v
+              by_cases h_has_float : hasFloatBinding db v
+              · -- error_duplicate_float
+                have h_has_float' : hasFloatBinding db v = true := by simp [h_has_float]
+                have h_size : 2 ≤ f.size := by
+                  have h := h_float_cond
+                  simp at h
+                  exact h
+                simp [h_has_float, h_shape, h_size]
+                exact insertHyp_float_var_dup_float db pos label f v h_no_err h_float_cond h_f1 h_has_float'
+              · -- no dup float
+                have h_no_has_float : hasFloatBinding db v = false := by simp [h_has_float]
+                by_cases h_dup : (db.find? label).isSome
+                · -- error_from_insert (float-var)
+                  have h_dup' : (db.find? label).isSome = true := by simp [h_dup]
+                  simp [h_has_float, h_dup, h_shape]
+                  exact insertHyp_float_var_insert_dup db pos label f v h_no_err h_float_cond h_f1 h_no_has_float h_dup'
+                · -- success (float-var)
+                  have h_no_dup : (db.find? label).isSome = false := by simp [h_dup]
+                  simp [h_has_float, h_dup, h_shape]
+                  exact insertHyp_float_var_success db pos label f v h_no_err h_float_cond h_f1 h_no_has_float h_no_dup
+          · -- bad float shape
+            have h_shape' : f.isFloatShape = false := by
+              exact eq_false_of_ne_true h_shape
+            simp [h_shape']
+            have h_checks : (db.insertHypChecks pos ess f).error = true := by
+              unfold DB.insertHypChecks
+              simp [h_head, h_no_err, h_ess, h_shape', DBLemmas.mkError_sets_error]
+            have h_checks' : (db.insertHypChecks pos false f).error = true := by
+              simpa [h_ess] using h_checks
+            simp [DB.insertHyp, h_checks']
+    · -- Bad head
+      have h_head' : f.hasConstHead = false := by
+        exact eq_false_of_ne_true h_head
+      simp [h_head']
+      have h_checks : (db.insertHypChecks pos ess f).error = true := by
+        unfold DB.insertHypChecks
+        simp [h_head', DBLemmas.mkError_sets_error]
+      simp [DB.insertHyp, h_checks]
 
 /-! ## OLD VERSION BELOW - Remove after confirming new version works -/
 /-
