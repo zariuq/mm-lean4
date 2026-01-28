@@ -62,6 +62,8 @@ inductive ProofValid (Γ : Database) : Frame → List Expr → List ProofStep �
   | useAxiom : ∀ fr stack steps l fr' e σ,
       Γ l = some (fr', e) →
       dvOK fr.vars fr'.dv fr.dv σ →  -- Per §4.2.5: callee DV in caller context
+      -- Type preservation: substitution respects floating hypothesis typecodes
+      (∀ c v, Hyp.floating c v ∈ fr'.mand → (σ v).typecode = c) →
       ProofValid Γ fr stack steps →
       -- Pop fr'.mand hypotheses (in reverse order per §4.3)
       ∀ needed : List Expr,
@@ -109,6 +111,8 @@ inductive ProofValidFrom (Γ : Database) : Frame → List Expr → List Expr →
   | useAxiom : ∀ fr stk stack steps l fr' e σ,
       Γ l = some (fr', e) →
       dvOK fr.vars fr'.dv fr.dv σ →
+      -- Type preservation: substitution respects floating hypothesis typecodes
+      (∀ c v, Hyp.floating c v ∈ fr'.mand → (σ v).typecode = c) →
       ProofValidFrom Γ fr stk stack steps →
       ∀ needed : List Expr,
       needed = fr'.mand.map (fun h => match h with
@@ -129,8 +133,8 @@ theorem ProofValid.toFrom {Γ : Database} {fr : Frame} {stk : List Expr} {steps 
       exact ProofValidFrom.useEssential fr [] stack steps e h_in ih
   | useFloating stack steps c v h_in _ ih =>
       exact ProofValidFrom.useFloating fr [] stack steps c v h_in ih
-  | useAxiom stack steps l fr' e σ h_find h_dv _ needed h_needed remaining h_stack ih =>
-      exact ProofValidFrom.useAxiom fr [] stack steps l fr' e σ h_find h_dv ih needed h_needed remaining h_stack
+  | useAxiom stack steps l fr' e σ h_find h_dv h_typed _ needed h_needed remaining h_stack ih =>
+      exact ProofValidFrom.useAxiom fr [] stack steps l fr' e σ h_find h_dv h_typed ih needed h_needed remaining h_stack
 
 theorem ProofValidFrom.toProofValid
     {Γ : Database} {fr : Frame} {stk : List Expr} {steps : List ProofStep} :
@@ -143,8 +147,8 @@ theorem ProofValidFrom.toProofValid
       exact ProofValid.useEssential fr stack steps e h_in ih
   | useFloating stack steps c v h_in _ ih =>
       exact ProofValid.useFloating fr stack steps c v h_in ih
-  | useAxiom stack steps l fr' e σ h_find h_dv _ needed h_needed remaining h_stack ih =>
-      exact ProofValid.useAxiom fr stack steps l fr' e σ h_find h_dv ih needed h_needed remaining h_stack
+  | useAxiom stack steps l fr' e σ h_find h_dv h_typed _ needed h_needed remaining h_stack ih =>
+      exact ProofValid.useAxiom fr stack steps l fr' e σ h_find h_dv h_typed ih needed h_needed remaining h_stack
 
 theorem ProofValidFrom.append_suffix
     {Γ : Database} {fr : Frame} {stk₁ stk₂ : List Expr} {steps : List ProofStep}
@@ -157,12 +161,12 @@ theorem ProofValidFrom.append_suffix
       simpa using (ProofValidFrom.useEssential fr (stk₁ ++ suffix) (stack ++ suffix) steps e h_in ih)
   | useFloating stack steps c v h_in _ ih =>
       simpa using (ProofValidFrom.useFloating fr (stk₁ ++ suffix) (stack ++ suffix) steps c v h_in ih)
-  | useAxiom stack steps l fr' e σ h_find h_dv _ needed h_needed remaining h_stack ih =>
+  | useAxiom stack steps l fr' e σ h_find h_dv h_typed _ needed h_needed remaining h_stack ih =>
       -- Adjust the remaining suffix
       have h_stack' : stack ++ suffix = needed.reverse ++ (remaining ++ suffix) := by
         simpa [List.append_assoc] using congrArg (fun s => s ++ suffix) h_stack
       exact ProofValidFrom.useAxiom fr (stk₁ ++ suffix) (stack ++ suffix) steps l fr' e σ
-        h_find h_dv ih needed h_needed (remaining ++ suffix) h_stack'
+        h_find h_dv h_typed ih needed h_needed (remaining ++ suffix) h_stack'
 
 theorem ProofValidFrom.trans
     {Γ : Database} {fr : Frame} {stk₁ stk₂ stk₃ : List Expr}
@@ -178,10 +182,10 @@ theorem ProofValidFrom.trans
       simpa using (ProofValidFrom.useEssential fr stk₁ stack (steps ++ steps₁) e h_in ih)
   | useFloating stack steps c v h_in _ ih =>
       simpa using (ProofValidFrom.useFloating fr stk₁ stack (steps ++ steps₁) c v h_in ih)
-  | useAxiom stack steps l fr' e σ h_find h_dv _ needed h_needed remaining h_stack ih =>
+  | useAxiom stack steps l fr' e σ h_find h_dv h_typed _ needed h_needed remaining h_stack ih =>
       simpa [List.append_assoc] using
         (ProofValidFrom.useAxiom fr stk₁ stack (steps ++ steps₁) l fr' e σ
-          h_find h_dv ih needed h_needed remaining h_stack)
+          h_find h_dv h_typed ih needed h_needed remaining h_stack)
 
 /-! ## Proof Sequences (Compositional)
 
