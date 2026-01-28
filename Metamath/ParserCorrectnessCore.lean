@@ -11,6 +11,7 @@ Purpose: Simplified, compilable version focusing on key induction principles
 
 import Metamath.Verify
 import Metamath.WellFormedness
+import Metamath.ParserCorrectness
 
 namespace Metamath.ParserCorrectnessCore
 
@@ -166,57 +167,35 @@ Strong induction principles for proving DB operations preserve well-formedness.
 
 section WellFormednessInduction
 
-/-- DB operations that preserve structure when no error -/
-inductive StructurePreservingOp : (DB → DB) → Prop where
-  | insert (pos : Pos) (label : String) (obj : String → Object) :
-      StructurePreservingOp (fun db => DB.insert db pos label obj)
-  | pushScope : StructurePreservingOp DB.pushScope
-  | popScope (pos : Pos) : StructurePreservingOp (fun db => DB.popScope db pos)
-  | withFrame (f : Frame → Frame) : StructurePreservingOp (fun db => DB.withFrame db f)
+/-! Re-export structure-preserving ops from `ParserCorrectness` to avoid duplication. -/
+
+/-- DB operations that preserve structure (delegated to ParserCorrectness). -/
+abbrev StructurePreservingOp (db : DB) : (DB → DB) → Prop :=
+  _root_.Metamath.ParserCorrectness.StructurePreservingOp db
 
 /-- Structure-preserving operations maintain well-formedness when no error -/
 theorem structure_preserving_maintains_wf
   {op : DB → DB}
-  (h_struct : StructurePreservingOp op)
   (db : DB)
+  (h_struct : StructurePreservingOp db op)
   (h_wf : WellFormedDB db)
-  (h_no_err_before : db.error = false)
-  (h_no_err_after : (op db).error = false) :
+  (h_no_err_before : db.error? = none)
+  (h_no_err_after : (op db).error? = none) :
   WellFormedDB (op db) := by
-  cases h_struct with
-  | insert pos label obj =>
-    -- insert adds to objects while maintaining structure
-    sorry
-  | pushScope =>
-    -- pushScope adds empty scope, preserves WF
-    sorry
-  | popScope pos =>
-    -- popScope removes scope, preserves WF
-    sorry
-  | withFrame f =>
-    -- withFrame modifies frame, need to check WF preservation
-    sorry
+  exact _root_.Metamath.ParserCorrectness.structure_preserving_maintains_wf
+    db h_struct h_wf h_no_err_before h_no_err_after
 
 /-- Strong induction for DB construction from empty -/
 theorem db_construction_induction
   {P : DB → Prop}
-  (h_empty : P { frame := default, scopes := #[], objects := {},
-                interrupt := false, error? := none })
-  (h_preserve : ∀ db op,
-    StructurePreservingOp op →
-    db.error = false → P db →
-    (op db).error = false →
+  (h_step : ∀ db op,
+    StructurePreservingOp db op →
+    db.error? = none →
+    (op db).error? = none →
+    P db →
     P (op db)) :
-  ∀ db ops,
-    (∀ op ∈ ops, StructurePreservingOp op) →
-    let initial := { frame := default, scopes := #[], objects := {},
-                    interrupt := false, error? := none : DB }
-    db = ops.foldl (fun d op => op d) initial →
-    db.error = false →
-    P db := by
-  intro db ops h_all_struct h_fold h_no_err
-  -- Induction on ops
-  sorry
+  ∀ db₁ db₂, _root_.Metamath.ParserCorrectness.DBExecution db₁ db₂ → P db₁ → P db₂ := by
+  exact _root_.Metamath.ParserCorrectness.db_construction_induction h_step
 
 end WellFormednessInduction
 
@@ -247,54 +226,42 @@ theorem empty_db_wellformed :
 
 /-- If parsing succeeds, DB is well-formed -/
 theorem parsing_success_implies_wellformed
-  (initial_state : ParserState)
   (bytes : ByteArray) :
-  -- Start from clean state
-  initial_state.db.error = false →
-  WellFormedDB initial_state.db →
-  -- Parse succeeds
-  let final_state := initial_state.feedAll 0 bytes
-  final_state.db.error = false →
-  -- Then final DB is well-formed
-  WellFormedDB final_state.db := by
-  intro h_init_err h_init_wf h_final_err
-  -- The key insight: if parsing succeeded (no error at end),
-  -- then every intermediate operation succeeded (no errors created),
-  -- which means all preconditions were met,
-  -- which means well-formedness was preserved throughout.
-  sorry
+  (Verify.checkBytes bytes).error? = none →
+  WellFormedDB (Verify.checkBytes bytes) := by
+  intro h_ok
+  exact _root_.Metamath.ParserCorrectness.parser_construction_wellformed bytes h_ok
 
 /-- The main soundness theorem -/
 theorem parser_soundness
   (bytes : ByteArray) :
-  -- Start from empty
-  let initial_db := { frame := default, scopes := #[], objects := {},
-                     interrupt := false, error? := none : DB }
-  let initial_state := { db := initial_db, tokp := .start, charp := .ws,
-                        line := 0, linepos := 0 : ParserState }
-  let final_state := initial_state.feedAll 0 bytes
-  -- If parsing succeeds
-  final_state.db.error = false →
-  -- Then result is well-formed
-  WellFormedDB final_state.db ∧
-  -- And all objects satisfy their constraints
-  (∀ label obj, final_state.db.find? label = some obj →
+  (Verify.checkBytes bytes).error? = none →
+  WellFormedDB (Verify.checkBytes bytes) ∧
+  (∀ label obj, (Verify.checkBytes bytes).find? label = some obj →
     match obj with
     | .hyp false f _ => f.size = 2 ∧ (∃ c v, f[0]! = .const c ∧ f[1]! = .var v)
     | .hyp true f _ => WellFormedFormula f
     | .assert f _ _ => WellFormedFormula f
     | _ => true) := by
   intro h_success
+  have h_wf : WellFormedDB (Verify.checkBytes bytes) :=
+    _root_.Metamath.ParserCorrectness.parser_construction_wellformed bytes h_success
+  have h_objs := _root_.Metamath.ParserCorrectness.parser_soundness_main bytes h_success
   constructor
-  · -- Well-formedness
-    apply parsing_success_implies_wellformed
-    · simp [DB.error]
-    · exact empty_db_wellformed
-    · exact h_success
-  · -- Object constraints
-    intro label obj h_find
-    -- Extract from WellFormedDB
-    sorry
+  · exact h_wf
+  · intro label obj h_find
+    have h_obj := h_objs label obj h_find
+    cases obj with
+    | const _ => trivial
+    | var _ => trivial
+    | hyp ess f lbl =>
+        cases ess with
+        | true => exact h_obj.1
+        | false =>
+            have h_float := h_obj.2 (by simp)
+            exact h_float
+    | assert f fr name =>
+        exact h_obj.1
 
 end MainSoundness
 

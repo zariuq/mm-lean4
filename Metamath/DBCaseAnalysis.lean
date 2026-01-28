@@ -105,6 +105,109 @@ theorem insert_error_propagates (db : DB) (pos : Pos) (label : String) (obj : St
     simp only [if_pos h]
     exact h
 
+/-- insert doesn't change the frame field. -/
+theorem insert_frame_unchanged (db : DB) (pos : Pos) (label : String) (obj : String → Object) :
+    (db.insert pos label obj).frame = db.frame := by
+  unfold DB.insert
+  cases h_obj : obj label with
+  | const =>
+      by_cases h_scope : !db.permissive && db.scopes.size > 0
+      · simp [h_scope, DB.mkError, DB.error]
+      · simp [h_scope]
+        by_cases h_err : db.error
+        · simp [h_err]
+        · simp [h_err]
+          cases h_find : db.find? label with
+          | none =>
+              simp
+          | some val =>
+              cases val <;> simp [DB.mkError]
+  | var =>
+      by_cases h_err : db.error
+      · simp [h_err]
+      · simp [h_err]
+        cases h_find : db.find? label with
+        | none =>
+            simp
+        | some val =>
+            cases val <;> simp [DB.mkError]
+  | hyp =>
+      by_cases h_err : db.error
+      · simp [h_err]
+      · simp [h_err]
+        cases h_find : db.find? label with
+        | none =>
+            simp
+        | some val =>
+            cases val <;> simp [DB.mkError]
+  | assert =>
+      by_cases h_err : db.error
+      · simp [h_err]
+      · simp [h_err]
+        cases h_find : db.find? label with
+        | none =>
+            simp
+        | some val =>
+            cases val <;> simp [DB.mkError]
+
+/-- insert doesn't change find? results for other labels. -/
+theorem insert_preserves_find?_ne (db : DB) (pos : Pos) (label other : String) (obj : String → Object)
+    (h_ne : other ≠ label) :
+    (db.insert pos label obj).find? other = db.find? other := by
+  unfold DB.insert
+  cases h_obj : obj label with
+  | const a =>
+      by_cases h_scope : !db.permissive && db.scopes.size > 0
+      · simp [h_scope, DB.mkError, DB.error, DB.find?]
+      · simp [h_scope]
+        by_cases h_err : db.error
+        · simp [h_err, DB.find?]
+        · simp [h_err]
+          cases h_find : db.find? label with
+          | none =>
+              have h_other :
+                  (db.objects.insert label (Object.const a))[other]? = db.objects[other]? :=
+                HashMapLemmas.HashMap.find?_insert_other db.objects label other (Object.const a) h_ne.symm
+              simpa [h_find, DB.find?] using h_other
+          | some val =>
+              cases val <;> simp [DB.mkError, DB.find?]
+  | var a =>
+      by_cases h_err : db.error
+      · simp [h_err, DB.find?]
+      · simp [h_err]
+        cases h_find : db.find? label with
+        | none =>
+            have h_other :
+                (db.objects.insert label (Object.var a))[other]? = db.objects[other]? :=
+              HashMapLemmas.HashMap.find?_insert_other db.objects label other (Object.var a) h_ne.symm
+            simpa [h_find, DB.find?] using h_other
+        | some val =>
+            cases val <;> simp [DB.mkError, DB.find?]
+  | hyp ess f' lbl =>
+      by_cases h_err : db.error
+      · simp [h_err, DB.find?]
+      · simp [h_err]
+        cases h_find : db.find? label with
+        | none =>
+            have h_other :
+                (db.objects.insert label (Object.hyp ess f' lbl))[other]? = db.objects[other]? :=
+              HashMapLemmas.HashMap.find?_insert_other db.objects label other (Object.hyp ess f' lbl) h_ne.symm
+            simpa [h_find, DB.find?] using h_other
+        | some val =>
+            cases val <;> simp [DB.mkError, DB.find?]
+  | assert f' fr lbl =>
+      by_cases h_err : db.error
+      · simp [h_err, DB.find?]
+      · simp [h_err]
+        cases h_find : db.find? label with
+        | none =>
+            have h_other :
+                (db.objects.insert label (Object.assert f' fr lbl))[other]? = db.objects[other]? :=
+              HashMapLemmas.HashMap.find?_insert_other db.objects label other (Object.assert f' fr lbl) h_ne.symm
+            simpa [h_find, DB.find?] using h_other
+        | some val =>
+            cases val <;> simp [DB.mkError, DB.find?]
+
 end DBLemmas
 
 /-! ## DB.insert Case Analysis
@@ -600,15 +703,79 @@ inductive InsertHypOutcome : Type where
   | error_from_insert : InsertHypOutcome  -- insert failed
   | success : InsertHypOutcome
 
+/-- True iff the formula has a variable `v` in position 1. -/
+def floatVarMatches (f : Formula) (v : String) : Bool :=
+  f.size >= 2 &&
+  (match f[1]! with
+   | .var v' => v'
+   | _ => "") == v
+
+private theorem hasConstHead_of_isFloatShape (f : Formula) (h_shape : f.isFloatShape = true) :
+    f.hasConstHead = true := by
+  unfold Verify.Formula.isFloatShape at h_shape
+  by_cases h_size : f.size = 2
+  · have h_pos0 : 0 < f.size := by
+      simp [h_size]
+    have h_pos1 : 1 < f.size := by
+      simp [h_size]
+    cases h0 : f[0]! with
+    | const c0 =>
+        cases h1 : f[1]! with
+        | const c1 =>
+            -- const/const: contradicts float-shape
+            have h0' : f[0]'h_pos0 = Sym.const c0 := by
+              have h_eq : f[0]! = f[0]'h_pos0 := by
+                simpa using (Array.getBang_eq_get_nat (a := f) (i := 0) (h := h_pos0))
+              simpa [h_eq] using h0
+            have h1' : f[1]'h_pos1 = Sym.const c1 := by
+              have h_eq : f[1]! = f[1]'h_pos1 := by
+                simpa using (Array.getBang_eq_get_nat (a := f) (i := 1) (h := h_pos1))
+              simpa [h_eq] using h1
+            have : False := by
+              simp [h_size, h0', h1'] at h_shape
+            exact this.elim
+        | var v1 =>
+            -- const/var: hasConstHead holds
+            have h0' : f[0]'h_pos0 = Sym.const c0 := by
+              have h_eq : f[0]! = f[0]'h_pos0 := by
+                simpa using (Array.getBang_eq_get_nat (a := f) (i := 0) (h := h_pos0))
+              simpa [h_eq] using h0
+            simp [Verify.Formula.hasConstHead, h_pos0, h0']
+    | var v0 =>
+        cases h1 : f[1]! with
+        | const c1 =>
+            -- var/const: contradicts float-shape
+            have h0' : f[0]'h_pos0 = Sym.var v0 := by
+              have h_eq : f[0]! = f[0]'h_pos0 := by
+                simpa using (Array.getBang_eq_get_nat (a := f) (i := 0) (h := h_pos0))
+              simpa [h_eq] using h0
+            have h1' : f[1]'h_pos1 = Sym.const c1 := by
+              have h_eq : f[1]! = f[1]'h_pos1 := by
+                simpa using (Array.getBang_eq_get_nat (a := f) (i := 1) (h := h_pos1))
+              simpa [h_eq] using h1
+            have : False := by
+              simp [h_size, h0', h1'] at h_shape
+            exact this.elim
+        | var v1 =>
+            -- var/var: contradicts float-shape
+            have h0' : f[0]'h_pos0 = Sym.var v0 := by
+              have h_eq : f[0]! = f[0]'h_pos0 := by
+                simpa using (Array.getBang_eq_get_nat (a := f) (i := 0) (h := h_pos0))
+              simpa [h_eq] using h0
+            have h1' : f[1]'h_pos1 = Sym.var v1 := by
+              have h_eq : f[1]! = f[1]'h_pos1 := by
+                simpa using (Array.getBang_eq_get_nat (a := f) (i := 1) (h := h_pos1))
+              simpa [h_eq] using h1
+            have : False := by
+              simp [h_size, h0', h1'] at h_shape
+            exact this.elim
+  · simp [h_size] at h_shape
+
 /-- Check if a float variable is already bound -/
 def hasFloatBinding (db : DB) (v : String) : Bool :=
-  db.frame.hyps.any fun h =>
+  db.frame.hyps.toList.any fun h =>
     match db.find? h with
-    | some (.hyp false f _) =>
-      f.size >= 2 &&
-      match f[1]! with
-      | .var v' => v' == v
-      | _ => false
+    | some (Object.hyp false f _) => floatVarMatches f v
     | _ => false
 
 /-- Classify insertHyp outcome -/
@@ -652,32 +819,31 @@ private def floatCheckLoopAux (db : DB) (pos : Pos) (v : String) (hyps : List St
   | h :: rest =>
     match db.find? h with
     | some (.hyp false prevF _) =>
-      if prevF.size >= 2 && prevF[1]!.value == v then
+      if floatVarMatches prevF v then
         floatCheckLoopAux (db.mkError pos s!"variable {v} already has $f hypothesis") pos v rest
       else
         floatCheckLoopAux db pos v rest
     | _ => floatCheckLoopAux db pos v rest
 
+/-- Helper: The loop body as a pure function for forIn -/
+private def floatLoopBody (pos : Pos) (v : String) : String → DB → Id (ForInStep DB) :=
+  fun h db' =>
+    match db'.find? h with
+    | some (.hyp false prevF _) =>
+        if floatVarMatches prevF v then
+          .yield (db'.mkError pos s!"variable {v} already has $f hypothesis")
+        else
+          .yield db'
+    | _ => .yield db'
+
 /-- The float check loop in insertHyp - extracted for reasoning -/
 def floatCheckLoop (db : DB) (pos : Pos) (v : String) : DB :=
-  Id.run do
-    let mut db' := db
-    for h in db.frame.hyps do
-      if let some (.hyp false prevF _) := db'.find? h then
-        if prevF.size >= 2 && prevF[1]!.value == v then
-          db' := db'.mkError pos s!"variable {v} already has $f hypothesis"
-    db'
+  Id.run (forIn db.frame.hyps db (floatLoopBody pos v))
 
-/-- The forM loop in insertHyp (after unfolding) equals floatCheckLoop -/
+/-- The forIn loop used by floatCheckLoop (legacy helper). -/
 theorem insertHyp_float_loop_eq_floatCheckLoop (db : DB) (pos : Pos) (v : String) :
-    (Id.run do
-      let mut db' := db
-      for h in db.frame.hyps do
-        if let some (.hyp false prevF _) := db'.find? h then
-          if prevF.size >= 2 && prevF[1]!.value == v then
-            db' := db'.mkError pos s!"variable {v} already has $f hypothesis"
-      db') = floatCheckLoop db pos v := by
-  rfl  -- They are definitionally equal!
+    (Id.run (forIn db.frame.hyps db (floatLoopBody pos v))) = floatCheckLoop db pos v := by
+  rfl
 
 /-! ### Float check loop equivalence
 
@@ -706,7 +872,7 @@ This is formalized by `DB.mkError_objects` and proven in DBLemmas.
 def floatStep (pos : Pos) (v : String) (db : DB) (h : String) : DB :=
   match db.find? h with
   | some (.hyp false prevF _) =>
-      if prevF.size >= 2 && prevF[1]!.value == v then
+      if floatVarMatches prevF v then
         db.mkError pos s!"variable {v} already has $f hypothesis"
       else
         db
@@ -733,7 +899,7 @@ theorem floatCheckLoopAux_eq_foldl (db : DB) (pos : Pos) (v : String) (hyps : Li
           | hyp ess prevF lbl =>
               cases ess
               · -- ess = false (non-essential hypothesis)
-                by_cases hcond : prevF.size >= 2 && prevF[1]!.value == v
+                by_cases hcond : floatVarMatches prevF v
                 · -- Duplicate float found: apply mkError
                   simp only [hcond, ite_true]
                   exact ih (db.mkError pos s!"variable {v} already has $f hypothesis")
@@ -744,24 +910,12 @@ theorem floatCheckLoopAux_eq_foldl (db : DB) (pos : Pos) (v : String) (hyps : Li
                 exact ih db
           | _ => exact ih db
 
-/-- Helper: The loop body as a pure function for forIn -/
-private def floatLoopBody (pos : Pos) (v : String) : String → DB → Id (ForInStep DB) :=
-  fun h db' =>
-    match db'.find? h with
-    | some (.hyp false prevF _) =>
-        if prevF.size >= 2 && prevF[1]!.value == v then
-          .yield (db'.mkError pos s!"variable {v} already has $f hypothesis")
-        else
-          .yield db'
-    | _ => .yield db'
-
-
 open ForInStep in
 /-- Body equality: the `do`-block in the for-loop matches `yield (floatStep ...)`. -/
 private theorem loop_body_equiv (pos : Pos) (v : String) (h : String) (r : DB) :
     (match r.find? h with
      | some (.hyp false prevF _) =>
-       if prevF.size >= 2 && prevF[1]!.value == v then
+       if floatVarMatches prevF v then
          (do
            -- the assignment `db' := ...` becomes `yield newAcc` in `forIn`
            pure PUnit.unit
@@ -777,7 +931,7 @@ private theorem loop_body_equiv (pos : Pos) (v : String) (h : String) (r : DB) :
          pure (ForInStep.yield r) : Id (ForInStep DB))) =
     (match r.find? h with
      | some (.hyp false prevF _) =>
-       if prevF.size >= 2 && prevF[1]!.value == v then
+       if floatVarMatches prevF v then
          ForInStep.yield (r.mkError pos s!"variable {v} already has $f hypothesis")
        else
          ForInStep.yield r
@@ -790,7 +944,7 @@ private theorem loop_body_equiv (pos : Pos) (v : String) (h : String) (r : DB) :
       | hyp ess prevF lbl =>
           cases ess
           · -- non-essential hyp
-            by_cases hc : prevF.size >= 2 && prevF[1]!.value == v
+            by_cases hc : floatVarMatches prevF v
             · simp [hc]; rfl
             · simp [hc]; rfl
           · -- essential hyp: body is just `yield r`
@@ -811,7 +965,7 @@ private theorem floatLoopBody_eq_floatStep (pos : Pos) (v : String) (h : String)
       cases obj with
       | hyp ess prevF lbl =>
           cases ess
-          · by_cases hc : prevF.size >= 2 && prevF[1]!.value == v
+          · by_cases hc : floatVarMatches prevF v
             · simp [hc]; rfl  -- In Id, .yield x = pure (.yield x)
             · simp [hc]; rfl
           · rfl
@@ -819,19 +973,26 @@ private theorem floatLoopBody_eq_floatStep (pos : Pos) (v : String) (h : String)
 
 theorem floatCheckLoop_eq_aux (db : DB) (pos : Pos) (v : String) :
     floatCheckLoop db pos v = floatCheckLoopAux db pos v db.frame.hyps.toList := by
-  -- **STATUS**: This proof is 95% complete with infrastructure in place:
-  -- 1. ✓ floatCheckLoopAux_eq_foldl: tail-recursive version equals foldl (PROVEN)
-  -- 2. ✓ Array.idRun_forIn_yield_eq_foldl: array forIn equals foldl (PROVEN - Buzzard's infrastructure)
-  -- 3. ✓ loop_body_equiv: complex do-block equals simple yield pattern (PROVEN)
-  -- 4. ✓ floatLoopBody_eq_floatStep: loop body equals floatStep (PROVEN above)
-  --
-  -- **REMAINING GAP**: Need to connect the specific desugared for-loop structure
-  -- `do let r ← forIn arr init body; r` to the pattern Array.idRun_forIn_yield_eq_foldl expects.
-  -- This is a technical detail about Lean 4's monadic do-notation desugaring.
-  --
-  -- The challenge: For-loops with mutable state desugar to `forIn` wrapped in
-  -- `do let r ← ...; r` which needs one more simplification step to match the lemma pattern.
-  sorry
+  unfold floatCheckLoop
+  have h_body : floatLoopBody pos v =
+      (fun h db' => pure (ForInStep.yield (floatStep pos v db' h))) := by
+    funext h db'
+    exact floatLoopBody_eq_floatStep pos v h db'
+  rw [h_body]
+  rw [←Array.forIn_toList]
+  have h_fold :
+      Id.run (forIn db.frame.hyps.toList db (fun h db' =>
+        pure (ForInStep.yield (floatStep pos v db' h)))) =
+        db.frame.hyps.toList.foldl (floatStep pos v) db := by
+    simp
+  calc
+    Id.run (forIn db.frame.hyps.toList db (fun h db' =>
+      pure (ForInStep.yield (floatStep pos v db' h)))) =
+        db.frame.hyps.toList.foldl (floatStep pos v) db := by
+          exact h_fold
+    _ = floatCheckLoopAux db pos v db.frame.hyps.toList := by
+          symm
+          exact floatCheckLoopAux_eq_foldl db pos v db.frame.hyps.toList
 
 /-- **Imperative loop equals foldl**: Proved via floatCheckLoopAux.
 
@@ -936,71 +1097,159 @@ theorem float_check_no_dup_preserves_error (db : DB) (pos : Pos) (v : String)
     (h_no_dup : hasFloatBinding db v = false) :
     (floatCheckLoop db pos v).error = db.error := by
   rw [floatCheckLoop_eq_aux]
-  -- Now prove for floatCheckLoopAux
-  suffices ∀ hyps, (∀ h ∈ hyps, ¬(match db.find? h with
-      | some (.hyp false f _) =>
-        f.size >= 2 && (match f[1]! with | .var v' => v' == v | _ => false)
-      | _ => false)) →
-    (floatCheckLoopAux db pos v hyps).error = db.error by
-    apply this
+  let pred := fun h =>
+    match db.find? h with
+    | some (Object.hyp false f _) => floatVarMatches f v
+    | _ => false
+  have h_any : db.frame.hyps.toList.any pred = false := by
+    simpa [hasFloatBinding, pred] using h_no_dup
+  have h_all : ∀ h ∈ db.frame.hyps.toList, pred h = false := by
     intro h h_mem
-    -- hasFloatBinding = false means no hyp satisfies the predicate
-    -- For now, accept this connection as obvious (can prove later if needed)
-    sorry
-  -- Induction on hyps
-  intro hyps
-  induction hyps with
-  | nil =>
-    intro _
-    simp [floatCheckLoopAux]
-  | cons h rest ih =>
-    intro h_all_false
-    have h_this_false := h_all_false h (by simp)
-    have h_rest_false : ∀ h' ∈ rest, _ := fun h' h'_mem => h_all_false h' (by simp [h'_mem])
-    -- Unfold one step
-    simp only [floatCheckLoopAux]
-    -- Case analysis on db.find? h
-    split
-    <;> try exact ih h_rest_false
-    -- The interesting case: some (.hyp false prevF _)
-    rename_i prevF label h_find
-    -- Now split on the if condition
-    split
-    · -- Condition true: prevF.size >= 2 && prevF[1]!.value == v
-      rename_i h_cond
-      -- This contradicts h_this_false
-      exfalso
-      apply h_this_false
-      -- h_this_false expects: match db.find? h with | some (.hyp false f _) => ... | _ => false
-      rw [h_find]
-      -- h_cond is the hypothesis from split: (decide (prevF.size >= 2) && prevF[1]!.value == v) = true
-      -- We need to show the match expression evaluates to true
-      simp only [decide_eq_true_eq, Bool.and_eq_true] at h_cond
-      obtain ⟨h_size, h_val_eq⟩ := h_cond
-      -- Now show the goal using these facts
-      sorry -- The connection between prevF[1]!.value and the match expression
-    · -- Condition false: continue recursion
-      exact ih h_rest_false
+    have h_not_true : ¬ pred h = true := (List.any_eq_false).1 h_any h h_mem
+    cases h_pred : pred h with
+    | true =>
+        have : pred h = true := by simp [h_pred]
+        exact (h_not_true this).elim
+    | false => rfl
+  have h_aux :
+      ∀ hyps, (∀ h ∈ hyps, pred h = false) →
+        floatCheckLoopAux db pos v hyps = db := by
+    intro hyps h_all_false
+    induction hyps with
+    | nil => rfl
+    | cons h rest ih =>
+        have h_this : pred h = false := h_all_false h (by simp)
+        have h_rest : ∀ h' ∈ rest, pred h' = false := by
+          intro h' h'_mem
+          exact h_all_false h' (by simp [h'_mem])
+        cases h_find : db.find? h with
+        | none =>
+            simp [floatCheckLoopAux, h_find, ih h_rest]
+        | some obj =>
+            cases obj with
+            | hyp ess prevF lbl =>
+                cases ess
+                · have h_match : floatVarMatches prevF v = false := by
+                    simpa [pred, h_find] using h_this
+                  simp [floatCheckLoopAux, h_find, h_match, ih h_rest]
+                · simp [floatCheckLoopAux, h_find, ih h_rest]
+            | _ =>
+                simp [floatCheckLoopAux, h_find, ih h_rest]
+  have h_eq : floatCheckLoopAux db pos v db.frame.hyps.toList = db :=
+    h_aux _ h_all
+  simp [h_eq]
 
 /-- When hasFloatBinding is true and db.error = false initially, float check sets error -/
 theorem float_check_dup_sets_error (db : DB) (pos : Pos) (v : String)
     (h_no_err : db.error = false)
     (h_dup : hasFloatBinding db v = true) :
     (floatCheckLoop db pos v).error = true := by
-  unfold floatCheckLoop
-  -- TODO: Need induction on forM loop showing that when Array.any returns true,
-  -- the loop encounters a matching hypothesis and calls mkError
-  -- Key: hasFloatBinding = true means ∃ hyp ∈ db.frame.hyps where match returns true
-  sorry
+  have _ := h_no_err
+  rw [floatCheckLoop_eq_aux]
+  let pred := fun h =>
+    match db.find? h with
+    | some (Object.hyp false f _) => floatVarMatches f v
+    | _ => false
+  have h_any : db.frame.hyps.toList.any pred = true := by
+    simpa [hasFloatBinding, pred] using h_dup
+  have h_aux :
+      ∀ hyps, hyps.any pred = true →
+        (floatCheckLoopAux db pos v hyps).error = true := by
+    intro hyps h_any
+    induction hyps with
+    | nil =>
+        simp at h_any
+    | cons h rest ih =>
+        cases h_pred : pred h with
+        | true =>
+            cases h_find : db.find? h with
+            | none =>
+                simp [pred, h_find] at h_pred
+            | some obj =>
+                cases obj with
+                | hyp ess prevF lbl =>
+                    cases ess
+                    · have h_match : floatVarMatches prevF v = true := by
+                        simpa [pred, h_find] using h_pred
+                      have h_err_set :
+                          (db.mkError pos s!"variable {v} already has $f hypothesis").error = true := by
+                        simpa using
+                          (DBLemmas.mkError_sets_error db pos
+                            s!"variable {v} already has $f hypothesis")
+                      have h_pres :=
+                        floatCheckLoopAux_preserves_error_when_set
+                          (db := db.mkError pos s!"variable {v} already has $f hypothesis")
+                          (pos := pos) (v := v) (hyps := rest) h_err_set
+                      simpa [floatCheckLoopAux, h_find, h_match] using h_pres
+                    · simp [pred, h_find] at h_pred
+                | _ =>
+                    simp [pred, h_find] at h_pred
+        | false =>
+            have h_any_rest : rest.any pred = true := by
+              obtain ⟨a, ha_mem, ha_pred⟩ := (List.any_eq_true).1 h_any
+              have ha_mem' : a = h ∨ a ∈ rest := by
+                simpa using ha_mem
+              cases ha_mem' with
+              | inl h_eq =>
+                  have : pred h = true := by
+                    simpa [h_eq] using ha_pred
+                  simp [h_pred] at this
+              | inr h_mem_rest =>
+                  exact (List.any_eq_true).2 ⟨a, h_mem_rest, ha_pred⟩
+            cases h_find : db.find? h with
+            | none =>
+                simp [floatCheckLoopAux, h_find, ih h_any_rest]
+            | some obj =>
+                cases obj with
+                | hyp ess prevF lbl =>
+                    cases ess
+                    · have h_match : floatVarMatches prevF v = false := by
+                        simpa [pred, h_find] using h_pred
+                      simp [floatCheckLoopAux, h_find, h_match, ih h_any_rest]
+                    · simp [floatCheckLoopAux, h_find, ih h_any_rest]
+                | _ =>
+                    simp [floatCheckLoopAux, h_find, ih h_any_rest]
+  exact h_aux _ h_any
 
 /-- Float check preserves find? results (loop only calls mkError, doesn't modify objects) -/
 theorem float_check_preserves_find (db : DB) (pos : Pos) (v : String) (label : String) :
     (floatCheckLoop db pos v).find? label = db.find? label := by
-  unfold floatCheckLoop
-  -- TODO: Need induction on forM loop showing that loop body only calls mkError,
-  -- which preserves all objects in the database (mkError only sets error flag)
-  -- Pattern: mkError_preserves_find lemma + forM induction
-  sorry
+  rw [floatCheckLoop_eq_aux]
+  have h_aux :
+      ∀ (db' : DB) (hyps : List String),
+        (floatCheckLoopAux db' pos v hyps).find? label = db'.find? label := by
+    intro db' hyps
+    induction hyps generalizing db' with
+    | nil => rfl
+    | cons h rest ih =>
+        cases h_find : db'.find? h with
+        | none =>
+            simpa [floatCheckLoopAux, h_find] using ih (db' := db')
+        | some obj =>
+            cases obj with
+            | hyp ess prevF lbl =>
+                cases ess
+                · by_cases hcond : floatVarMatches prevF v
+                  · have ih' :=
+                      ih (db' := db'.mkError pos s!"variable {v} already has $f hypothesis")
+                    have h_goal :
+                        (floatCheckLoopAux (db'.mkError pos s!"variable {v} already has $f hypothesis")
+                          pos v rest).find? label = db'.find? label := by
+                      calc
+                        (floatCheckLoopAux (db'.mkError pos s!"variable {v} already has $f hypothesis")
+                          pos v rest).find? label =
+                            (db'.mkError pos s!"variable {v} already has $f hypothesis").find? label := by
+                              simpa using ih'
+                        _ = db'.find? label := by
+                              simpa using
+                                (DBLemmas.mkError_preserves_find? db' pos
+                                  s!"variable {v} already has $f hypothesis" label)
+                    simpa [floatCheckLoopAux, h_find, hcond] using h_goal
+                  · simpa [floatCheckLoopAux, h_find, hcond] using ih (db' := db')
+                · simpa [floatCheckLoopAux, h_find] using ih (db' := db')
+            | _ =>
+                simpa [floatCheckLoopAux, h_find] using ih (db' := db')
+  simpa using h_aux db db.frame.hyps.toList
 
 /-- When error is already set, insertHyp preserves it (error propagation) -/
 theorem insertHyp_preserves_error_when_set (db : DB) (pos : Pos) (label : String) (ess : Bool) (f : Formula)
@@ -1014,13 +1263,19 @@ theorem insertHyp_preserves_error_when_set (db : DB) (pos : Pos) (label : String
     · simp [h_head, DBLemmas.mkError_sets_error]
   simp [h_checks]
 
-/-- hasFloatBinding only matches variables, never constants -/
-theorem hasFloatBinding_const_false (db : DB) (c : String) :
-    hasFloatBinding db c = false := by
+/-- hasFloatBinding is false when no hypothesis matches the float-var predicate. -/
+theorem hasFloatBinding_false_of_all (db : DB) (v : String)
+    (h_all : ∀ h ∈ db.frame.hyps.toList,
+      (match db.find? h with
+       | some (Object.hyp false f _) => floatVarMatches f v
+       | _ => false) = false) :
+    hasFloatBinding db v = false := by
   unfold hasFloatBinding
-  -- The array.any will return false because for each hyp, the match always returns false
-  -- when checking if a const matches (consts go to the _ => false branch)
-  sorry -- TODO: Need Array.any lemmas to complete
+  apply List.any_eq_false.2
+  intro h h_mem
+  have h_false := h_all h h_mem
+  intro h_true
+  simp [h_true] at h_false
 
 /-! ## Structural Lemmas for insertHyp
 
@@ -1101,62 +1356,136 @@ theorem insertHyp_essential_duplicate (db : DB) (pos : Pos) (label : String) (es
   simpa using h_insert_err
 
 
-/-- Float with const, duplicate label case (note: float check still runs, just won't find const as dup float) -/
-theorem insertHyp_float_const_duplicate (db : DB) (pos : Pos) (label : String) (f : Formula) (c : String)
+/-- Float with const at position 1 always fails the float-shape check. -/
+theorem insertHyp_float_const_bad_shape (db : DB) (pos : Pos) (label : String) (f : Formula) (c : String)
     (h_no_err : db.error = false)
-    (h_float_cond : !false && f.size >= 2)
-    (h_f1_const : f[1]! = .const c)
-    (h_no_float : hasFloatBinding db c = false)  -- Const c won't match any var in hasFloatBinding
-    (h_dup : (db.find? label).isSome = true) :
+    (h_f1_const : f[1]! = .const c) :
     (db.insertHyp pos label false f).error = true := by
-  -- Float check runs but finds nothing (consts don't match vars in existing floats)
-  -- TODO: Prove using forM_eq_floatCheckLoop and float check lemmas
-  sorry
-
-/-- Float with const, success case -/
-theorem insertHyp_float_const_success (db : DB) (pos : Pos) (label : String) (f : Formula) (c : String)
-    (h_no_err : db.error = false)
-    (h_float_cond : !false && f.size >= 2)
-    (h_f1_const : f[1]! = .const c)
-    (h_no_float : hasFloatBinding db c = false)
-    (h_no_dup : (db.find? label).isSome = false) :
-    let db' := db.insertHyp pos label false f
-    db'.find? label = some (.hyp false f label) ∧ label ∈ db'.frame.hyps := by
-  -- TODO: Prove using forM_eq_floatCheckLoop and float check lemmas
-  sorry
+  have h_shape : f.isFloatShape = false := by
+    by_cases h_size : f.size = 2
+    · have h_pos0 : 0 < f.size := by
+        simp [h_size]
+      have h_pos1 : 1 < f.size := by
+        simp [h_size]
+      have h1' : f[1]'h_pos1 = Sym.const c := by
+        have h_eq : f[1]! = f[1]'h_pos1 := by
+          simpa using (Array.getBang_eq_get_nat (a := f) (i := 1) (h := h_pos1))
+        simpa [h_eq] using h_f1_const
+      cases h0 : f[0]!
+      · -- const
+        rename_i c0
+        have h0' : f[0]'h_pos0 = Sym.const c0 := by
+          have h_eq : f[0]! = f[0]'h_pos0 := by
+            simpa using (Array.getBang_eq_get_nat (a := f) (i := 0) (h := h_pos0))
+          simpa [h_eq] using h0
+        simp [Verify.Formula.isFloatShape, h_size, h0', h1']
+      · -- var
+        rename_i v0
+        have h0' : f[0]'h_pos0 = Sym.var v0 := by
+          have h_eq : f[0]! = f[0]'h_pos0 := by
+            simpa using (Array.getBang_eq_get_nat (a := f) (i := 0) (h := h_pos0))
+          simpa [h_eq] using h0
+        simp [Verify.Formula.isFloatShape, h_size, h0', h1']
+    · simp [Verify.Formula.isFloatShape, h_size]
+  have h_checks : (db.insertHypChecks pos false f).error = true := by
+    unfold DB.insertHypChecks
+    by_cases h_head : f.hasConstHead
+    · simp [h_head, h_no_err, h_shape, DBLemmas.mkError_sets_error]
+    · simp [h_head, DBLemmas.mkError_sets_error]
+  simp [DB.insertHyp, h_checks]
 
 /-- Float with var, duplicate float case -/
 theorem insertHyp_float_var_dup_float (db : DB) (pos : Pos) (label : String) (f : Formula) (v : String)
     (h_no_err : db.error = false)
     (h_float_cond : !false && f.size >= 2)
+    (h_shape : f.isFloatShape = true)
     (h_f1_var : f[1]! = .var v)
     (h_has_float : hasFloatBinding db v = true) :
     (db.insertHyp pos label false f).error = true := by
-  -- TODO: Update proof for new insertHyp checks (no floatCheckLoop in impl)
-  sorry
+  have h_head : f.hasConstHead = true := hasConstHead_of_isFloatShape f h_shape
+  have h_size : f.size >= 2 := by
+    simpa using h_float_cond
+  have h_f1_val : f[1]!.value = v := by
+    simp [Sym.value, h_f1_var]
+  have h_dup : db.floatVarOccursInFrame v = true := by
+    simpa [hasFloatBinding, Verify.DB.floatVarOccursInFrame, floatVarMatches] using h_has_float
+  have h_checks : (db.insertHypChecks pos false f).error = true := by
+    unfold DB.insertHypChecks
+    simp [h_head, h_no_err, h_shape, h_size, h_f1_val, h_dup, DBLemmas.mkError_sets_error]
+  simp [DB.insertHyp, h_checks]
 
 /-- Float with var, no dup float, but insert dup case -/
 theorem insertHyp_float_var_insert_dup (db : DB) (pos : Pos) (label : String) (f : Formula) (v : String)
     (h_no_err : db.error = false)
     (h_float_cond : !false && f.size >= 2)
+    (h_shape : f.isFloatShape = true)
     (h_f1_var : f[1]! = .var v)
     (h_no_float : hasFloatBinding db v = false)
     (h_dup : (db.find? label).isSome = true) :
     (db.insertHyp pos label false f).error = true := by
-  -- TODO: Prove using forM_eq_floatCheckLoop and float check lemmas
-  sorry
+  have h_head : f.hasConstHead = true := hasConstHead_of_isFloatShape f h_shape
+  have h_size : f.size >= 2 := by
+    simpa using h_float_cond
+  have h_f1_val : f[1]!.value = v := by
+    simp [Sym.value, h_f1_var]
+  have h_no_float' : db.floatVarOccursInFrame v = false := by
+    simpa [hasFloatBinding, Verify.DB.floatVarOccursInFrame, floatVarMatches] using h_no_float
+  have h_checks_eq : db.insertHypChecks pos false f = db := by
+    unfold DB.insertHypChecks
+    simp [h_head, h_no_err, h_shape, h_size, h_f1_val, h_no_float']
+  have h_not_err : ¬(db.error = true) := by
+    intro h
+    rw [h] at h_no_err
+    simp at h_no_err
+  have h_not_var_redef : ¬∃ v v', Object.hyp false f label = Object.var v ∧
+      db.find? label = some (Object.var v') := by
+    intro ⟨v', v'', h_eq, _⟩
+    cases h_eq
+  have h_insert_err :=
+    insert_duplicate_error (obj := Object.hyp false f) db pos label
+      h_not_err h_dup h_not_var_redef
+  simp [DB.insertHyp, h_checks_eq, h_no_err, h_insert_err]
 
 /-- Float with var, success case -/
 theorem insertHyp_float_var_success (db : DB) (pos : Pos) (label : String) (f : Formula) (v : String)
     (h_no_err : db.error = false)
     (h_float_cond : !false && f.size >= 2)
+    (h_shape : f.isFloatShape = true)
     (h_f1_var : f[1]! = .var v)
     (h_no_float : hasFloatBinding db v = false)
     (h_no_dup : (db.find? label).isSome = false) :
     let db' := db.insertHyp pos label false f
-    db'.find? label = some (.hyp false f label) ∧ label ∈ db'.frame.hyps := by
-  -- TODO: Prove using forM_eq_floatCheckLoop and float check lemmas
-  sorry
+    db'.find? label = some (Object.hyp false f label) ∧ label ∈ db'.frame.hyps := by
+  have h_head : f.hasConstHead = true := hasConstHead_of_isFloatShape f h_shape
+  have h_size : f.size >= 2 := by
+    simpa using h_float_cond
+  have h_f1_val : f[1]!.value = v := by
+    simp [Sym.value, h_f1_var]
+  have h_no_float' : db.floatVarOccursInFrame v = false := by
+    simpa [hasFloatBinding, Verify.DB.floatVarOccursInFrame, floatVarMatches] using h_no_float
+  have h_checks_eq : db.insertHypChecks pos false f = db := by
+    unfold DB.insertHypChecks
+    simp [h_head, h_no_err, h_shape, h_size, h_f1_val, h_no_float']
+  have h_not_err : ¬(db.error = true) := by
+    intro h
+    rw [h] at h_no_err
+    simp at h_no_err
+  have h_no_scope :
+      (match Object.hyp false f label with
+       | .const _ => !db.permissive && db.scopes.size > 0
+       | _ => false) = false := by
+    simp
+  have h_insert := insert_success_new db pos label (Object.hyp false f)
+    h_not_err h_no_dup h_no_scope
+  have h_ins_err : (db.insert pos label (Object.hyp false f)).error = false := h_insert.2
+  simp [DB.insertHyp, h_checks_eq, h_no_err, h_ins_err]
+  constructor
+  · -- find? property
+    rw [DBLemmas.withHyps_preserves_find?]
+    exact h_insert.1
+  · -- membership property
+    rw [DBLemmas.withHyps_frame_hyps]
+    simp
 
 /-- Case analysis for insertHyp -/
 theorem insertHyp_cases (db : DB) (pos : Pos) (label : String) (ess : Bool) (f : Formula) :
@@ -1237,18 +1566,18 @@ theorem insertHyp_cases (db : DB) (pos : Pos) (label : String) (ess : Bool) (f :
                   simp at h
                   exact h
                 simp [h_has_float, h_shape, h_size]
-                exact insertHyp_float_var_dup_float db pos label f v h_no_err h_float_cond h_f1 h_has_float'
+                exact insertHyp_float_var_dup_float db pos label f v h_no_err h_float_cond h_shape h_f1 h_has_float'
               · -- no dup float
                 have h_no_has_float : hasFloatBinding db v = false := by simp [h_has_float]
                 by_cases h_dup : (db.find? label).isSome
                 · -- error_from_insert (float-var)
                   have h_dup' : (db.find? label).isSome = true := by simp [h_dup]
                   simp [h_has_float, h_dup, h_shape]
-                  exact insertHyp_float_var_insert_dup db pos label f v h_no_err h_float_cond h_f1 h_no_has_float h_dup'
+                  exact insertHyp_float_var_insert_dup db pos label f v h_no_err h_float_cond h_shape h_f1 h_no_has_float h_dup'
                 · -- success (float-var)
                   have h_no_dup : (db.find? label).isSome = false := by simp [h_dup]
                   simp [h_has_float, h_dup, h_shape]
-                  exact insertHyp_float_var_success db pos label f v h_no_err h_float_cond h_f1 h_no_has_float h_no_dup
+                  exact insertHyp_float_var_success db pos label f v h_no_err h_float_cond h_shape h_f1 h_no_has_float h_no_dup
           · -- bad float shape
             have h_shape' : f.isFloatShape = false := by
               exact eq_false_of_ne_true h_shape
@@ -1400,27 +1729,21 @@ Key lemmas about how DB operations preserve or establish well-formedness.
 theorem insert_preserves_float_structure (db : DB) (pos : Pos) (label : String) (f : Formula) :
     db.error = false →
     WF.WellFormedFloat f →
-    let db' := db.insert pos label (.hyp false f)
+    let db' := db.insert pos label (Object.hyp false f)
     db'.error = false →
-    db'.find? label = some (.hyp false f label) →
+    db'.find? label = some (Object.hyp false f label) →
     WF.WellFormedFloat f := by
   -- WellFormedFloat is a property of f, not db, so it's preserved trivially
   intro _ hwf _ _ _
   exact hwf
 
 /-!
-### Proof Strategy for insertHyp_maintains_unique_floats
+### insertHyp_maintains_unique_floats
 
-This proof is substantial and requires:
-1. Using insertHyp_cases to establish success conditions
-2. Case analysis on whether hypotheses are old or new
-3. Using hasFloatBinding to connect to UniqueFloatVars
-4. Array reasoning about push and indexing
-
-This is best done as a separate focused effort after float_check axioms are proven,
-since the proof will be cleaner once we understand the float_check loop behavior.
-
-For now, we accept this as an axiom to unblock other work.
+Proof uses the concrete insertHyp structure: insertHypChecks succeeds,
+insert succeeds, then withHyps pushes the new label. The UniqueFloatVars
+argument splits on old vs new indices and uses hasFloatBinding = false
+to show the new float variable is fresh.
 -/
 
 /-- Inserting a new non-duplicate float hypothesis maintains UniqueFloatVars -/
@@ -1429,18 +1752,308 @@ theorem insertHyp_maintains_unique_floats (db : DB) (pos : Pos) (label : String)
     f.size = 2 →
     (∃ c v, f[0]! = .const c ∧ f[1]! = .var v) →
     ¬hasFloatBinding db (match f[1]! with | .var v => v | _ => "") →
-    let db' := db.insertHyp pos label false f
-    db'.error = false →
-    WF.UniqueFloatVars db' db'.frame := by
-  intro h_unique h_size h_pattern h_no_dup h_no_err
+    (∀ i (hi : i < db.frame.hyps.size), db.frame.hyps[i]'hi ≠ label) →
+    (db.insertHyp pos label false f).error = false →
+    WF.UniqueFloatVars (db.insertHyp pos label false f) (db.insertHyp pos label false f).frame := by
+  intro h_unique h_size h_pattern h_no_dup h_label_ne h_no_err
+  let db' := db.insertHyp pos label false f
+  have h_no_err' : db'.error = false := by
+    simpa [db'] using h_no_err
+
+  have h_db_err : db.error = false := by
+    cases h_err : db.error with
+    | true =>
+        have h_ins_err : (db.insertHyp pos label false f).error = true :=
+          insertHyp_preserves_error_when_set db pos label false f h_err
+        have h_ins_err' : db'.error = true := by
+          simpa [db'] using h_ins_err
+        rw [h_no_err'] at h_ins_err'
+        cases h_ins_err'
+    | false =>
+        simp
+
+  rcases h_pattern with ⟨c, v, h_f0, h_f1⟩
+  have h_no_dup_bool : hasFloatBinding db v = false := by
+    cases h_has : hasFloatBinding db v with
+    | true =>
+        have : False := by
+          apply h_no_dup
+          simp [h_f1, h_has]
+        exact this.elim
+    | false =>
+        simp
+
+  have h_size_ge : f.size >= 2 := by
+    simp [h_size]
+  have h_head : f.hasConstHead = true := by
+    have h_pos : 0 < f.size := by
+      simp [h_size]
+    have h0' : f[0]'h_pos = Sym.const c := by
+      have h_eq : f[0]! = f[0]'h_pos := by
+        simpa using (Array.getBang_eq_get_nat (a := f) (i := 0) (h := h_pos))
+      simpa [h_eq] using h_f0
+    simp [Verify.Formula.hasConstHead, h_pos, h0']
+  have h_shape : f.isFloatShape = true := by
+    have h_pos0 : 0 < f.size := by
+      simp [h_size]
+    have h_pos1 : 1 < f.size := by
+      simp [h_size]
+    have h0' : f[0]'h_pos0 = Sym.const c := by
+      have h_eq : f[0]! = f[0]'h_pos0 := by
+        simpa using (Array.getBang_eq_get_nat (a := f) (i := 0) (h := h_pos0))
+      simpa [h_eq] using h_f0
+    have h1' : f[1]'h_pos1 = Sym.var v := by
+      have h_eq : f[1]! = f[1]'h_pos1 := by
+        simpa using (Array.getBang_eq_get_nat (a := f) (i := 1) (h := h_pos1))
+      simpa [h_eq] using h_f1
+    simp [Verify.Formula.isFloatShape, h_size, h0', h1']
+  have h_f1_val : f[1]!.value = v := by
+    simp [Sym.value, h_f1]
+  have h_no_float' : db.floatVarOccursInFrame v = false := by
+    simpa [hasFloatBinding, Verify.DB.floatVarOccursInFrame, floatVarMatches] using h_no_dup_bool
+  have h_checks_eq : db.insertHypChecks pos false f = db := by
+    unfold DB.insertHypChecks
+    simp [h_head, h_db_err, h_shape, h_size_ge, h_f1_val, h_no_float']
+
+  have h_ins_err : (db.insert pos label (Object.hyp false f)).error = false := by
+    cases h_err_ins : (db.insert pos label (Object.hyp false f)).error with
+    | true =>
+        have h_err' : db'.error = true := by
+          simp [db', DB.insertHyp, h_db_err, h_checks_eq, h_err_ins]
+        rw [h_no_err'] at h_err'
+        cases h_err'
+    | false =>
+        simp
+
+  let dbi := db.insert pos label (Object.hyp false f)
+  have h_frame_eq : dbi.frame = db.frame := by
+    simpa [dbi] using DBLemmas.insert_frame_unchanged db pos label (Object.hyp false f)
+  have h_db_push : db' = dbi.withHyps (·.push label) := by
+    simp [db', dbi, DB.insertHyp, h_db_err, h_checks_eq, h_ins_err]
+  have h_frame : db'.frame.hyps = db.frame.hyps.push label := by
+    calc
+      db'.frame.hyps = (dbi.withHyps (·.push label)).frame.hyps := by
+        simp [h_db_push]
+      _ = (dbi.frame.hyps).push label := by
+        simp [DBLemmas.withHyps_frame_hyps]
+      _ = db.frame.hyps.push label := by
+        simp [h_frame_eq]
+  have h_frame_size : db'.frame.hyps.size = db.frame.hyps.size + 1 := by
+    simp [h_frame, Array.size_push]
+
+  have h_no_dup_label : (db.find? label).isSome = false := by
+    cases h_dup : (db.find? label).isSome with
+    | true =>
+        have h_not_err : ¬(db.error = true) := by
+          simp [h_db_err]
+        have h_not_var_redef :
+            ¬∃ v v', Object.hyp false f label = Object.var v ∧
+              db.find? label = some (Object.var v') := by
+          intro h
+          rcases h with ⟨v', v'', h_eq, _⟩
+          cases h_eq
+        have h_dup' : (db.find? label |>.isSome) = true := h_dup
+        have h_dup_err := insert_duplicate_error (obj := Object.hyp false f) db pos label
+          h_not_err h_dup' h_not_var_redef
+        have h_dup_err' : (db.insert pos label (Object.hyp false f)).error = true := h_dup_err
+        rw [h_ins_err] at h_dup_err'
+        cases h_dup_err'
+    | false =>
+        simp
+
+  have h_no_scope :
+      (match Object.hyp false f label with
+       | Object.const _ => !db.permissive && db.scopes.size > 0
+       | _ => false) = false := by
+    simp
+  have h_insert := insert_success_new db pos label (Object.hyp false f)
+    (by simp [h_db_err]) h_no_dup_label h_no_scope
+  have h_find_label : dbi.find? label = some (Object.hyp false f label) := by
+    simpa [dbi] using h_insert.1
+
   unfold WF.UniqueFloatVars
-  -- TODO: This is a substantial proof requiring:
-  -- 1. Show db'.frame.hyps = db.frame.hyps.push label (from withHyps)
-  -- 2. Show db'.find? preserves all old hyps and adds new one
-  -- 3. For each pair of distinct hyps h1, h2 in db'.frame.hyps:
-  --    - If both old: use h_unique
-  --    - If one is new (label): use h_no_dup to show no conflict
-  -- 4. Requires reasoning about Array operations and forall over extended array
-  sorry
+  intro i j hi hj h_ne fi fj lbli lblj h_fi h_fj h_sizei h_sizej
+
+  have hi_db' : i < db'.frame.hyps.size := by
+    simpa [db'] using hi
+  have hj_db' : j < db'.frame.hyps.size := by
+    simpa [db'] using hj
+  have hi' : i < db.frame.hyps.size + 1 := by
+    simpa [h_frame_size] using hi_db'
+  have hj' : j < db.frame.hyps.size + 1 := by
+    simpa [h_frame_size] using hj_db'
+  have hi_push : i < (db.frame.hyps.push label).size := by
+    simpa [Array.size_push] using hi'
+  have hj_push : j < (db.frame.hyps.push label).size := by
+    simpa [Array.size_push] using hj'
+  have h_fi' :
+      dbi.find? (db.frame.hyps.push label)[i] = some (Object.hyp false fi lbli) := by
+    simpa [db', h_db_push, h_frame_eq, DBLemmas.withHyps_preserves_find?,
+      DBLemmas.withHyps_frame_hyps] using h_fi
+  have h_fj' :
+      dbi.find? (db.frame.hyps.push label)[j] = some (Object.hyp false fj lblj) := by
+    simpa [db', h_db_push, h_frame_eq, DBLemmas.withHyps_preserves_find?,
+      DBLemmas.withHyps_frame_hyps] using h_fj
+
+  by_cases hi_old : i < db.frame.hyps.size
+  · by_cases hj_old : j < db.frame.hyps.size
+    · -- both old indices
+      have hi_label : (db.frame.hyps.push label)[i] = db.frame.hyps[i] :=
+        Array.getElem_push_lt hi_old
+      have hj_label : (db.frame.hyps.push label)[j] = db.frame.hyps[j] :=
+        Array.getElem_push_lt hj_old
+      have h_ne_i : db.frame.hyps[i] ≠ label := h_label_ne i hi_old
+      have h_ne_j : db.frame.hyps[j] ≠ label := h_label_ne j hj_old
+      have h_find_i :
+          dbi.find? db.frame.hyps[i] = db.find? db.frame.hyps[i] := by
+        simpa [dbi] using
+          DBLemmas.insert_preserves_find?_ne db pos label (db.frame.hyps[i])
+            (Object.hyp false f) h_ne_i
+      have h_find_j :
+          dbi.find? db.frame.hyps[j] = db.find? db.frame.hyps[j] := by
+        simpa [dbi] using
+          DBLemmas.insert_preserves_find?_ne db pos label (db.frame.hyps[j])
+            (Object.hyp false f) h_ne_j
+      have h_fi_old : db.find? db.frame.hyps[i] = some (Object.hyp false fi lbli) := by
+        have h_fi'' : dbi.find? db.frame.hyps[i] = some (Object.hyp false fi lbli) := by
+          simpa [hi_label] using h_fi'
+        simpa [h_find_i] using h_fi''
+      have h_fj_old : db.find? db.frame.hyps[j] = some (Object.hyp false fj lblj) := by
+        have h_fj'' : dbi.find? db.frame.hyps[j] = some (Object.hyp false fj lblj) := by
+          simpa [hj_label] using h_fj'
+        simpa [h_find_j] using h_fj''
+      exact h_unique i j hi_old hj_old h_ne fi fj lbli lblj h_fi_old h_fj_old h_sizei h_sizej
+    · -- i old, j new
+      have hj_le : j ≤ db.frame.hyps.size := Nat.le_of_lt_succ hj'
+      have hj_ge : db.frame.hyps.size ≤ j := Nat.le_of_not_lt hj_old
+      have hj_eq : j = db.frame.hyps.size := Nat.le_antisymm hj_le hj_ge
+      subst hj_eq
+      have hi_label : (db.frame.hyps.push label)[i] = db.frame.hyps[i] :=
+        Array.getElem_push_lt hi_old
+      have hj_label : (db.frame.hyps.push label)[db.frame.hyps.size] = label :=
+        Array.getElem_push_eq (xs := db.frame.hyps) (x := label)
+      have h_ne_i : db.frame.hyps[i] ≠ label := h_label_ne i hi_old
+      have h_find_i :
+          dbi.find? db.frame.hyps[i] = db.find? db.frame.hyps[i] := by
+        simpa [dbi] using
+          DBLemmas.insert_preserves_find?_ne db pos label (db.frame.hyps[i])
+            (Object.hyp false f) h_ne_i
+      have h_fi_old : db.find? db.frame.hyps[i] = some (Object.hyp false fi lbli) := by
+        have h_fi'' : dbi.find? db.frame.hyps[i] = some (Object.hyp false fi lbli) := by
+          simpa [hi_label] using h_fi'
+        simpa [h_find_i] using h_fi''
+      have h_fj_new : dbi.find? label = some (Object.hyp false fj lblj) := by
+        simpa [hj_label] using h_fj'
+      have h_fj_eq :
+          some (Object.hyp false fj lblj) = some (Object.hyp false f label) := by
+        calc
+          some (Object.hyp false fj lblj) = dbi.find? label := by
+            symm; exact h_fj_new
+          _ = some (Object.hyp false f label) := h_find_label
+      have h_fj : fj = f := by
+        cases h_fj_eq
+        rfl
+      have h_vj : (match fj[1]! with | .var v' => v' | _ => "") = v := by
+        simp [h_fj, h_f1]
+      have h_pred_false : floatVarMatches fi v = false := by
+        let pred := fun h =>
+          match db.find? h with
+          | some (Object.hyp false f' _) => floatVarMatches f' v
+          | _ => false
+        have h_any : db.frame.hyps.toList.any pred = false := by
+          simpa [hasFloatBinding, pred] using h_no_dup_bool
+        have h_mem : db.frame.hyps[i] ∈ db.frame.hyps.toList := by
+          exact Array.getElem_mem_toList (xs := db.frame.hyps) (i := i) hi_old
+        have h_not_true : ¬ pred (db.frame.hyps[i]'hi_old) = true :=
+          (List.any_eq_false).1 h_any _ h_mem
+        have h_not_true' : ¬ floatVarMatches fi v = true := by
+          simpa [pred, h_fi_old] using h_not_true
+        cases h_match : floatVarMatches fi v with
+        | true =>
+            exact (h_not_true' h_match).elim
+        | false =>
+            simp
+      -- finish via let-expansion
+      dsimp
+      intro h_eq
+      have h_eq' : (match fi[1]! with | .var v' => v' | _ => "") = v := by
+        calc
+          (match fi[1]! with | .var v' => v' | _ => "") =
+              (match fj[1]! with | .var v' => v' | _ => "") := h_eq
+          _ = v := h_vj
+      have h_match : floatVarMatches fi v = true := by
+        simp [floatVarMatches, h_sizei, h_eq']
+      rw [h_pred_false] at h_match
+      cases h_match
+  · -- i new
+    have hi_le : i ≤ db.frame.hyps.size := Nat.le_of_lt_succ hi'
+    have hi_ge : db.frame.hyps.size ≤ i := Nat.le_of_not_lt hi_old
+    have hi_eq : i = db.frame.hyps.size := Nat.le_antisymm hi_le hi_ge
+    subst hi_eq
+    by_cases hj_old : j < db.frame.hyps.size
+    · -- i new, j old
+      have hi_label : (db.frame.hyps.push label)[db.frame.hyps.size] = label :=
+        Array.getElem_push_eq (xs := db.frame.hyps) (x := label)
+      have hj_label : (db.frame.hyps.push label)[j] = db.frame.hyps[j] :=
+        Array.getElem_push_lt hj_old
+      have h_ne_j : db.frame.hyps[j] ≠ label := h_label_ne j hj_old
+      have h_find_j :
+          dbi.find? db.frame.hyps[j] = db.find? db.frame.hyps[j] := by
+        simpa [dbi] using
+          DBLemmas.insert_preserves_find?_ne db pos label (db.frame.hyps[j])
+            (Object.hyp false f) h_ne_j
+      have h_fj_old : db.find? db.frame.hyps[j] = some (Object.hyp false fj lblj) := by
+        have h_fj'' : dbi.find? db.frame.hyps[j] = some (Object.hyp false fj lblj) := by
+          simpa [hj_label] using h_fj'
+        simpa [h_find_j] using h_fj''
+      have h_fi_new : dbi.find? label = some (Object.hyp false fi lbli) := by
+        simpa [hi_label] using h_fi'
+      have h_fi_eq :
+          some (Object.hyp false fi lbli) = some (Object.hyp false f label) := by
+        calc
+          some (Object.hyp false fi lbli) = dbi.find? label := by
+            symm; exact h_fi_new
+          _ = some (Object.hyp false f label) := h_find_label
+      have h_fi : fi = f := by
+        cases h_fi_eq
+        rfl
+      have h_vi : (match fi[1]! with | .var v' => v' | _ => "") = v := by
+        simp [h_fi, h_f1]
+      have h_pred_false : floatVarMatches fj v = false := by
+        let pred := fun h =>
+          match db.find? h with
+          | some (Object.hyp false f' _) => floatVarMatches f' v
+          | _ => false
+        have h_any : db.frame.hyps.toList.any pred = false := by
+          simpa [hasFloatBinding, pred] using h_no_dup_bool
+        have h_mem : db.frame.hyps[j] ∈ db.frame.hyps.toList := by
+          exact Array.getElem_mem_toList (xs := db.frame.hyps) (i := j) hj_old
+        have h_not_true : ¬ pred (db.frame.hyps[j]'hj_old) = true :=
+          (List.any_eq_false).1 h_any _ h_mem
+        have h_not_true' : ¬ floatVarMatches fj v = true := by
+          simpa [pred, h_fj_old] using h_not_true
+        cases h_match : floatVarMatches fj v with
+        | true =>
+            exact (h_not_true' h_match).elim
+        | false =>
+            simp
+      dsimp
+      intro h_eq
+      have h_eq' : (match fj[1]! with | .var v' => v' | _ => "") = v := by
+        calc
+          (match fj[1]! with | .var v' => v' | _ => "") =
+              (match fi[1]! with | .var v' => v' | _ => "") := by
+                symm; exact h_eq
+          _ = v := h_vi
+      have h_match : floatVarMatches fj v = true := by
+        simp [floatVarMatches, h_sizej, h_eq']
+      rw [h_pred_false] at h_match
+      cases h_match
+    · -- both new: impossible
+      have hj_le : j ≤ db.frame.hyps.size := Nat.le_of_lt_succ hj'
+      have hj_ge : db.frame.hyps.size ≤ j := Nat.le_of_not_lt hj_old
+      have hj_eq : j = db.frame.hyps.size := Nat.le_antisymm hj_le hj_ge
+      subst hj_eq
+      exact (h_ne rfl).elim
 
 end Metamath.DBCaseAnalysis
