@@ -5505,9 +5505,11 @@ theorem assert_step_ok
                 let steps_new := Spec.ProofStep.useAssertion label σ_typed.σ :: steps
                 have h_valid :
                     Spec.ProofValid Γ fr_spec (e_conclusion :: remaining.reverse) steps_new := by
+                  have h_typed : ∀ c v, Spec.Hyp.floating c v ∈ fr_assert.mand →
+                      (σ_typed.σ v).typecode = c := fun c v h => σ_typed.typed h
                   refine Spec.ProofValid.useAxiom (fr := fr_spec) (stack := stack_spec.reverse)
                     (steps := steps) (l := label) (fr' := fr_assert) (e := e_assert)
-                    (σ := σ_typed.σ) h_db_lookup h_dv_ok inv.proof_ok needed ?_ remaining.reverse ?_
+                    (σ := σ_typed.σ) h_db_lookup h_dv_ok h_typed inv.proof_ok needed ?_ remaining.reverse ?_
                   ·
                     unfold needed Bridge.needed
                     refine List.map_congr_left ?_

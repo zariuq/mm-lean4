@@ -7,7 +7,7 @@ This file proves the equivalence between:
 
 **The key theorem** (soundness + completeness):
 ```lean
-theorem operational_iff_semantic :
+theorem operational_iff_semantic (h_wf : WellFormedDatabase Γ) :
   Operational.Provable Γ fr e ↔
     Semantic.Provable (dbToAxioms Γ) (frameToContext fr)
       (exprToFormula (varMapOfFrame fr) e)
@@ -256,6 +256,38 @@ theorem mem_varMapAux_sound {n : Nat} {v : Variable} {vr : MarioVR}
               obtain ⟨c, h_mem'⟩ := ih (n := n + 1) h_tail
               exact ⟨c, List.mem_cons_of_mem _ h_mem'⟩
 
+/-- Stronger soundness: membership implies float AND vr.type matches the typecode. -/
+theorem mem_varMapAux_sound_typed {n : Nat} {v : Variable} {vr : MarioVR}
+    {xs : List (Constant × Variable)} :
+    (v, vr) ∈ varMapOfFrameAux n xs → ∃ c, (c, v) ∈ xs ∧ vr.type = c.c := by
+  intro h_mem
+  induction xs generalizing n with
+  | nil =>
+      simp only [varMapOfFrameAux, List.not_mem_nil] at h_mem
+  | cons cv rest ih =>
+      cases cv with
+      | mk c0 v0 =>
+          simp only [varMapOfFrameAux, List.mem_cons] at h_mem
+          cases h_mem with
+          | inl h_eq =>
+              -- (v, vr) = (v0, ⟨c0.c, n⟩)
+              have h_v : v = v0 := (Prod.mk.injEq _ _ _ _).mp h_eq |>.1
+              have h_vr : vr = ⟨c0.c, n⟩ := (Prod.mk.injEq _ _ _ _).mp h_eq |>.2
+              refine ⟨c0, ?_, ?_⟩
+              · simp [h_v]
+              · simp [h_vr]
+          | inr h_tail =>
+              obtain ⟨c, h_mem', h_type⟩ := ih (n := n + 1) h_tail
+              exact ⟨c, List.mem_cons_of_mem _ h_mem', h_type⟩
+
+/-- Typed soundness for varMapOfFrame: membership gives floating hyp AND type match. -/
+theorem mem_varMapOfFrame_sound_typed {fr : Frame} {v : Variable} {vr : MarioVR} :
+    (v, vr) ∈ varMapOfFrame fr → ∃ c, Hyp.floating c v ∈ fr.mand ∧ vr.type = c.c := by
+  intro h_mem
+  unfold varMapOfFrame at h_mem
+  obtain ⟨c, h_float, h_type⟩ := mem_varMapAux_sound_typed (n := 0) h_mem
+  exact ⟨c, floatList_sound h_float, h_type⟩
+
 theorem mem_varMapOfFrame_of_float {fr : Frame} {c : Constant} {v : Variable} :
     Hyp.floating c v ∈ fr.mand → ∃ vr, (v, vr) ∈ varMapOfFrame fr := by
   intro h_in
@@ -454,6 +486,28 @@ theorem findVR_findVar_inverse_frame {fr : Frame} {v : Variable} {vr : MarioVR}
     exact varMapOfFrame_vr_unique h1 h2
   · exact h_findVR
 
+/-- If findVar succeeds, the pair is in the map. -/
+theorem findVar_mem_of_some {vm : VarMap} {vr : MarioVR} {v : Variable}
+    (h_find : findVar vm vr = some v) :
+    (v, vr) ∈ vm := by
+  unfold findVar at h_find
+  -- h_find : (vm.find? fun p => p.2 = vr).map Prod.fst = some v
+  match h_f : vm.find? (fun p => p.2 = vr) with
+  | none =>
+      simp only [h_f, Option.map] at h_find
+      cases h_find
+  | some p =>
+      simp only [h_f, Option.map, Option.some.injEq] at h_find
+      -- h_find : p.1 = v
+      have h_p_mem : p ∈ vm := List.mem_of_find?_eq_some h_f
+      have h_p_eq : p.2 = vr := by
+        have := List.find?_some h_f
+        exact decide_eq_true_eq.mp this
+      -- p = (v, vr)
+      have h_p_is : p = (v, vr) := Prod.ext h_find h_p_eq
+      rw [h_p_is] at h_p_mem
+      exact h_p_mem
+
 /-- Variables in floatList are exactly Frame.vars. -/
 theorem floatList_map_snd_eq_vars (fr : Frame) :
     (floatList fr).map Prod.snd = fr.vars := by
@@ -628,34 +682,50 @@ theorem dvRel_to_dvListToMarioDJ {vm : VarMap} {dv : List (Variable × Variable)
         apply List.mem_filterMap.mpr
         exact ⟨(w, v), h_rev, by simp only [h_w, h_v]⟩
 
-/-- Helper for substitution correspondence: Maps symbol-by-symbol between
-    our applySubst and Mario's Expr.subst.
+/-- Mario's Expr.subst equals flatMap with the substitution function.
+    This bridges the recursive definition to list operations. -/
+theorem marioExpr_subst_eq_flatMap (σ : MarioVR → MarioExpr) (e : MarioExpr) :
+    Metamath.Expr.subst σ e = e.flatMap (fun sym =>
+      match sym with
+      | .var vr => σ vr
+      | .const c => [.const c]) := by
+  induction e with
+  | nil => simp only [Metamath.Expr.subst, List.flatMap_nil]
+  | cons hd tl ih =>
+      cases hd with
+      | const c =>
+          simp only [Metamath.Expr.subst, List.flatMap_cons, List.singleton_append, ih]
+      | var v =>
+          simp only [Metamath.Expr.subst, List.flatMap_cons, ih]
 
-    For each symbol s:
-    - If s is a variable v ∈ frAx.vars: applySubst replaces with (σ v).syms,
-      and toMarioSym vmAx gives .var vr, so σ_mario vr = exprToMarioExpr vm (σ v)
-    - If s is not in frAx.vars (constant): both sides preserve it -/
-theorem exprToMarioExpr_applySubst_eq_subst
-    {frAx fr : Frame} {σ : Subst} {eAx : Expr} :
-    exprToMarioExpr (varMapOfFrame fr) (Spec.applySubst frAx.vars σ eAx) =
-    Metamath.Expr.subst (toMarioSubst (varMapOfFrame frAx) (varMapOfFrame fr) σ)
-                        (exprToMarioExpr (varMapOfFrame frAx) eAx) := by
+/-- Auxiliary lemma for substitution correspondence on symbol lists.
+    Works on a general list with the const-preservation hypothesis. -/
+theorem exprToMarioExpr_applySubst_eq_subst_aux
+    {frAx fr : Frame} {σ : Subst} (syms : List Sym)
+    (h_const : ∀ s ∈ syms, Variable.mk s ∉ frAx.vars → Variable.mk s ∉ fr.vars) :
+    let vmAx := varMapOfFrame frAx
+    let vm := varMapOfFrame fr
+    let σ_mario := toMarioSubst vmAx vm σ
+    (syms.flatMap fun s => if Variable.mk s ∈ frAx.vars then (σ (Variable.mk s)).syms else [s]).map (toMarioSym vm) =
+    (syms.map (toMarioSym vmAx)).flatMap (fun sym =>
+      match sym with
+      | .var vr => σ_mario vr
+      | .const c => [.const c]) := by
   -- Define local abbreviations for clarity
   let vmAx := varMapOfFrame frAx
   let vm := varMapOfFrame fr
   let σ_mario := toMarioSubst vmAx vm σ
 
-  unfold Spec.applySubst exprToMarioExpr
-  -- Goal: (eAx.syms.flatMap f).map (toMarioSym vm) = (eAx.syms.map (toMarioSym vmAx)).subst σ_mario
-
-  -- Prove by induction on eAx.syms
-  induction eAx.syms with
+  induction syms with
   | nil =>
       simp only [List.flatMap_nil, List.map_nil]
-      rfl
   | cons s rest ih =>
       simp only [List.flatMap_cons, List.map_cons, List.map_append]
       let v := Variable.mk s
+      -- IH applies to rest with restricted hypothesis
+      have h_const_rest : ∀ s' ∈ rest, Variable.mk s' ∉ frAx.vars → Variable.mk s' ∉ fr.vars := by
+        intro s' h_in h_not
+        exact h_const s' (List.mem_cons_of_mem s h_in) h_not
       -- Show the head symbol correspondence, then use IH for rest
       by_cases h_var : v ∈ frAx.vars
       · -- Case: s is a variable in frAx.vars
@@ -665,19 +735,13 @@ theorem exprToMarioExpr_applySubst_eq_subst
         have h_toMario : toMarioSym vmAx s = .var vr := by
           unfold toMarioSym
           simp only [vmAx]
-          -- Now goal is: (match findVR (varMapOfFrame frAx) (Variable.mk s) with ...) = .var vr
-          -- Use split on the match and h_findVR
           split
-          · -- some vr' case
-            rename_i vr' h_eq
-            -- h_eq : findVR (varMapOfFrame frAx) (Variable.mk s) = some vr'
-            -- But h_findVR : findVR (varMapOfFrame frAx) v = some vr, and v = Variable.mk s
+          · rename_i vr' h_eq
             simp only [v] at h_findVR
             rw [h_findVR] at h_eq
             cases h_eq
             rfl
-          · -- none case
-            rename_i h_eq
+          · rename_i h_eq
             simp only [v] at h_findVR
             rw [h_findVR] at h_eq
             cases h_eq
@@ -687,36 +751,29 @@ theorem exprToMarioExpr_applySubst_eq_subst
           simp only [σ_mario, toMarioSubst]
           have h_findVar := findVR_findVar_inverse_frame h_findVR
           split
-          · -- some v' case
-            rename_i v' h_eq
+          · rename_i v' h_eq
             simp only [v] at h_findVR
             have h_findVar' := findVR_findVar_inverse_frame h_findVR
             rw [h_findVar'] at h_eq
             cases h_eq
             rfl
-          · -- none case
-            rename_i h_eq
+          · rename_i h_eq
             simp only [v] at h_findVR
             have h_findVar' := findVR_findVar_inverse_frame h_findVR
             rw [h_findVar'] at h_eq
             cases h_eq
 
-        -- LHS: ((have v := ...; if v ∈ frAx.vars then (σ v).syms else [s]) ++ ...).map (toMarioSym vm)
-        -- The have binding and if-then-else can be simplified since h_var : v ∈ frAx.vars where v = Variable.mk s
         simp only [v, h_var, ↓reduceIte]
-
-        -- RHS: (toMarioSym vmAx s :: ...).subst σ_mario
         rw [h_toMario]
-        simp only [Metamath.Expr.subst]
-        -- h_sigma : σ_mario vr = exprToMarioExpr vm (σ v)
-        -- But goal has toMarioSubst ... vr, not σ_mario vr
-        -- Since σ_mario := toMarioSubst vmAx vm σ and vmAx := varMapOfFrame frAx, vm := varMapOfFrame fr
+        -- Simplify the match on .var vr
+        simp only []
         simp only [σ_mario, vmAx, vm] at h_sigma
         rw [h_sigma]
-        simp only [exprToMarioExpr, v, ih]
+        simp only [exprToMarioExpr, v]
+        congr 1
+        exact ih h_const_rest
 
       · -- Case: s is not a variable in frAx.vars (constant)
-        -- findVR vmAx v = none since v ∉ frAx.vars
         have h_none : findVR vmAx v = none := by
           simp only [vmAx]
           match h_find : findVR (varMapOfFrame frAx) v with
@@ -729,64 +786,96 @@ theorem exprToMarioExpr_applySubst_eq_subst
           unfold toMarioSym
           simp only [vmAx]
           split
-          · -- some vr case - contradiction with h_none
-            rename_i vr h_eq
+          · rename_i vr h_eq
             simp only [v, vmAx] at h_none
             rw [h_none] at h_eq
             cases h_eq
-          · -- none case
-            rfl
+          · rfl
 
-        -- LHS: (have v := ...; if v ∈ frAx.vars then ... else [s]).map (toMarioSym vm)
         simp only [v, h_var, ↓reduceIte, List.map]
-
-        -- RHS: (toMarioSym vmAx s :: ...).subst σ_mario = .const s :: ...
         rw [h_toMario]
-        simp only [Metamath.Expr.subst]
 
         -- Now we need toMarioSym vm s = .const s (constant in axiom is constant in caller)
-        by_cases h_var_fr : Variable.mk s ∈ fr.vars
-        · -- s is a variable in fr but constant in frAx - unusual case
-          have ⟨vr', h_findVR'⟩ := (varMapDomain_ofFrame fr (Variable.mk s)).mp h_var_fr
-          have h_toMario' : toMarioSym vm s = .var vr' := by
-            unfold toMarioSym
-            simp only [vm]
-            split
-            · -- some vr'' case
-              rename_i vr'' h_eq
-              rw [h_findVR'] at h_eq
-              cases h_eq
-              rfl
-            · -- none case - contradiction
-              rename_i h_eq
-              rw [h_findVR'] at h_eq
-              cases h_eq
-          rw [h_toMario']
-          -- This shouldn't happen in well-formed databases
-          sorry  -- Axiom constant appearing as caller variable - well-formedness violation
-        · -- s is also not a variable in fr (both agree it's a constant)
-          have h_none' : findVR vm (Variable.mk s) = none := by
-            simp only [vm]
-            match h_find : findVR (varMapOfFrame fr) (Variable.mk s) with
-            | some vr =>
-                have h_in := (varMapDomain_ofFrame fr (Variable.mk s)).mpr ⟨vr, h_find⟩
-                exact absurd h_in h_var_fr
-            | none => rfl
-          have h_toMario' : toMarioSym vm s = .const s := by
-            unfold toMarioSym
-            simp only [vm]
-            split
-            · -- some vr case - contradiction
-              rename_i vr h_eq
-              simp only [vm] at h_none'
-              rw [h_none'] at h_eq
-              cases h_eq
-            · -- none case
-              rfl
-          rw [h_toMario']
-          -- Goal: [.const s] ++ rest_lhs = .const s :: rest_rhs
-          -- Convert [x] ++ ys to x :: ys and conclude with IH
-          simp only [List.singleton_append, ih]
+        -- Use h_const to show s is also not a variable in fr
+        have h_s_in_syms : s ∈ s :: rest := by simp
+        have h_var_fr : Variable.mk s ∉ fr.vars := h_const s h_s_in_syms h_var
+
+        have h_none' : findVR vm (Variable.mk s) = none := by
+          simp only [vm]
+          match h_find : findVR (varMapOfFrame fr) (Variable.mk s) with
+          | some vr =>
+              have h_in := (varMapDomain_ofFrame fr (Variable.mk s)).mpr ⟨vr, h_find⟩
+              exact absurd h_in h_var_fr
+          | none => rfl
+
+        have h_toMario' : toMarioSym vm s = .const s := by
+          unfold toMarioSym
+          simp only [vm]
+          split
+          · rename_i vr h_eq
+            simp only [vm] at h_none'
+            rw [h_none'] at h_eq
+            cases h_eq
+          · rfl
+
+        rw [h_toMario']
+        simp only [List.singleton_append]
+        congr 1
+        exact ih h_const_rest
+
+/-- Main substitution correspondence theorem.
+    Maps symbol-by-symbol between our applySubst and Mario's Expr.subst.
+
+    Requires database well-formedness, which ensures that constants are global:
+    if a symbol appears in an expression and has no floating hypothesis in that
+    frame, then it's a constant and cannot be a variable in any other frame. -/
+theorem exprToMarioExpr_applySubst_eq_subst
+    {Γ : Database} {l : Label} {frAx fr : Frame} {σ : Subst} {eAx : Expr}
+    (h_wf : Spec.WellFormedDatabase Γ)
+    (h_lookup : Γ l = some (frAx, eAx)) :
+    exprToMarioExpr (varMapOfFrame fr) (Spec.applySubst frAx.vars σ eAx) =
+    Metamath.Expr.subst (toMarioSubst (varMapOfFrame frAx) (varMapOfFrame fr) σ)
+                        (exprToMarioExpr (varMapOfFrame frAx) eAx) := by
+  -- Strategy:
+  -- 1. Unfold LHS to get flatMap form
+  -- 2. Rewrite RHS using marioExpr_subst_eq_flatMap to get flatMap form
+  -- 3. Apply aux lemma (with h_const from well-formedness)
+
+  let vmAx := varMapOfFrame frAx
+  let vm := varMapOfFrame fr
+  let σ_mario := toMarioSubst vmAx vm σ
+
+  -- LHS unfolds to: (eAx.syms.flatMap ...).map (toMarioSym vm)
+  unfold exprToMarioExpr Spec.applySubst
+  simp only []
+
+  -- RHS is Expr.subst σ_mario (eAx.syms.map (toMarioSym vmAx))
+  -- Rewrite using marioExpr_subst_eq_flatMap
+  rw [marioExpr_subst_eq_flatMap]
+
+  -- Now apply aux lemma
+  have h_const : ∀ s ∈ eAx.syms, Variable.mk s ∉ frAx.vars → Variable.mk s ∉ fr.vars :=
+    fun s h_s_in h_not_var => Spec.const_global_of_wellFormed h_wf h_lookup s h_s_in h_not_var
+  exact exprToMarioExpr_applySubst_eq_subst_aux eAx.syms h_const
+
+/-- Substitution correspondence for essential hypothesis expressions. -/
+theorem exprToMarioExpr_applySubst_eq_subst_hyp
+    {Γ : Database} {l : Label} {frAx fr : Frame} {σ : Subst} {eAx e_hyp : Expr}
+    (h_wf : Spec.WellFormedDatabase Γ)
+    (h_lookup : Γ l = some (frAx, eAx))
+    (h_hyp_in : Hyp.essential e_hyp ∈ frAx.mand) :
+    exprToMarioExpr (varMapOfFrame fr) (Spec.applySubst frAx.vars σ e_hyp) =
+    Metamath.Expr.subst (toMarioSubst (varMapOfFrame frAx) (varMapOfFrame fr) σ)
+                        (exprToMarioExpr (varMapOfFrame frAx) e_hyp) := by
+  let vmAx := varMapOfFrame frAx
+  let vm := varMapOfFrame fr
+  let σ_mario := toMarioSubst vmAx vm σ
+  unfold exprToMarioExpr Spec.applySubst
+  simp only []
+  rw [marioExpr_subst_eq_flatMap]
+  have h_const : ∀ s ∈ e_hyp.syms, Variable.mk s ∉ frAx.vars → Variable.mk s ∉ fr.vars :=
+    fun s h_s_in h_not_var => Spec.const_global_of_wellFormed_hyp h_wf h_lookup h_hyp_in s h_s_in h_not_var
+  exact exprToMarioExpr_applySubst_eq_subst_aux e_hyp.syms h_const
 
 /-! ## Forward Direction: ProofValid → Mario.Provable
 
@@ -794,9 +883,11 @@ We first show that every element on a valid proof stack is Mario-provable,
 then derive the singleton-stack case as a corollary.
 -/
 
-/-- Any element on a valid proof stack is Mario-provable. -/
+/-- Any element on a valid proof stack is Mario-provable.
+    Requires database well-formedness for substitution correspondence. -/
 theorem proofValid_stack_provable {Γ : Database} {fr : Frame} {stack : List Expr}
-    {steps : List ProofStep} :
+    {steps : List ProofStep}
+    (h_wf : Spec.WellFormedDatabase Γ) :
     ProofValid Γ fr stack steps →
     ∀ e ∈ stack,
       Semantic.Provable (dbToAxioms Γ) (frameToContext fr)
@@ -829,7 +920,7 @@ theorem proofValid_stack_provable {Γ : Database} {fr : Frame} {stack : List Exp
           simpa [h_eq] using h_mem'
       | tail _ h_tail =>
           exact ih e' h_tail
-  | useAxiom stack steps l frAx eAx σ h_ax h_dv h_prev needed h_needed remaining h_stack_eq ih =>
+  | useAxiom stack steps l frAx eAx σ h_ax h_dv h_typed h_prev needed h_needed remaining h_stack_eq ih =>
       intro e' h_mem
       cases h_mem with
       | head =>
@@ -1034,22 +1125,155 @@ theorem proofValid_stack_provable {Γ : Database} {fr : Frame} {stack : List Exp
             cases h_case with
             | inl h_in_hyps =>
                 -- h is a hypothesis from the axiom's frame (essential or floating)
-                -- After substitution, it should appear in `needed` on the stack
-                -- The IH says everything on the stack is provable
-                -- TODO: Connect ax.ctx.hyps membership to frameToContext structure,
-                -- then use h_needed to show the substituted hypothesis was on the stack,
-                -- finally apply the inductive hypothesis.
-                sorry  -- Needs: axiom hypothesis → stack element correspondence
+                -- ax.ctx.hyps = frAx.mand.map (hypToMarioFormula vmAx)
+                -- So there exists hyp ∈ frAx.mand with h = hypToMarioFormula vmAx hyp
+                have h_ax_ctx : ax.ctx = frameToContext frAx := rfl
+                rw [h_ax_ctx] at h_in_hyps
+                unfold frameToContext at h_in_hyps
+                simp only [] at h_in_hyps
+                -- h_in_hyps : h ∈ frAx.mand.map (hypToMarioFormula vmAx)
+                obtain ⟨hyp, h_hyp_in, h_hyp_eq⟩ := List.mem_map.mp h_in_hyps
+                -- hyp ∈ frAx.mand and h = hypToMarioFormula vmAx hyp
+                cases hyp with
+                | essential e_hyp =>
+                    -- h = exprToFormula vmAx e_hyp
+                    -- h.subst σ_mario should equal exprToFormula vm (applySubst frAx.vars σ e_hyp)
+                    -- And applySubst frAx.vars σ e_hyp is in needed (hence on stack)
+                    rw [← h_hyp_eq, hypToMarioFormula_essential]
+                    -- Goal: Provable ... ((exprToFormula vmAx e_hyp).subst σ_mario)
+                    -- Rewrite using our substitution correspondence
+                    have h_subst_eq : (exprToFormula vmAx e_hyp).subst σ_mario =
+                        exprToFormula vm (Spec.applySubst frAx.vars σ e_hyp) := by
+                      unfold exprToFormula Metamath.Formula.subst
+                      simp only []
+                      -- Goal: (e_hyp.typecode.c, Expr.subst σ_mario (exprToMarioExpr vmAx e_hyp)) =
+                      --       ((applySubst frAx.vars σ e_hyp).typecode.c, exprToMarioExpr vm (applySubst frAx.vars σ e_hyp))
+                      -- applySubst preserves typecode
+                      have h_tc : (Spec.applySubst frAx.vars σ e_hyp).typecode = e_hyp.typecode := by
+                        unfold Spec.applySubst; rfl
+                      rw [h_tc]
+                      congr 1
+                      -- Now just need the expression part (need to swap sides)
+                      exact (exprToMarioExpr_applySubst_eq_subst_hyp h_wf h_ax h_hyp_in).symm
+                    rw [h_subst_eq]
+                    -- Now need to show applySubst frAx.vars σ e_hyp is on stack
+                    have h_in_needed : Spec.applySubst frAx.vars σ e_hyp ∈ needed := by
+                      rw [h_needed]
+                      apply List.mem_map.mpr
+                      refine ⟨Hyp.essential e_hyp, h_hyp_in, ?_⟩
+                      rfl
+                    have h_in_stack : Spec.applySubst frAx.vars σ e_hyp ∈ stack := by
+                      rw [h_stack_eq]
+                      exact List.mem_append_left _ (List.mem_reverse.mpr h_in_needed)
+                    exact ih (Spec.applySubst frAx.vars σ e_hyp) h_in_stack
+                | floating c_hyp v_hyp =>
+                    -- h = hypToMarioFormula vmAx (Hyp.floating c_hyp v_hyp) = (c_hyp.c, [.var vr])
+                    -- h.subst σ_mario = (c_hyp.c, σ_mario vr)
+                    -- σ v_hyp is in needed (hence on stack)
+                    -- Type preservation: h_typed gives us (σ v_hyp).typecode = c_hyp
+                    have h_type_pres := h_typed c_hyp v_hyp h_hyp_in
+                    -- h_type_pres : (σ v_hyp).typecode = c_hyp
+                    -- Get the VR for v_hyp in vmAx
+                    have ⟨vr, h_findVR⟩ := findVR_of_float (fr := frAx) (c := c_hyp) (v := v_hyp) h_hyp_in
+                    -- h = (c_hyp.c, [.var vr])
+                    rw [← h_hyp_eq]
+                    have h_float_eq := hypToMarioFormula_floating_expr (vm := vmAx)
+                      (c := c_hyp) (v := v_hyp) (vr := vr) h_findVR
+                    rw [h_float_eq]
+                    -- Goal: Provable ... ((exprToFormula vmAx ⟨c_hyp, [v_hyp.v]⟩).subst σ_mario)
+                    -- exprToFormula vmAx ⟨c_hyp, [v_hyp.v]⟩ = (c_hyp.c, [.var vr])
+                    unfold exprToFormula exprToMarioExpr
+                    simp only [List.map_cons, List.map_nil]
+                    -- Goal: Provable ... ((c_hyp.c, [toMarioSym vmAx v_hyp.v]).subst σ_mario)
+                    simp only [Metamath.Formula.subst]
+                    -- Goal: Provable ... (c_hyp.c, Expr.subst σ_mario [toMarioSym vmAx v_hyp.v])
+                    -- toMarioSym vmAx v_hyp.v = .var vr since h_findVR
+                    have h_sym : toMarioSym vmAx v_hyp.v = .var vr := toMarioSym_var h_findVR
+                    rw [h_sym, Metamath.Expr.subst, Metamath.Expr.subst, List.append_nil]
+                    -- Goal: Provable ... (c_hyp.c, σ_mario vr)
+                    -- σ_mario vr = exprToMarioExpr vm (σ v_hyp)
+                    have h_sigma_eq : σ_mario vr = exprToMarioExpr vm (σ v_hyp) := by
+                      have h_findVar := findVR_findVar_inverse_frame h_findVR
+                      exact toMarioSubst_findVar h_findVar
+                    rw [h_sigma_eq]
+                    -- Goal: Provable ... (c_hyp.c, exprToMarioExpr vm (σ v_hyp))
+                    -- By type preservation: (σ v_hyp).typecode = c_hyp
+                    -- So exprToFormula vm (σ v_hyp) = ((σ v_hyp).typecode.c, exprToMarioExpr vm (σ v_hyp))
+                    --                              = (c_hyp.c, exprToMarioExpr vm (σ v_hyp))
+                    have h_formula_eq : (c_hyp.c, exprToMarioExpr vm (σ v_hyp)) =
+                        exprToFormula vm (σ v_hyp) := by
+                      unfold exprToFormula
+                      congr 1
+                      exact (congrArg Constant.c h_type_pres).symm
+                    rw [h_formula_eq]
+                    -- σ v_hyp is on the stack, so by IH it's provable
+                    have h_in_needed : σ v_hyp ∈ needed := by
+                      rw [h_needed]
+                      apply List.mem_map.mpr
+                      refine ⟨Hyp.floating c_hyp v_hyp, h_hyp_in, ?_⟩
+                      rfl
+                    have h_in_stack : σ v_hyp ∈ stack := by
+                      rw [h_stack_eq]
+                      exact List.mem_append_left _ (List.mem_reverse.mpr h_in_needed)
+                    exact ih (σ v_hyp) h_in_stack
             | inr h_is_var =>
                 -- h is a variable formula v = (v.type, [.var v])
                 obtain ⟨v, h_eq⟩ := h_is_var
                 rw [h_eq]
-                -- h.subst σ_mario = (v.type, σ_mario v)
-                -- For variable formulas, Provable.var handles this case
-                -- The formula (v.type, [.var v]).subst σ = (v.type, σ v)
-                -- Using Provable.var and type preservation from floating hypotheses
-                -- TODO: Complete by showing σ_mario maps variable types correctly
-                sorry  -- Needs: variable type preservation in σ_mario
+                -- h.subst σ_mario = (v.type, σ_mario v ++ []) since Formula.subst preserves typecode
+                -- and Expr.subst σ [.var v] = σ v ++ subst σ []
+                simp only [Metamath.Formula.subst, Metamath.Expr.subst]
+                -- Now goal: Provable ... (v.type, σ_mario v ++ [])
+                rw [List.append_nil]
+                -- Now goal: Provable ... (v.type, σ_mario v)
+                -- Case split on whether v is in the axiom's varMap
+                unfold σ_mario toMarioSubst
+                cases h_findVar : findVar vmAx v with
+                | none =>
+                    -- v is not in axiom's context, so σ_mario v = [.var v]
+                    -- Goal: Provable ... (v.type, [.var v])
+                    -- This is exactly Provable.var v
+                    exact Metamath.Provable.var v
+                | some var_spec =>
+                    -- v is in axiom's context, corresponding to var_spec
+                    -- σ_mario v = exprToMarioExpr vm (σ var_spec)
+                    -- Goal: Provable ... (v.type, exprToMarioExpr vm (σ var_spec))
+                    --
+                    -- Step 1: From findVar success, get map membership
+                    have h_mem : (var_spec, v) ∈ varMapOfFrame frAx :=
+                      findVar_mem_of_some h_findVar
+                    -- Step 2: From membership, get floating hyp AND type match
+                    obtain ⟨c_float, h_float_in, h_type_eq⟩ :=
+                      mem_varMapOfFrame_sound_typed h_mem
+                    -- h_float_in : Hyp.floating c_float var_spec ∈ frAx.mand
+                    -- h_type_eq : v.type = c_float.c
+                    -- Step 3: Use h_typed to get substitution type preservation
+                    have h_sigma_type := h_typed c_float var_spec h_float_in
+                    -- h_sigma_type : (σ var_spec).typecode = c_float
+                    -- Step 4: Connect v.type to (σ var_spec).typecode.c
+                    have h_type_connect : v.type = (σ var_spec).typecode.c := by
+                      rw [h_type_eq, h_sigma_type]
+                    -- Step 5: Show σ var_spec is on the stack (via needed)
+                    have h_in_needed : σ var_spec ∈ needed := by
+                      rw [h_needed]
+                      apply List.mem_map.mpr
+                      refine ⟨Hyp.floating c_float var_spec, h_float_in, ?_⟩
+                      rfl
+                    have h_in_stack : σ var_spec ∈ stack := by
+                      rw [h_stack_eq]
+                      exact List.mem_append_left _ (List.mem_reverse.mpr h_in_needed)
+                    -- Step 6: By IH, exprToFormula vm (σ var_spec) is provable
+                    have h_prov := ih (σ var_spec) h_in_stack
+                    -- h_prov : Provable axs Γ (exprToFormula vm (σ var_spec))
+                    -- exprToFormula vm (σ var_spec) = ((σ var_spec).typecode.c, exprToMarioExpr vm (σ var_spec))
+                    -- Goal: Provable axs Γ (v.type, exprToMarioExpr vm (σ var_spec))
+                    -- Step 7: Rewrite using type connection
+                    have h_formula_eq : (v.type, exprToMarioExpr vm (σ var_spec)) =
+                        exprToFormula vm (σ var_spec) := by
+                      unfold exprToFormula
+                      rw [h_type_connect]
+                    rw [h_formula_eq]
+                    exact h_prov
 
           -- Sub-goal 3: Show the result formula matches
           -- We need: exprToFormula vm (applySubst frAx.vars σ eAx) = ax.fmla.subst σ_mario
@@ -1063,7 +1287,7 @@ theorem proofValid_stack_provable {Γ : Database} {fr : Frame} {stack : List Exp
             --       (typecode, (exprToMarioExpr vmAx eAx).subst σ_mario)
             congr 1
             -- Now just the expression part
-            exact exprToMarioExpr_applySubst_eq_subst (frAx := frAx) (fr := fr) (σ := σ) (eAx := eAx)
+            exact exprToMarioExpr_applySubst_eq_subst h_wf h_ax
 
           -- Apply Provable.ax and rewrite goal
           rw [h_result]
@@ -1077,12 +1301,13 @@ theorem proofValid_stack_provable {Γ : Database} {fr : Frame} {stack : List Exp
 
 /-- Forward direction: If we have a valid operational proof ending with [e],
     then e is provable in Mario's semantic system. -/
-theorem proofValid_to_mario {Γ : Database} {fr : Frame} {e : Expr} {steps : List ProofStep} :
+theorem proofValid_to_mario {Γ : Database} {fr : Frame} {e : Expr} {steps : List ProofStep}
+    (h_wf : Spec.WellFormedDatabase Γ) :
     ProofValid Γ fr [e] steps →
     Semantic.Provable (dbToAxioms Γ) (frameToContext fr)
       (exprToFormula (varMapOfFrame fr) e) := by
   intro h
-  have h_all := proofValid_stack_provable (Γ := Γ) (fr := fr) (stack := [e]) h
+  have h_all := proofValid_stack_provable h_wf h
   simpa using h_all e (by simp)
 
 /-! ## Backward Direction: Mario.Provable → ProofValid
@@ -1151,7 +1376,8 @@ Combines both directions to show operational ↔ semantic equivalence.
     2. Reasoning about our verifier using textbook mathematics
     3. Confidence that our operational model matches the spec
 -/
-theorem operational_iff_semantic {Γ : Database} {fr : Frame} {e : Expr} :
+theorem operational_iff_semantic {Γ : Database} {fr : Frame} {e : Expr}
+    (h_wf : Spec.WellFormedDatabase Γ) :
     Provable Γ fr e ↔
     Semantic.Provable (dbToAxioms Γ) (frameToContext fr)
       (exprToFormula (varMapOfFrame fr) e) := by
@@ -1159,7 +1385,7 @@ theorem operational_iff_semantic {Γ : Database} {fr : Frame} {e : Expr} :
   · -- Forward: Operational → Semantic
     intro ⟨steps, finalStack, h_valid, h_stack⟩
     rw [h_stack] at h_valid
-    exact proofValid_to_mario h_valid
+    exact proofValid_to_mario h_wf h_valid
   · -- Backward: Semantic → Operational
     exact mario_to_proofValid
 

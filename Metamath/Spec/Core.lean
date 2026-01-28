@@ -158,4 +158,65 @@ Per spec §4.2.3:
 
 abbrev Database := Label → Option (Frame × Expr)
 
+/-! ## Database Well-Formedness
+
+A well-formed database satisfies key invariants:
+1. Variables in expressions must have floating hypotheses in scope (§4.2.2)
+2. Constants and variables are disjoint (global declaration)
+
+These are enforced by the parser's insert function.
+-/
+
+/-- Variables in an expression must have floating hypotheses in the frame.
+    Per §4.2.2: "Each variable that occurs in the math symbol sequence of an
+    assertion must have an active $f statement."
+
+    Equivalently: symbols not in fr.vars are constants (globally).
+    Since constants are global, they can't be variables in any other frame. -/
+def ExprVarsInScope (fr : Frame) (e : Expr) : Prop :=
+  ∀ s ∈ e.syms, Variable.mk s ∈ fr.vars ∨ ∀ fr' : Frame, Variable.mk s ∉ fr'.vars
+
+/-- All expressions in a frame (assertion + essential hypotheses) have variables in scope. -/
+def FrameExprsInScope (fr : Frame) (e : Expr) : Prop :=
+  ExprVarsInScope fr e ∧
+  ∀ h ∈ fr.mand, match h with
+    | Hyp.essential e_hyp => ExprVarsInScope fr e_hyp
+    | Hyp.floating _ _ => True
+
+/-- A database is well-formed if all expressions have their variables in scope.
+    This captures the Metamath invariant that the parser enforces. -/
+def WellFormedDatabase (Γ : Database) : Prop :=
+  ∀ l fr e, Γ l = some (fr, e) → FrameExprsInScope fr e
+
+/-- Key consequence: if a symbol is a constant in one frame's expression,
+    it's a constant in all frames. -/
+theorem const_global_of_wellFormed {Γ : Database} {fr fr' : Frame} {e : Expr} {l : Label}
+    (h_wf : WellFormedDatabase Γ)
+    (h_lookup : Γ l = some (fr, e))
+    (s : Sym)
+    (h_s_in : s ∈ e.syms)
+    (h_not_var : Variable.mk s ∉ fr.vars) :
+    Variable.mk s ∉ fr'.vars := by
+  have h := (h_wf l fr e h_lookup).1 s h_s_in
+  cases h with
+  | inl h_in => exact absurd h_in h_not_var
+  | inr h_global => exact h_global fr'
+
+/-- Same property for essential hypothesis expressions. -/
+theorem const_global_of_wellFormed_hyp {Γ : Database} {fr fr' : Frame} {e e_hyp : Expr} {l : Label}
+    (h_wf : WellFormedDatabase Γ)
+    (h_lookup : Γ l = some (fr, e))
+    (h_hyp_in : Hyp.essential e_hyp ∈ fr.mand)
+    (s : Sym)
+    (h_s_in : s ∈ e_hyp.syms)
+    (h_not_var : Variable.mk s ∉ fr.vars) :
+    Variable.mk s ∉ fr'.vars := by
+  have h_frame := h_wf l fr e h_lookup
+  have h_hyp := h_frame.2 (Hyp.essential e_hyp) h_hyp_in
+  simp only at h_hyp
+  have h := h_hyp s h_s_in
+  cases h with
+  | inl h_in => exact absurd h_in h_not_var
+  | inr h_global => exact h_global fr'
+
 end Metamath.Spec
