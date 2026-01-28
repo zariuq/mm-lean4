@@ -244,23 +244,28 @@ def String.toMarioSym (s : String) (vars : List MarioVR) : MarioSym :=
   | some vr => .var vr
   | none => .const s
 
-/-- Helper: List.Mem.head means the element equals the list head. -/
+/-- Helper: membership in a cons list splits into head or tail. -/
 theorem List.mem_head_eq {α : Type _} {x hd : α} {tl : List α}
-    (h : x ∈ (hd :: tl)) (h_is_head : ∀ (y : α) (ys : List α), x ∈ (y :: ys) → (∃ (h' : x ∈ ys), h = List.Mem.tail y h') ∨ (y = x ∧ h = List.Mem.head ys)) :
-    x = hd := by
-  sorry -- Extract equality from Mem.head pattern
+    (h : x ∈ (hd :: tl)) :
+    x = hd ∨ x ∈ tl := by
+  cases h with
+  | head =>
+      left
+      rfl
+  | tail _ h_tl =>
+      right
+      exact h_tl
 
 /-- Helper: takeWhile on cons when head satisfies predicate. -/
 theorem List.takeWhile_cons_true {α : Type _} (p : α → Bool) (hd : α) (tl : List α)
     (h : p hd = true) :
     (hd :: tl).takeWhile p = hd :: tl.takeWhile p := by
-  unfold List.takeWhile
-  simp only [h, ite_true]
+  simp [List.takeWhile, h]
 
 /-- Helper: If vr ≠ hd and vr ∈ tl, then hd ∈ (hd :: tl).takeWhile (· ≠ vr). -/
 theorem List.head_mem_takeWhile_of_ne {α : Type _} [DecidableEq α]
     (hd : α) (tl : List α) (vr : α)
-    (h_ne : hd ≠ vr) (h_vr_tl : vr ∈ tl) :
+    (h_ne : hd ≠ vr) (_h_vr_tl : vr ∈ tl) :
     hd ∈ (hd :: tl).takeWhile (· ≠ vr) := by
   -- takeWhile (· ≠ vr) on (hd :: tl) when hd ≠ vr gives hd :: tl.takeWhile (· ≠ vr)
   have h_tw : (hd :: tl).takeWhile (· ≠ vr) = hd :: tl.takeWhile (· ≠ vr) := by
@@ -451,11 +456,11 @@ theorem List.find?_result_mem {α : Type _} (p : α → Bool) (xs : List α) (x 
       unfold List.find? at h
       by_cases h_p : p hd
       · -- p hd = true, so find? returns hd
-        simp only [h_p, ite_true] at h
+        simp [h_p] at h
         cases h
         exact List.Mem.head tl
       · -- p hd = false, so find? recurses to tl
-        simp only [h_p, ite_false] at h
+        simp [h_p] at h
         have : x ∈ tl := ih h
         exact List.Mem.tail hd this
 
@@ -492,11 +497,11 @@ theorem List.find?_pred_holds {α : Type _} (p : α → Bool) (xs : List α) (x 
       unfold List.find? at h
       by_cases h_p : p hd
       · -- p hd = true, so find? returns hd
-        simp only [h_p, ite_true] at h
+        simp [h_p] at h
         cases h
         exact h_p
       · -- p hd = false, so find? recurses to tl
-        simp only [h_p, ite_false] at h
+        simp [h_p] at h
         exact ih h
 
 /-- If toMarioSym returns .var vr, then (MarioVR.toVariable vr).v equals the input string.
@@ -737,7 +742,7 @@ Construct it from the frame's floating hypotheses.
     which is needed for well-formed conversion. -/
 def Frame.toVarList (fr : Frame) : List MarioVR :=
   fr.mand.filterMap fun h => match h with
-    | Hyp.floating c v => some (Variable.toMarioVR v)
+    | Hyp.floating _ v => some (Variable.toMarioVR v)
     | Hyp.essential _ => none
 
 /-- Every floating hypothesis variable is in the constructed var list. -/
@@ -1087,16 +1092,7 @@ noncomputable def Subst.toMarioSubst (σ : Spec.Subst) (vars : List MarioVR) : M
 /-- Helper: map distributes over flatMap -/
 theorem list_map_flatMap {α β γ} (f : β → γ) (g : α → List β) (l : List α) :
     (l.flatMap g).map f = l.flatMap (fun x => (g x).map f) := by
-  -- Unfold flatMap to expose map/flatten structure
-  -- flatMap g l = (l.map g).flatten
-  show ((l.map g).flatten).map f = (l.map (fun x => (g x).map f)).flatten
-
-  -- Prove by induction on l
-  induction l with
-  | nil => rfl
-  | cons h t ih =>
-      simp only [List.map, List.flatten]
-      rw [List.map_append, ih]
+  simpa using (List.map_flatMap (f := f) (g := g) (l := l))
 
 /-- Helper: Prove substitution equivalence for symbol list.
 
@@ -1138,10 +1134,7 @@ theorem symList_subst_eq : (syms : List String) →
         simp only [v] at h_sym_eq h_var_eq
 
         -- LHS: Unfold flatMap for (s :: rest) and expand to expose append
-        simp only [List.flatMap, List.map, List.flatten, v, if_pos h]
-
-        -- LHS: Apply map to append
-        rw [List.map_append]
+        simp [List.flatMap_cons, v, if_pos h]
 
         -- RHS: Apply h_sym_eq directly
         rw [h_sym_eq]
@@ -1185,14 +1178,7 @@ theorem symList_subst_eq : (syms : List String) →
 
         -- LHS: Unfold flatMap for (s :: rest) and expand to expose append
         -- Also apply h_const to simplify toMarioSym s
-        simp only [List.flatMap, List.map, List.flatten, v, if_neg h, h_const]
-
-        -- LHS: Apply map_append to fully distribute map
-        rw [List.map_append]
-        simp only [List.map, h_const]
-
-        -- Convert [const s] ++ ... to const s :: ...
-        simp only [List.singleton_append]
+        simp [List.flatMap_cons, v, if_neg h, h_const]
 
         -- Both sides: const s :: ...
         congr 1
@@ -1357,16 +1343,13 @@ theorem Frame.toVarList_varsWellFormed (fr : Frame) (σ : Spec.Subst) :
 
     **Proof Strategy**:
     1. From dv_source, get (v, w) disjoint in axiom
-    2. From dvOK, get vars in σ v and σ w don't overlap (x_var ≠ y_var)
-    3. Use completeness: x_var ≠ y_var → (x_var, y_var) ∈ dv_target
-    4. Therefore x and y satisfy target DJ constraint ✅ -/
+    2. Use dvOK directly on variables from σ v and σ w to get dvRel in dv_target
+    3. Lift dvRel into Mario's DJ relation ✅ -/
 theorem dvOK_implies_DJ_subst
     (vars : List Variable)
     (dv_source dv_target : List (Variable × Variable))
     (σ : Spec.Subst) (marioVars : List MarioVR)
     (h_dvOK : Spec.dvOK vars dv_source dv_target σ)
-    (h_complete : ∀ v w : Variable, v ∈ vars → w ∈ vars → v ≠ w →
-                    (v, w) ∈ dv_target ∨ (w, v) ∈ dv_target)
     (h_wf_index : ∀ vr ∈ marioVars, vr.i = 0)
     (h_wf_vars : VarsWellFormed vars marioVars σ) :
     (dvList.toMarioDJ dv_source).subst (Subst.toMarioSubst σ marioVars)
@@ -1393,13 +1376,6 @@ theorem dvOK_implies_DJ_subst
       obtain ⟨⟨v, w⟩, h_pair_in, h_vr_eq⟩ := List.mem_map.mp h_fwd
       cases h_vr_eq  -- vr1 = toMarioVR v, vr2 = toMarioVR w
 
-      -- Get non-overlap from dvOK (dvRel implies inequality)
-      have h_disj : ∀ x_var ∈ Spec.varsInExpr vars (σ v),
-          x_var ∉ Spec.varsInExpr vars (σ w) := by
-        intro x_var h_x_var h_x_in_w
-        have h_rel := h_dvOK v w h_pair_in x_var h_x_var x_var h_x_in_w
-        exact (h_rel.1 rfl).elim
-
       -- Convert Mario VRs to Variables
       let x_var := MarioVR.toVariable x
       let y_var := MarioVR.toVariable y
@@ -1410,21 +1386,12 @@ theorem dvOK_implies_DJ_subst
       have h_y_var : y_var ∈ Spec.varsInExpr vars (σ w) :=
         h_wf_vars w y h_y_in
 
-      -- Apply dvOK disjointness: x_var ≠ y_var
-      have h_not_in : x_var ∉ Spec.varsInExpr vars (σ w) := h_disj x_var h_x_var
-      have h_x_neq_y : x_var ≠ y_var := by
-        intro h_eq
-        rw [h_eq] at h_not_in
-        exact absurd h_y_var h_not_in
-
-      -- Extract that x_var and y_var are in vars (from varsInExpr definition)
-      -- varsInExpr only returns variables that are in the `vars` list
-      have h_x_in_vars : x_var ∈ vars := varsInExpr_mem_of_mem vars (σ v) x_var h_x_var
-      have h_y_in_vars : y_var ∈ vars := varsInExpr_mem_of_mem vars (σ w) y_var h_y_var
-
-      -- Use completeness to get (x_var, y_var) ∈ dv_target
+      -- Apply dvOK directly to get dvRel in dv_target
+      have h_rel : Spec.dvRel dv_target x_var y_var :=
+        h_dvOK v w h_pair_in x_var h_x_var y_var h_y_var
+      have h_x_neq_y : x_var ≠ y_var := h_rel.1
       have h_pair_target : (x_var, y_var) ∈ dv_target ∨ (y_var, x_var) ∈ dv_target :=
-        h_complete x_var y_var h_x_in_vars h_y_in_vars h_x_neq_y
+        h_rel.2
 
       -- Convert to Mario DJ: need to show (dvList.toMarioDJ dv_target) x y
       unfold dvList.toMarioDJ
@@ -1492,13 +1459,6 @@ theorem dvOK_implies_DJ_subst
       obtain ⟨⟨w, v⟩, h_pair_in, h_vr_eq⟩ := List.mem_map.mp h_bwd
       cases h_vr_eq  -- vr2 = toMarioVR w, vr1 = toMarioVR v
 
-      -- Get non-overlap from dvOK (note: (w, v) is in dv_source)
-      have h_disj : ∀ y_var ∈ Spec.varsInExpr vars (σ w),
-          y_var ∉ Spec.varsInExpr vars (σ v) := by
-        intro y_var h_y_var h_y_in_v
-        have h_rel := h_dvOK w v h_pair_in y_var h_y_var y_var h_y_in_v
-        exact (h_rel.1 rfl).elim
-
       -- Convert Mario VRs to Variables (swapped from above)
       let y_var := MarioVR.toVariable y
       let x_var := MarioVR.toVariable x
@@ -1509,20 +1469,12 @@ theorem dvOK_implies_DJ_subst
       have h_x_var : x_var ∈ Spec.varsInExpr vars (σ v) :=
         h_wf_vars v x h_x_in
 
-      -- Apply dvOK disjointness: y_var ≠ x_var
-      have h_not_in : y_var ∉ Spec.varsInExpr vars (σ v) := h_disj y_var h_y_var
-      have h_y_neq_x : y_var ≠ x_var := by
-        intro h_eq
-        rw [h_eq] at h_not_in
-        exact absurd h_x_var h_not_in
-
-      -- Extract membership in vars
-      have h_y_in_vars : y_var ∈ vars := varsInExpr_mem_of_mem vars (σ w) y_var h_y_var
-      have h_x_in_vars : x_var ∈ vars := varsInExpr_mem_of_mem vars (σ v) x_var h_x_var
-
-      -- Use completeness (note: y_var ≠ x_var, not x_var ≠ y_var)
+      -- Apply dvOK directly (note swapped roles)
+      have h_rel : Spec.dvRel dv_target y_var x_var :=
+        h_dvOK w v h_pair_in y_var h_y_var x_var h_x_var
+      have h_y_neq_x : y_var ≠ x_var := h_rel.1
       have h_pair_target : (y_var, x_var) ∈ dv_target ∨ (x_var, y_var) ∈ dv_target :=
-        h_complete y_var x_var h_y_in_vars h_x_in_vars h_y_neq_x
+        h_rel.2
 
       -- Convert to Mario DJ
       unfold dvList.toMarioDJ

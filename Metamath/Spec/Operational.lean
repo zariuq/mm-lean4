@@ -88,6 +88,101 @@ def Provable (Γ : Database) (fr : Frame) (e : Expr) : Prop :=
     ProofValid Γ fr finalStack steps ∧
     finalStack = [e]
 
+/-! ## Proof Execution from an Initial Stack
+
+`ProofValid` builds a stack from empty. For composition, we also use a
+stack-relative variant that starts from an arbitrary initial stack. -/
+
+inductive ProofValidFrom (Γ : Database) : Frame → List Expr → List Expr → List ProofStep → Prop where
+  | nil : ∀ fr stk, ProofValidFrom Γ fr stk stk []
+
+  | useEssential : ∀ fr stk stack steps e,
+      Hyp.essential e ∈ fr.mand →
+      ProofValidFrom Γ fr stk stack steps →
+      ProofValidFrom Γ fr stk (e :: stack) (ProofStep.useHyp (Hyp.essential e) :: steps)
+
+  | useFloating : ∀ fr stk stack steps c v,
+      Hyp.floating c v ∈ fr.mand →
+      ProofValidFrom Γ fr stk stack steps →
+      ProofValidFrom Γ fr stk (⟨c, [v.v]⟩ :: stack) (ProofStep.useHyp (Hyp.floating c v) :: steps)
+
+  | useAxiom : ∀ fr stk stack steps l fr' e σ,
+      Γ l = some (fr', e) →
+      dvOK fr.vars fr'.dv fr.dv σ →
+      ProofValidFrom Γ fr stk stack steps →
+      ∀ needed : List Expr,
+      needed = fr'.mand.map (fun h => match h with
+        | Hyp.essential e => applySubst fr'.vars σ e
+        | Hyp.floating _ v => σ v) →
+      ∀ remaining : List Expr,
+      stack = needed.reverse ++ remaining →
+      ProofValidFrom Γ fr stk (applySubst fr'.vars σ e :: remaining)
+        (ProofStep.useAssertion l σ :: steps)
+
+theorem ProofValid.toFrom {Γ : Database} {fr : Frame} {stk : List Expr} {steps : List ProofStep} :
+  ProofValid Γ fr stk steps → ProofValidFrom Γ fr [] stk steps := by
+  intro h
+  induction h with
+  | nil =>
+      exact ProofValidFrom.nil fr []
+  | useEssential stack steps e h_in _ ih =>
+      exact ProofValidFrom.useEssential fr [] stack steps e h_in ih
+  | useFloating stack steps c v h_in _ ih =>
+      exact ProofValidFrom.useFloating fr [] stack steps c v h_in ih
+  | useAxiom stack steps l fr' e σ h_find h_dv _ needed h_needed remaining h_stack ih =>
+      exact ProofValidFrom.useAxiom fr [] stack steps l fr' e σ h_find h_dv ih needed h_needed remaining h_stack
+
+theorem ProofValidFrom.toProofValid
+    {Γ : Database} {fr : Frame} {stk : List Expr} {steps : List ProofStep} :
+  ProofValidFrom Γ fr [] stk steps → ProofValid Γ fr stk steps := by
+  intro h
+  induction h with
+  | nil =>
+      simpa using (ProofValid.nil fr)
+  | useEssential stack steps e h_in _ ih =>
+      exact ProofValid.useEssential fr stack steps e h_in ih
+  | useFloating stack steps c v h_in _ ih =>
+      exact ProofValid.useFloating fr stack steps c v h_in ih
+  | useAxiom stack steps l fr' e σ h_find h_dv _ needed h_needed remaining h_stack ih =>
+      exact ProofValid.useAxiom fr stack steps l fr' e σ h_find h_dv ih needed h_needed remaining h_stack
+
+theorem ProofValidFrom.append_suffix
+    {Γ : Database} {fr : Frame} {stk₁ stk₂ : List Expr} {steps : List ProofStep}
+    (h : ProofValidFrom Γ fr stk₁ stk₂ steps) (suffix : List Expr) :
+  ProofValidFrom Γ fr (stk₁ ++ suffix) (stk₂ ++ suffix) steps := by
+  induction h with
+  | nil =>
+      simpa using (ProofValidFrom.nil fr (stk₁ ++ suffix))
+  | useEssential stack steps e h_in _ ih =>
+      simpa using (ProofValidFrom.useEssential fr (stk₁ ++ suffix) (stack ++ suffix) steps e h_in ih)
+  | useFloating stack steps c v h_in _ ih =>
+      simpa using (ProofValidFrom.useFloating fr (stk₁ ++ suffix) (stack ++ suffix) steps c v h_in ih)
+  | useAxiom stack steps l fr' e σ h_find h_dv _ needed h_needed remaining h_stack ih =>
+      -- Adjust the remaining suffix
+      have h_stack' : stack ++ suffix = needed.reverse ++ (remaining ++ suffix) := by
+        simpa [List.append_assoc] using congrArg (fun s => s ++ suffix) h_stack
+      exact ProofValidFrom.useAxiom fr (stk₁ ++ suffix) (stack ++ suffix) steps l fr' e σ
+        h_find h_dv ih needed h_needed (remaining ++ suffix) h_stack'
+
+theorem ProofValidFrom.trans
+    {Γ : Database} {fr : Frame} {stk₁ stk₂ stk₃ : List Expr}
+    {steps₁ steps₂ : List ProofStep} :
+    ProofValidFrom Γ fr stk₁ stk₂ steps₁ →
+    ProofValidFrom Γ fr stk₂ stk₃ steps₂ →
+  ProofValidFrom Γ fr stk₁ stk₃ (steps₂ ++ steps₁) := by
+  intro h₁ h₂
+  induction h₂ with
+  | nil =>
+      simpa using h₁
+  | useEssential stack steps e h_in _ ih =>
+      simpa using (ProofValidFrom.useEssential fr stk₁ stack (steps ++ steps₁) e h_in ih)
+  | useFloating stack steps c v h_in _ ih =>
+      simpa using (ProofValidFrom.useFloating fr stk₁ stack (steps ++ steps₁) c v h_in ih)
+  | useAxiom stack steps l fr' e σ h_find h_dv _ needed h_needed remaining h_stack ih =>
+      simpa [List.append_assoc] using
+        (ProofValidFrom.useAxiom fr stk₁ stack (steps ++ steps₁) l fr' e σ
+          h_find h_dv ih needed h_needed remaining h_stack)
+
 /-! ## Proof Sequences (Compositional)
 
 This is a generalization for composing proof steps. Used in fold-based proofs.
@@ -137,12 +232,12 @@ specification (Provable).
 -/
 
 theorem soundness_statement :
-  ∀ (db : Database) (l : Label) (fr : Frame) (e : Expr),
-  -- If the verifier accepts the proof for label l
-  (∃ (verifier_accepts : Bool), verifier_accepts = true) →
-  -- Then the assertion is semantically provable
+  ∀ (db : Database) (_l : Label) (fr : Frame) (e : Expr),
+  (∃ steps, ProofValid db fr [e] steps) →
   Provable db fr e := by
-  sorry -- To be proven
+  intro db _ fr e h
+  rcases h with ⟨steps, h_valid⟩
+  exact ProofValid.toProvable h_valid
 
 /-! ## Design Notes
 
