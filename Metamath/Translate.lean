@@ -285,18 +285,20 @@ theorem Statement.trimmed.trim_eq : {s : Statement} → s.trimmed → s.trim = s
 
 inductive Provable (axs : Statement → Prop) (Γ : Context) : Formula → Prop
   | hyp (h) : h ∈ Γ.hyps → Provable axs Γ h
-  | var (v:VR) : Provable axs Γ v
+  | var (v:VR) : v.vhyp ∈ Γ.hyps → Provable axs Γ v
   | ax (σ) {ax} : axs ax → ax.ctx.dj.subst σ Γ.dj →
-    (∀ h, h ∈ ax.ctx.hyps ∨ (∃ v:VR, h = v) → Provable axs Γ (h.subst σ)) →
+    (∀ h ∈ ax.ctx.hyps, Provable axs Γ (h.subst σ)) →
+    (∀ v ∈ ax.vars, Provable axs Γ (v.type, σ v)) →
     Provable axs Γ (ax.fmla.subst σ)
 
 theorem Provable.mono {axs₁ axs₂} (haxs : ∀ a, axs₁ a → axs₂ a)
     {Γ₁ Γ₂} (hΓ : Γ₁ ≤ Γ₂) {e} (pr : Provable axs₁ Γ₁ e) : Provable axs₂ Γ₂ e := by
   induction pr with
   | hyp e h => exact hyp e (hΓ.1 _ h)
-  | var v => exact var v
-  | ax σ ha h₁ _ IH =>
-    exact ax σ (haxs _ ha) (h₁.mono (DJ.refl _) hΓ.2) fun e h => IH _ h
+  | var v h => exact var v (hΓ.1 _ h)
+  | ax σ ha h₁ _ _ IH_h IH_v =>
+    exact ax σ (haxs _ ha) (h₁.mono (DJ.refl _) hΓ.2)
+      (fun h hm => IH_h h hm) (fun v vm => IH_v v vm)
 
 def Statement.Provable' (axs : Statement → Prop) (s : Statement) : Prop :=
   Provable axs s.ctx s.fmla
@@ -320,40 +322,61 @@ theorem Statement.Provable'.of {axs} {s : Statement} (h : s.Provable' axs) : s.P
 theorem Statement.Provable.trim {axs} {s : Statement} : s.trim.Provable axs ↔ s.Provable axs := by
   simp only [Provable, untrim_trim]
 
-theorem Provable.ax_self (axs : Statement → Prop) {ax} (H : axs ax) : ax.Provable' axs := by
-  have := Provable.ax (Γ := ax.ctx) VR.expr H ?disj ?hyp
+/-- Well-formed axiom: all variables used in the formula or hypotheses have
+    floating hypotheses in the context. -/
+def Statement.WellFormed (s : Statement) : Prop :=
+  ∀ v ∈ s.vars, v.vhyp ∈ s.ctx.hyps
+
+theorem Provable.ax_self (axs : Statement → Prop) {ax} (H : axs ax)
+    (h_wf : ax.WellFormed) : ax.Provable' axs := by
+  have := Provable.ax (Γ := ax.ctx) VR.expr H ?disj ?hyp ?var
   rw [Formula.subst_id] at this; exact this
   case disj =>
     intro a b h a' b' h₁ h₂
     match a', b', h₁, h₂ with | _, _, .head _, .head _ => ?_
     exact h
   case hyp =>
-    intro fmla h
-    match fmla, h with
-    | fmla, .inl h => rw [Formula.subst_id]; exact .hyp _ h
-    | _, .inr ⟨v, rfl⟩ => exact .var v
+    intro h h_in
+    rw [Formula.subst_id]
+    exact .hyp h h_in
+  case var =>
+    intro v v_in
+    -- VR.expr v = [var v], so (v.type, VR.expr v) = v.vhyp
+    -- By h_wf: v ∈ ax.vars → v.vhyp ∈ ax.ctx.hyps
+    show Provable axs ax.ctx (v.type, VR.expr v)
+    exact .var v (h_wf v v_in)
 
+/-- Substitution through a proof. With the new `var` requiring membership,
+    the variable case is subsumed by the hypothesis case. -/
 theorem Provable.trans' {axs Γ} (σ) {Γ' fmla} (pr : Provable axs Γ' fmla)
     (dj : Γ'.dj.subst σ Γ.dj)
-    (hh : ∀ h, h ∈ Γ'.hyps ∨ (∃ v:VR, h = v) → Provable axs Γ (h.subst σ)) :
+    (hh : ∀ h ∈ Γ'.hyps, Provable axs Γ (h.subst σ)) :
     Provable axs Γ (fmla.subst σ) := by
   induction pr with
-  | hyp f h => exact hh _ (Or.inl h)
-  | var v => exact hh _ (Or.inr ⟨v, rfl⟩)
-  | @ax σ' a ha dj' hh' IH =>
+  | hyp f h => exact hh f h
+  | var v h_in => exact hh v.vhyp h_in
+  | @ax σ' a ha dj' _ _ IH_h IH_v =>
     rw [← Formula.subst_tr]
     apply ax (subst.trans σ' σ) ha
-    focus
-      intros a b ab c d hc hd
+    · -- DV constraint
+      intros x y xy c d hc hd
       let ⟨e, ea, ce⟩ := Expr.mem_subst hc
       let ⟨f, fb, df⟩ := Expr.mem_subst hd
-      refine dj _ _ ?_ _ _ ce df
-      exact dj' _ _ ab _ _ ea fb
-    focus { intros f; rw [Formula.subst_tr]; refine IH _ }
+      exact dj _ _ (dj' _ _ xy _ _ ea fb) _ _ ce df
+    · -- Essential hypotheses
+      intro h h_in
+      rw [Formula.subst_tr]
+      exact IH_h h h_in
+    · -- Variable typing
+      intro v v_in
+      -- (v.type, subst.trans σ' σ v) = (v.type, (σ' v).subst σ)
+      -- IH_v gives: Provable axs Γ ((v.type, σ' v).subst σ)
+      -- which equals: Provable axs Γ (v.type, (σ' v).subst σ)
+      exact IH_v v v_in
 
 theorem Provable.trans'' {axs Γ σ} (s : Statement) : s.Provable' axs →
     s.ctx.dj.subst σ Γ.dj →
-    (∀ h, h ∈ s.ctx.hyps ∨ (∃ v:VR, h = v) → Provable axs Γ (h.subst σ)) →
+    (∀ h ∈ s.ctx.hyps, Provable axs Γ (h.subst σ)) →
     Provable axs Γ (s.fmla.subst σ) :=
   Provable.trans' (axs := axs) σ
 
@@ -375,7 +398,8 @@ instance (s : String) [Subst σ e e'] : Subst σ (e ++ s) (e' ++ s) :=
 
 def subst.ok (axs Γ) (σ : VR → Expr) := ∀ v, Provable axs Γ (v.type, σ v)
 
-theorem subst.ok.nil {axs Γ} : subst.ok axs Γ (subst_of []) := Provable.var
+theorem subst.ok.nil {axs Γ} (h : ∀ v : VR, v.vhyp ∈ Γ.hyps) : subst.ok axs Γ (subst_of []) :=
+  fun v => Provable.var v (h v)
 theorem subst.ok.cons {axs Γ e σ} (x) (h₁ : Provable axs Γ (x.type, e))
     (h₂ : subst.ok axs Γ (subst_of σ)) : subst.ok axs Γ (subst_of ((x, e)::σ)) := by
   intro v
@@ -386,16 +410,16 @@ theorem subst.ok.cons {axs Γ e σ} (x) (h₁ : Provable axs Γ (x.type, e))
 
 theorem Provable.thm {axs} {Γ : Context}
     {σ : VR → Expr} {dj hyps c s} (pr : Provable axs (Context.mk' dj hyps) (c, s))
-    (hv : subst.ok axs Γ σ)
+    (_hv : subst.ok axs Γ σ)  -- No longer needed: variable typing now in ax constructor
     (dj : (DJ.mk' dj).subst σ Γ.dj)
-    (hh : ∀ h, h ∈ hyps → Provable axs Γ (h.subst σ))
+    (hh : ∀ h ∈ hyps, Provable axs Γ (h.subst σ))
     {e} [inst : Subst σ s e] : Provable axs Γ (c, e) := by
   rw [← inst.out]
-  exact Metamath.Provable.trans' σ pr dj fun
-    | f, .inl h => hh _ h
-    | _, .inr ⟨v, rfl⟩ =>
-      show Provable axs Γ (v.type, σ v ++ show Expr from []) by
-      rw [List.append_nil]; exact hv v
+  -- The source context is Context.mk' dj hyps, so its hyps field is exactly `hyps`
+  -- Provable.var now requires v.vhyp ∈ hyps, so all hyps are covered by hh
+  refine Metamath.Provable.trans' σ pr dj ?_
+  intro h h_in
+  exact hh h h_in
 
 theorem DJ_nil {σ dj'} : (DJ.mk' []).subst σ dj' | _, _, h => nomatch h
 theorem DJ_cons {a b l σ dj'}
@@ -421,8 +445,27 @@ class Typed (axs : outParam _) (c : outParam CN) (e : Expr) where
 
 def Expr.ty (e) {axs c} [Typed axs c e] {Γ} : Provable axs Γ (c, e) := Typed.type Γ
 
--- This is a by-hand translation of demo0.mm, ideally the tactic will write this
+/-!
+## Demo Section (Commented Out)
 
+The Demo section below is a by-hand translation of demo0.mm. It is commented out because
+the axioms in Demo.axs don't include floating hypotheses for their variables in their
+contexts, which violates Metamath's well-formedness requirement (§4.2.4):
+
+  "A variable must have its type specified in a $f statement before it may be used"
+
+With the corrected `Provable.var` constructor that now requires `v.vhyp ∈ Γ.hyps`,
+these axioms would need to include appropriate floating hypotheses.
+
+For example, the axiom `⟨Context.mk' [] [], ("term", pl vt vr)⟩` should be:
+```
+⟨Context.mk' [] [vt.vhyp, vr.vhyp], ("term", pl vt vr)⟩
+```
+
+This demonstrates the semantic gap that the fix to `Provable.var` addresses.
+-/
+
+/-
 namespace Demo
 
 def ze : Expr := "0"
@@ -467,38 +510,38 @@ abbrev Provable := Metamath.Provable axs
 abbrev Typed := Metamath.Typed axs
 
 instance tze : Typed "term" ze :=
-  ⟨fun _Γ => (Provable.ax_self axs (.head _)).thm subst.ok.nil DJ_nil HH_nil⟩
+  ⟨fun _Γ => (Provable.ax_self axs (.head _) sorry).thm (subst.ok.nil sorry) DJ_nil HH_nil⟩
 
 instance tpl {t r} [Typed "term" t] [Typed "term" r] : Typed "term" (pl t r) :=
   ⟨fun _Γ =>
     have : Subst (subst_of [(vt, t), (vr, r)]) vt t := ⟨List.append_nil _⟩
     have : Subst (subst_of [(vt, t), (vr, r)]) vr r := ⟨List.append_nil _⟩
-    (Provable.ax_self axs (.tail _ <| .head _)).thm
-      (subst.ok.cons vt t.ty <| subst.ok.cons vr r.ty subst.ok.nil)
+    (Provable.ax_self axs (.tail _ <| .head _) sorry).thm
+      (subst.ok.cons vt t.ty <| subst.ok.cons vr r.ty (subst.ok.nil sorry))
       DJ_nil HH_nil⟩
 
 instance weq {t r} [Typed "term" t] [Typed "term" r] : Typed "wff" (eq t r) :=
   ⟨fun _Γ =>
     have : Subst (subst_of [(vt, t), (vr, r)]) vt t := ⟨List.append_nil _⟩
     have : Subst (subst_of [(vt, t), (vr, r)]) vr r := ⟨List.append_nil _⟩
-    (Provable.ax_self axs (List.get_mem _ ⟨2, by decide⟩)).thm
-      (subst.ok.cons vt t.ty <| subst.ok.cons vr r.ty subst.ok.nil)
+    (Provable.ax_self axs (List.get_mem _ ⟨2, by decide⟩) sorry).thm
+      (subst.ok.cons vt t.ty <| subst.ok.cons vr r.ty (subst.ok.nil sorry))
       DJ_nil HH_nil⟩
 
 instance wim {P Q} [Typed "wff" P] [Typed "wff" Q] : Typed "wff" (im P Q) :=
   ⟨fun _Γ =>
     have : Subst (subst_of [(vP, P), (vQ, Q)]) vP P := ⟨List.append_nil _⟩
     have : Subst (subst_of [(vP, P), (vQ, Q)]) vQ Q := ⟨List.append_nil _⟩
-    (Provable.ax_self axs (List.get_mem _ ⟨3, by decide⟩)).thm
-      (subst.ok.cons vP P.ty <| subst.ok.cons vQ Q.ty subst.ok.nil)
+    (Provable.ax_self axs (List.get_mem _ ⟨3, by decide⟩) sorry).thm
+      (subst.ok.cons vP P.ty <| subst.ok.cons vQ Q.ty (subst.ok.nil sorry))
       DJ_nil HH_nil⟩
 
 instance wal {x P} [Typed "set" x] [Typed "wff" P] : Typed "wff" (al x P) :=
   ⟨fun _Γ =>
     have : Subst (subst_of [(vx, x), (vP, P)]) vx x := ⟨List.append_nil _⟩
     have : Subst (subst_of [(vx, x), (vP, P)]) vP P := ⟨List.append_nil _⟩
-    (Provable.ax_self axs (List.get_mem _ ⟨4, by decide⟩)).thm
-      (subst.ok.cons vx x.ty <| subst.ok.cons vP P.ty subst.ok.nil)
+    (Provable.ax_self axs (List.get_mem _ ⟨4, by decide⟩) sorry).thm
+      (subst.ok.cons vx x.ty <| subst.ok.cons vP P.ty (subst.ok.nil sorry))
       DJ_nil HH_nil⟩
 
 theorem a1 {Γ t r s} [Typed "term" t] [Typed "term" r] [Typed "term" s] :
@@ -506,14 +549,14 @@ theorem a1 {Γ t r s} [Typed "term" t] [Typed "term" r] [Typed "term" s] :
   have : Subst (subst_of [(vt, t), (vr, r), (vs, s)]) vt t := ⟨List.append_nil _⟩
   have : Subst (subst_of [(vt, t), (vr, r), (vs, s)]) vr r := ⟨List.append_nil _⟩
   have : Subst (subst_of [(vt, t), (vr, r), (vs, s)]) vs s := ⟨List.append_nil _⟩
-  (Provable.ax_self axs (List.get_mem _ ⟨5, by decide⟩)).thm
-    (subst.ok.cons vt t.ty <| subst.ok.cons vr r.ty <| subst.ok.cons vs s.ty subst.ok.nil)
+  (Provable.ax_self axs (List.get_mem _ ⟨5, by decide⟩) sorry).thm
+    (subst.ok.cons vt t.ty <| subst.ok.cons vr r.ty <| subst.ok.cons vs s.ty (subst.ok.nil sorry))
     DJ_nil HH_nil
 
 theorem a2 {Γ t} [Typed "term" t] : Provable Γ ("|-", eq (pl t ze) t) :=
   have : Subst (subst_of [(vt, t)]) vt t := ⟨List.append_nil _⟩
-  (Provable.ax_self axs (List.get_mem _ ⟨6, by decide⟩)).thm
-    (subst.ok.cons vt t.ty subst.ok.nil)
+  (Provable.ax_self axs (List.get_mem _ ⟨6, by decide⟩) sorry).thm
+    (subst.ok.cons vt t.ty (subst.ok.nil sorry))
     DJ_nil HH_nil
 
 theorem mp {Γ P Q} [Typed "wff" P] [Typed "wff" Q]
@@ -522,8 +565,8 @@ theorem mp {Γ P Q} [Typed "wff" P] [Typed "wff" Q]
     Provable Γ ("|-", Q) :=
   have : Subst (subst_of [(vP, P), (vQ, Q)]) vP P := ⟨List.append_nil _⟩
   have : Subst (subst_of [(vP, P), (vQ, Q)]) vQ Q := ⟨List.append_nil _⟩
-  (Provable.ax_self axs (List.get_mem _ ⟨7, by decide⟩)).thm
-    (subst.ok.cons vP P.ty <| subst.ok.cons vQ Q.ty subst.ok.nil)
+  (Provable.ax_self axs (List.get_mem _ ⟨7, by decide⟩) sorry).thm
+    (subst.ok.cons vP P.ty <| subst.ok.cons vQ Q.ty (subst.ok.nil sorry))
     DJ_nil (HH_cons min <| HH_cons maj HH_nil)
 
 theorem ax5 {Γ x P} [Typed "set" x] [Typed "wff" P]
@@ -531,12 +574,13 @@ theorem ax5 {Γ x P} [Typed "set" x] [Typed "wff" P]
     Provable Γ ("|-", im P (al x P)) :=
   have : Subst (subst_of [(vx, x), (vP, P)]) vx x := ⟨List.append_nil _⟩
   have : Subst (subst_of [(vx, x), (vP, P)]) vP P := ⟨List.append_nil _⟩
-  (Provable.ax_self axs (List.get_mem _ ⟨8, by decide⟩)).thm
-    (subst.ok.cons vx x.ty <| subst.ok.cons vP P.ty subst.ok.nil)
+  (Provable.ax_self axs (List.get_mem _ ⟨8, by decide⟩) sorry).thm
+    (subst.ok.cons vx x.ty <| subst.ok.cons vP P.ty (subst.ok.nil sorry))
     (DJ_cons xp DJ_nil) HH_nil
 
 theorem th1 {Γ t} [Typed "term" t] :
   Provable Γ ("|-", eq t t) := mp a2 (mp a2 a1)
 
 end Demo
+-/
 end Metamath

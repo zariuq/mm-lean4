@@ -45,11 +45,16 @@ export Metamath (Provable)
 ```lean
 inductive Provable (axs : Statement → Prop) (Γ : Context) : Formula → Prop
   | hyp (h) : h ∈ Γ.hyps → Provable axs Γ h
-  | var (v:VR) : Provable axs Γ v
+  | var (v:VR) : v.vhyp ∈ Γ.hyps → Provable axs Γ v
   | ax (σ) {ax} : axs ax → ax.ctx.dj.subst σ Γ.dj →
-      (∀ h, h ∈ ax.ctx.hyps ∨ (∃ v:VR, h = v) → Provable axs Γ (h.subst σ)) →
+      (∀ h ∈ ax.ctx.hyps, Provable axs Γ (h.subst σ)) →
+      (∀ v ∈ ax.vars, Provable axs Γ (v.type, σ v)) →
       Provable axs Γ (ax.fmla.subst σ)
 ```
+
+**Note on var constructor**: Per Metamath spec §4.2.4, a variable must have its
+floating hypothesis ($f statement) in scope before use. The `v.vhyp ∈ Γ.hyps`
+requirement enforces this - you cannot use an undeclared variable.
 
 **Key lemmas available**:
 - `Expr.subst_id` - Identity substitution
