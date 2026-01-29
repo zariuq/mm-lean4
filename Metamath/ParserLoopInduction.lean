@@ -499,9 +499,15 @@ theorem feedToken_preserves_error (s : ParserState) (pos : Nat) (tk : ByteSlice)
   -- Match on s.tokp
   cases h_tokp : s.tokp with
   | comment p =>
-    -- Returns s unchanged or with tokp modified (db unchanged)
+    -- Three cases: $) closes comment, $( is nested error, else continue
     simp
-    split <;> exact h_err
+    split
+    · exact h_err  -- $) case: returns with p, db unchanged
+    · split
+      · -- $( nested comment error: mkError sets error? := some ...
+        simp only [ParserState.mkError, ParserState.withDB, DB.mkError]
+        simp
+      · exact h_err  -- else: s unchanged
   | start =>
     -- Complex case with many subcases
     simp
@@ -1574,9 +1580,16 @@ theorem feedToken_frame_behavior (s : ParserState) (pos : Nat) (tk : ByteSlice) 
   -- Case on s.tokp
   cases h_tokp : s.tokp with
   | comment p =>
-    -- Either returns s or { s with tokp := p }
+    -- Three cases: $) closes, $( is nested error, else continue
     simp
-    cases tk.eqArray "$)".toAscii <;> left <;> rfl
+    split
+    · left; rfl  -- $) case
+    · split
+      · -- $( nested comment: mkError sets error = true
+        right; right; right
+        simp only [ParserState.mkError, ParserState.withDB, DB.mkError, DB.error]
+        simp
+      · left; rfl  -- else case
   | start =>
     simp
     -- Check for $(
