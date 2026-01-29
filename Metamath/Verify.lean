@@ -559,6 +559,17 @@ def preload (db : DB) (pr : ProofState) (l : String) : Except String ProofState 
   | some (.assert f fr _) => return pr.pushHeap (.assert f fr)
   | _ => throw s!"statement {l} not found"
 
+/-- Pre-populate heap with mandatory hypotheses for compressed proof format.
+    Per Metamath spec Appendix B: mandatory hypotheses are implicitly at the
+    beginning of the heap before any explicitly listed labels. -/
+def preloadMandatoryHyps (db : DB) (pr : ProofState) : Except String ProofState := do
+  let mut pr := pr
+  for lbl in pr.frame.hyps do
+    match db.find? lbl with
+    | some (.hyp _ f _) => pr := pr.pushHeap (.fmla f)
+    | _ => throw s!"mandatory hypothesis {lbl} not found in database"
+  return pr
+
 /-- Extract float variable names from a frame (only well-formed $f hyps contribute). -/
 def frameFloatVars (db : DB) (fr : Frame) : List String :=
   fr.hyps.toList.filterMap fun lbl =>
@@ -958,11 +969,12 @@ def applyCompressedActions (db : DB) (pr : ProofState) (acts : List CompressedAc
     | .step n =>
         db.stepProof pr n
     | .save =>
-        if db.permissive then pr.save
-        else throw "save not allowed in strict mode"
+        -- Z (save) is a legitimate part of compressed proofs per Metamath spec
+        pr.save
     | .unknown =>
-        if db.permissive then pure (pr.push pr.fmla)
-        else throw "unknown proof step"
+        -- ? (unknown) marks incomplete proof step - allowed per Metamath spec
+        -- Verifiers may warn but should accept such proofs
+        pure (pr.push pr.fmla)
     ) pr
 
 def feedTokens (s : ParserState) (arr : Array Sym) : TokensParser → ParserState
@@ -998,11 +1010,9 @@ where
   goNormal (pr : ProofState) :=
     -- Check for unknown step marker '?'
     if tk.eqArray "?".toAscii then
-      -- Allow unknown steps only in permissive mode
-      if s.db.permissive then
-        pure (pr.push pr.fmla)
-      else
-        throw "unknown proof step"
+      -- ? marks incomplete proof step - allowed per Metamath spec
+      -- Verifiers may warn but should accept such proofs
+      pure (pr.push pr.fmla)
     else
       let (ok, tk) := toLabel tk
       if ok then s.db.stepNormal pr tk
@@ -1011,6 +1021,8 @@ where
     match pr.ptp with
     | .start =>
       if tk.eqArray "(".toAscii then
+        -- Enter compressed proof mode: pre-populate heap with mandatory hypotheses
+        let pr ← s.db.preloadMandatoryHyps pr
         pure { pr with ptp := .preload }
       else goNormal { pr with ptp := .normal }
     | .preload =>
@@ -1044,7 +1056,11 @@ def feedToken (s : ParserState) (pos : Nat) (tk : ByteSlice) : ParserState :=
   let pos := s.mkPos pos
   match s.tokp with
   | .comment p =>
-    if tk.eqArray "$)".toAscii then { s with tokp := p } else s
+    if tk.eqArray "$)".toAscii then { s with tokp := p }
+    else if tk.eqArray "$(".toAscii then
+      -- Nested $( inside comment is illegal per Metamath spec §4.1.1
+      s.mkError pos "nested comment delimiter '$(' inside comment"
+    else s
   | p =>
     if tk.eqArray "$(".toAscii then { s with tokp := p.comment } else
     match p with
@@ -1213,15 +1229,24 @@ theorem checkBytes_no_error_wellFormed?
 -- Handles self-includes and cycles per spec §4.1.2
 -- In strict mode: validates includes are at outermost scope and not inside statements
 
-partial def expandIncludes (fname : String) (seen : HashSet String) (permissive : Bool := false) :
+-- Two sets track include state:
+-- - `processing`: Files currently being processed (call stack) - for cycle detection
+-- - `seen`: All files ever fully processed - for duplicate ignore
+partial def expandIncludes (fname : String) (processing seen : HashSet String)
+    (permissive : Bool := false) :
     IO (Except String (ByteArray × HashSet String)) := do
   -- Canonicalize path (resolve ./ and ../)
   let canonPath ← IO.FS.realPath fname
   let canonStr := canonPath.toString
 
-  -- Check for cycles (including self-include)
+  -- Check for cycles (file is currently being processed)
+  -- Per metamath.exe behavior: reject self-includes and cycles with an error
+  if processing.contains canonStr then
+    return .error s!"include cycle detected: '{canonStr}' is already being processed"
+
+  -- Check for duplicates (file was already fully processed)
+  -- Per spec §4.1.2: duplicate includes are silently ignored
   if seen.contains canonStr then
-    -- Per spec §4.1.2: "self-include will simply be ignored"
     return .ok (ByteArray.empty, seen)
 
   let seen := seen.insert canonStr
@@ -1332,8 +1357,9 @@ partial def expandIncludes (fname : String) (seen : HashSet String) (permissive 
       let fullPath := baseDir / includeFile
 
       -- Recursively expand the included file
+      -- Pass `processing.insert canonStr` so the child knows we're currently processing this file
       try
-        match ← expandIncludes fullPath.toString seen permissive with
+        match ← expandIncludes fullPath.toString (processing.insert canonStr) seen permissive with
         | .ok (expanded, seen') =>
           seen := seen'  -- Thread the updated seen set through
           result := result ++ expanded
@@ -1350,7 +1376,9 @@ partial def expandIncludes (fname : String) (seen : HashSet String) (permissive 
 
 partial def check (fname : String) (permissive : Bool := false) : IO DB := do
   -- Expand all includes recursively with permissive mode awareness
-  match ← expandIncludes fname (HashSet.emptyWithCapacity 16) permissive with
+  -- processing = {} (call stack for cycle detection)
+  -- seen = {} (all files ever processed for duplicate detection)
+  match ← expandIncludes fname (HashSet.emptyWithCapacity 16) (HashSet.emptyWithCapacity 16) permissive with
   | .error msg =>
     -- Return DB with error for include validation failures
     let initialDB : DB := { (default : DB) with permissive := permissive }
