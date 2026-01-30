@@ -1,5 +1,5 @@
 /-
-Bridge layer between Mario's Translate.lean types and our operational Spec types.
+Bridge layer between Mario's DeclarativeSpec.lean types and our operational Spec types.
 
 This file provides bidirectional conversions with proven equivalences (roundtrip theorems).
 
@@ -11,7 +11,7 @@ Key differences:
 5. MarioContext vs Frame (DJ vs plain list)
 -/
 
-import Metamath.Translate
+import Metamath.DeclarativeSpec
 import Metamath.Spec.Core
 
 namespace Metamath.Spec.Bridge

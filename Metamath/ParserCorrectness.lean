@@ -619,7 +619,7 @@ theorem insert_preserves_others (db : DB) (pos : Pos) (label label' : String) (o
   unfold DB.insert
   cases h_obj : obj label with
   | const c =>
-      by_cases h_scope : !db.permissive && db.scopes.size > 0
+      by_cases h_scope : !db.config.allowConstInnerScope && db.scopes.size > 0
       · -- Const scope check fails: mkError, objects unchanged.
         simp [h_scope, mkError_creates_error]
         simp [DB.find?, DB.mkError]
@@ -650,7 +650,7 @@ theorem insert_duplicate_error (db : DB) (pos : Pos) (label : String) (obj : Str
   unfold DB.insert
   cases h_obj : obj label with
   | const c =>
-      by_cases h_scope : !db.permissive && db.scopes.size > 0
+      by_cases h_scope : !db.config.allowConstInnerScope && db.scopes.size > 0
       · -- Const scope check fails: mkError
         simp [h_scope, mkError_creates_error]
       · -- Const scope check passes, duplicate triggers mkError
@@ -684,11 +684,15 @@ For parser correctness, we rely on: if parsing ends with db.error = false,
 then all insertHyp calls succeeded and frame entries correspond to objects.
 -/
 
-/-- insertHyp checks for duplicate float variables (lines 304-306 in Verify.lean) -/
+/-- insertHyp checks for duplicate float variables (lines 304-306 in Verify.lean)
+
+    Note: This only applies in non-permissive mode (zar, knife). Exe mode allows duplicate $f.
+-/
 theorem insertHyp_rejects_duplicate_float
   (db : DB) (pos : Pos) (label : String) (f : Formula)
   (existing_label : String) (existing_f : Formula) :
   db.error = false →
+  db.config.allowDuplicateFloat = false →  -- Only zar/knife modes reject duplicate $f
   -- There's already a float for this variable
   existing_label ∈ db.frame.hyps.toList →
   db.find? existing_label = some (.hyp false existing_f existing_label) →
@@ -697,7 +701,7 @@ theorem insertHyp_rejects_duplicate_float
   existing_f[1]!.value = f[1]!.value →
   -- Then insertHyp creates an error
   (db.insertHyp pos label false f).error = true := by
-  intro h_no_err h_in_frame h_find h_wf_old h_wf_new h_same_var
+  intro h_no_err h_perm h_in_frame h_find h_wf_old h_wf_new h_same_var
   rcases h_wf_old with ⟨h_size_old, ⟨_, v_old, _, h1_old⟩⟩
   rcases h_wf_new with ⟨h_size_new, ⟨c_new, v_new, h0_new, h1_new⟩⟩
   have h_pos0 : 0 < f.size := by
@@ -743,7 +747,7 @@ theorem insertHyp_rejects_duplicate_float
   have h_dup' : db.floatVarOccursInFrame f[1]!.value = true := by
     simpa [h_new_val] using h_dup
   have h_check_err : (DB.insertHypChecks db pos false f).error = true := by
-    simp [DB.insertHypChecks, h_head, h_shape, h_size_ge, h_dup', h_no_err, mkError_creates_error]
+    simp [DB.insertHypChecks, h_head, h_shape, h_size_ge, h_dup', h_no_err, h_perm, mkError_creates_error]
   simp [DB.insertHyp, h_check_err]
 
 /-- insertHyp succeeds when no duplicate exists -/
@@ -868,8 +872,9 @@ theorem parser_construction_wellformed
   (Verify.checkBytes bytes).error? = none →
   WellFormedDB (Verify.checkBytes bytes) := by
   intro h_ok
+  have h_zar_no_dup : Verify.ModeConfig.zar.allowDuplicateFloat = false := rfl
   have h_wf? : (Verify.checkBytes bytes).wellFormed? = true :=
-    Verify.checkBytes_no_error_wellFormed? bytes (permissive := false) h_ok
+    Verify.checkBytes_no_error_wellFormed? bytes (config := {}) h_zar_no_dup h_ok
   exact wellFormedDB_of_wellFormed? h_wf?
 
 /-- The ultimate soundness theorem: successful parsing produces valid proofs -/

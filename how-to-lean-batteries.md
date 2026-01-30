@@ -1226,7 +1226,7 @@ theorem property_holds : ∀ e, check_property e = true := by
 - [ ] Match on the ACTUAL recursive structure (lists, trees)
 - [ ] Use `..` in `IH ..` to let Lean infer arguments
 
-**Sources**: Mario Carneiro's Metamath.Translate.lean, CompCert verification patterns, CreuSAT verification testing
+**Sources**: Mario Carneiro's Metamath.DeclarativeSpec.lean, CompCert verification patterns, CreuSAT verification testing
 
 ---
 

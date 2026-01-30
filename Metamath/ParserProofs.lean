@@ -36,11 +36,11 @@ def parserInvariant (db : DB) : Prop := WellFormedDB db
 @[simp] theorem default_db_objects : (default : DB).objects = ({} : HashMap String Object) := rfl
 
 /-- The initial database (empty objects/frame) is well-formed. -/
-theorem init_db_wellFormed (permissive : Bool := false) :
-    parserInvariant ({ (default : DB) with permissive := permissive } : DB) := by
+theorem init_db_wellFormed (mode : VerifierMode := .zar) :
+    parserInvariant ({ (default : DB) with mode := mode } : DB) := by
   classical
   -- Work with a named database value.
-  let db : DB := { (default : DB) with permissive := permissive }
+  let db : DB := { (default : DB) with mode := mode }
   change WellFormedDB db
   -- All components are empty in the default DB, so well-formedness is trivial.
   unfold WellFormedDB WellFormedFrame HypOK UniqueFloatVars

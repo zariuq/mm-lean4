@@ -176,12 +176,17 @@ theorem feedTokens_preserves_error (s : ParserState) (arr : Array Sym) (tp : Tok
         case isFalse h_float_bad =>
           exact ParserState_mkError_sets_error s pos _
       case h_2 =>  -- .ess
-        have h_withdb : (s.withDB fun db => db.insertHyp pos l true arr).db.error? ≠ none := by
-          apply withDB_preserves_error?
-          · intro h
-            exact ParserCorrectness.insertHyp_preserves_error s.db pos l true arr h
-          · exact h_err
-        exact h_withdb
+        -- Knife mode adds check for top-level $e
+        split
+        case isTrue h_knife_check =>  -- knife mode rejects top-level $e
+          exact ParserState_mkError_sets_error s pos _
+        case isFalse h_not_knife =>  -- normal case: insert the hypothesis
+          have h_withdb : (s.withDB fun db => db.insertHyp pos l true arr).db.error? ≠ none := by
+            apply withDB_preserves_error?
+            · intro h
+              exact ParserCorrectness.insertHyp_preserves_error s.db pos l true arr h
+            · exact h_err
+          exact h_withdb
       case h_3 =>  -- .ax
         have h_withdb : (s.withDB fun db => db.insertAxiom pos l arr).db.error? ≠ none := by
           apply withDB_preserves_error?
@@ -1458,17 +1463,27 @@ theorem feedTokens_hyps_behavior (s : ParserState) (arr : Array Sym) (p : Tokens
               change (s.db.insertHyp pos l false arr).error?.isSome = true
               simp [h_err]
     | ess =>
-      simp [ParserState.withDB]
-      by_cases h_ok : (s.db.insertHyp pos l true arr).error? = none
-      · right; left
-        exact ⟨l, insertHyp_call_order s.db pos l true arr h_ok⟩
-      · right; right
-        cases h_err : (s.db.insertHyp pos l true arr).error? with
-        | none => cases h_ok h_err
-        | some _ =>
-            apply withAt_propagates_error
-            change (s.db.insertHyp pos l true arr).error?.isSome = true
-            simp [h_err]
+      -- Config check for top-level $e rejection
+      by_cases h_knife : s.db.config.rejectToplevelEss = true ∧ s.db.scopes = #[]
+      · -- Config rejects top-level $e → error
+        right; right
+        apply withAt_propagates_error
+        obtain ⟨h_rej, h_scopes⟩ := h_knife
+        simp only [h_rej, h_scopes, Id_bind_eq]
+        simp [ParserState.mkError, ParserState.withDB, Verify.DB.mkError, Verify.DB.error]
+      · -- Normal case: insert the hypothesis
+        simp only [ParserState.withDB]
+        simp only [h_knife, ↓reduceIte, Id_bind_eq]
+        by_cases h_ok : (s.db.insertHyp pos l true arr).error? = none
+        · right; left
+          exact ⟨l, insertHyp_call_order s.db pos l true arr h_ok⟩
+        · right; right
+          cases h_err : (s.db.insertHyp pos l true arr).error? with
+          | none => cases h_ok h_err
+          | some _ =>
+              apply withAt_propagates_error
+              change (s.db.insertHyp pos l true arr).error?.isSome = true
+              simp [h_err]
     | ax =>
       cases insertAxiom_hyps_behavior s.db pos l arr with
       | inl h =>

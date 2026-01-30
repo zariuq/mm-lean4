@@ -183,7 +183,7 @@ theorem DB.insert_const_check_preserves_objects
     (db : Verify.DB) (pos : Verify.Pos) (l : String) (obj : String → Verify.Object) :
     let db_after_const_check := match obj l with
       | .const _ =>
-        if !db.permissive && db.scopes.size > 0 then
+        if !db.config.allowConstInnerScope && db.scopes.size > 0 then
           db.mkError pos s!"$c must be in outermost block (spec Section 4.2.8)"
         else db
       | _ => db
@@ -195,7 +195,7 @@ theorem DB.insert_const_check_preserves_find
     (db : Verify.DB) (pos : Verify.Pos) (l label : String) (obj : String → Verify.Object) :
     let db_after_const_check := match obj l with
       | .const _ =>
-        if !db.permissive && db.scopes.size > 0 then
+        if !db.config.allowConstInnerScope && db.scopes.size > 0 then
           db.mkError pos s!"$c must be in outermost block (spec Section 4.2.8)"
         else db
       | _ => db

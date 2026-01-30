@@ -38,7 +38,7 @@ lean_lib Metamath where
 
 @[default_target]
 lean_lib MetamathExperimental where
-  roots := #[`Metamath.Translate]
+  roots := #[`Metamath.DeclarativeSpec]
 
 @[default_target]
 lean_exe «mm-lean4» where

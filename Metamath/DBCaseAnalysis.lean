@@ -111,7 +111,7 @@ theorem insert_frame_unchanged (db : DB) (pos : Pos) (label : String) (obj : Str
   unfold DB.insert
   cases h_obj : obj label with
   | const =>
-      by_cases h_scope : !db.permissive && db.scopes.size > 0
+      by_cases h_scope : !db.config.allowConstInnerScope && db.scopes.size > 0
       · simp [h_scope, DB.mkError, DB.error]
       · simp [h_scope]
         by_cases h_err : db.error
@@ -157,7 +157,7 @@ theorem insert_preserves_find?_ne (db : DB) (pos : Pos) (label other : String) (
   unfold DB.insert
   cases h_obj : obj label with
   | const a =>
-      by_cases h_scope : !db.permissive && db.scopes.size > 0
+      by_cases h_scope : !db.config.allowConstInnerScope && db.scopes.size > 0
       · simp [h_scope, DB.mkError, DB.error, DB.find?]
       · simp [h_scope]
         by_cases h_err : db.error
@@ -235,7 +235,7 @@ def classifyInsert (db : DB) (_: Pos) (label : String) (obj : String → Object)
   else
     match obj label with
     | .const _ =>
-      if !db.permissive && db.scopes.size > 0 then
+      if !db.config.allowConstInnerScope && db.scopes.size > 0 then
         InsertOutcome.error_const_scope
       else
         if db.find? label |>.isSome then
@@ -352,7 +352,7 @@ theorem insert_duplicate_error (db : DB) (pos : Pos) (label : String) (obj : Str
 theorem insert_success_new (db : DB) (pos : Pos) (label : String) (obj : String → Object)
     (h_no_err : ¬(db.error = true))
     (h_no_dup : (db.find? label |>.isSome) = false)
-    (h_no_scope_err : (match obj label with | .const _ => !db.permissive && db.scopes.size > 0 | _ => false) = false) :
+    (h_no_scope_err : (match obj label with | .const _ => !db.config.allowConstInnerScope && db.scopes.size > 0 | _ => false) = false) :
     let db' := db.insert pos label obj
     db'.find? label = some (obj label) ∧ db'.error = false := by
   -- Mario's approach: Just compute it by cases on obj label!
@@ -364,9 +364,9 @@ theorem insert_success_new (db : DB) (pos : Pos) (label : String) (obj : String 
   · -- obj label = .const c
     rename_i c
     simp only
-    -- The scope check: if !db.permissive && db.scopes.size > 0 then mkError else db
+    -- The scope check: if !db.config.allowConstInnerScope && db.scopes.size > 0 then mkError else db
     -- Extract that this is false from h_no_scope_err
-    have h_scope_false : (!db.permissive && db.scopes.size > 0) = false := by
+    have h_scope_false : (!db.config.allowConstInnerScope && db.scopes.size > 0) = false := by
       -- h_no_scope_err says: (match obj label with | .const _ => ... | _ => false) = false
       -- We know obj label = .const c, so the match reduces to the const branch
       simp only [h_obj] at h_no_scope_err
@@ -524,7 +524,7 @@ theorem insert_cases (db : DB) (pos : Pos) (label : String) (obj : String → Ob
     -- Now case split on obj label
     match h_obj : obj label with
     | .const c =>
-      by_cases h_scope : !db.permissive && db.scopes.size > 0
+      by_cases h_scope : !db.config.allowConstInnerScope && db.scopes.size > 0
 
       · -- Const in inner scope: classifier = .error_const_scope
         have h_classifier : classifyInsert db pos label obj = .error_const_scope := by
@@ -558,7 +558,7 @@ theorem insert_cases (db : DB) (pos : Pos) (label : String) (obj : String → Ob
           simp only [h_classifier]
           have h_dup_false : (db.find? label |>.isSome) = false := by
             simp [h_dup]
-          have h_no_scope : (match obj label with | .const _ => !db.permissive && db.scopes.size > 0 | _ => false) = false := by
+          have h_no_scope : (match obj label with | .const _ => !db.config.allowConstInnerScope && db.scopes.size > 0 | _ => false) = false := by
             simp [h_obj, h_scope]
           have := insert_success_new db pos label obj h_err h_dup_false h_no_scope
           constructor
@@ -612,7 +612,7 @@ theorem insert_cases (db : DB) (pos : Pos) (label : String) (obj : String → Ob
           simp [h_err, h_obj, this]
         simp only [h_classifier]
         have h_dup_false : (db.find? label |>.isSome) = false := by simp [h_dup]
-        have h_no_scope : (match obj label with | .const _ => !db.permissive && db.scopes.size > 0 | _ => false) = false := by simp [h_obj]
+        have h_no_scope : (match obj label with | .const _ => !db.config.allowConstInnerScope && db.scopes.size > 0 | _ => false) = false := by simp [h_obj]
         have := insert_success_new db pos label obj h_err h_dup_false h_no_scope
         constructor
         · rw [←h_obj]; exact this.1
@@ -644,7 +644,7 @@ theorem insert_cases (db : DB) (pos : Pos) (label : String) (obj : String → Ob
           simp [h_err, h_obj, this]
         simp only [h_classifier]
         have h_dup_false : (db.find? label |>.isSome) = false := by simp [h_dup]
-        have h_no_scope : (match obj label with | .const _ => !db.permissive && db.scopes.size > 0 | _ => false) = false := by simp [h_obj]
+        have h_no_scope : (match obj label with | .const _ => !db.config.allowConstInnerScope && db.scopes.size > 0 | _ => false) = false := by simp [h_obj]
         have := insert_success_new db pos label obj h_err h_dup_false h_no_scope
         constructor
         · rw [←h_obj]; exact this.1
@@ -676,7 +676,7 @@ theorem insert_cases (db : DB) (pos : Pos) (label : String) (obj : String → Ob
           simp [h_err, h_obj, this]
         simp only [h_classifier]
         have h_dup_false : (db.find? label |>.isSome) = false := by simp [h_dup]
-        have h_no_scope : (match obj label with | .const _ => !db.permissive && db.scopes.size > 0 | _ => false) = false := by simp [h_obj]
+        have h_no_scope : (match obj label with | .const _ => !db.config.allowConstInnerScope && db.scopes.size > 0 | _ => false) = false := by simp [h_obj]
         have := insert_success_new db pos label obj h_err h_dup_false h_no_scope
         constructor
         · rw [←h_obj]; exact this.1
@@ -1313,7 +1313,7 @@ theorem insertHyp_essential_success (db : DB) (pos : Pos) (label : String) (ess 
   -- Use the structural lemma
   rw [insertHyp_eq_when_no_float_check db pos label ess f h_no_err h_head h_ess]
   have h_no_scope : (match Object.hyp ess f label with
-                     | Object.const _ => !db.permissive && db.scopes.size > 0
+                     | Object.const _ => !db.config.allowConstInnerScope && db.scopes.size > 0
                      | _ => false) = false := by simp
 
   have h_not_err : ¬(db.error = true) := by
@@ -1394,9 +1394,13 @@ theorem insertHyp_float_const_bad_shape (db : DB) (pos : Pos) (label : String) (
     · simp [h_head, DBLemmas.mkError_sets_error]
   simp [DB.insertHyp, h_checks]
 
-/-- Float with var, duplicate float case -/
+/-- Float with var, duplicate float case.
+
+    Note: Only applies in non-permissive mode (zar/knife). Exe mode allows duplicate $f.
+-/
 theorem insertHyp_float_var_dup_float (db : DB) (pos : Pos) (label : String) (f : Formula) (v : String)
     (h_no_err : db.error = false)
+    (h_perm : db.config.allowDuplicateFloat = false)  -- Only zar/knife modes reject duplicate $f
     (h_float_cond : !false && f.size >= 2)
     (h_shape : f.isFloatShape = true)
     (h_f1_var : f[1]! = .var v)
@@ -1411,7 +1415,7 @@ theorem insertHyp_float_var_dup_float (db : DB) (pos : Pos) (label : String) (f 
     simpa [hasFloatBinding, Verify.DB.floatVarOccursInFrame, floatVarMatches] using h_has_float
   have h_checks : (db.insertHypChecks pos false f).error = true := by
     unfold DB.insertHypChecks
-    simp [h_head, h_no_err, h_shape, h_size, h_f1_val, h_dup, DBLemmas.mkError_sets_error]
+    simp [h_head, h_no_err, h_shape, h_size, h_f1_val, h_dup, h_perm, DBLemmas.mkError_sets_error]
   simp [DB.insertHyp, h_checks]
 
 /-- Float with var, no dup float, but insert dup case -/
@@ -1472,7 +1476,7 @@ theorem insertHyp_float_var_success (db : DB) (pos : Pos) (label : String) (f : 
     simp at h_no_err
   have h_no_scope :
       (match Object.hyp false f label with
-       | .const _ => !db.permissive && db.scopes.size > 0
+       | .const _ => !db.config.allowConstInnerScope && db.scopes.size > 0
        | _ => false) = false := by
     simp
   have h_insert := insert_success_new db pos label (Object.hyp false f)
@@ -1487,8 +1491,12 @@ theorem insertHyp_float_var_success (db : DB) (pos : Pos) (label : String) (f : 
     rw [DBLemmas.withHyps_frame_hyps]
     simp
 
-/-- Case analysis for insertHyp -/
-theorem insertHyp_cases (db : DB) (pos : Pos) (label : String) (ess : Bool) (f : Formula) :
+/-- Case analysis for insertHyp.
+
+    Note: Requires non-permissive mode for duplicate float to create error (exe mode allows).
+-/
+theorem insertHyp_cases (db : DB) (pos : Pos) (label : String) (ess : Bool) (f : Formula)
+    (h_perm : db.config.allowDuplicateFloat = false) :  -- Required for duplicate float error
     let outcome := classifyInsertHyp db pos label ess f
     let db' := db.insertHyp pos label ess f
     match outcome with
@@ -1566,7 +1574,7 @@ theorem insertHyp_cases (db : DB) (pos : Pos) (label : String) (ess : Bool) (f :
                   simp at h
                   exact h
                 simp [h_has_float, h_shape, h_size]
-                exact insertHyp_float_var_dup_float db pos label f v h_no_err h_float_cond h_shape h_f1 h_has_float'
+                exact insertHyp_float_var_dup_float db pos label f v h_no_err h_perm h_float_cond h_shape h_f1 h_has_float'
               · -- no dup float
                 have h_no_has_float : hasFloatBinding db v = false := by simp [h_has_float]
                 by_cases h_dup : (db.find? label).isSome
@@ -1863,7 +1871,7 @@ theorem insertHyp_maintains_unique_floats (db : DB) (pos : Pos) (label : String)
 
   have h_no_scope :
       (match Object.hyp false f label with
-       | Object.const _ => !db.permissive && db.scopes.size > 0
+       | Object.const _ => !db.config.allowConstInnerScope && db.scopes.size > 0
        | _ => false) = false := by
     simp
   have h_insert := insert_success_new db pos label (Object.hyp false f)

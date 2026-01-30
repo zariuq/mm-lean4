@@ -10,7 +10,7 @@ Per Metamath Specification (Chapter 4):
 - §4.3: Proof verification algorithm
 
 This is the "small-step" operational semantics, as opposed to the "big-step"
-semantic Provable in Mario's Translate.lean (which we'll bridge to).
+semantic Provable in Mario's DeclarativeSpec.lean (which we'll bridge to).
 -/
 
 import Metamath.Spec.Core
@@ -263,7 +263,7 @@ But the inductive Prop approach has advantages:
 - §4.2.6 describes substitution constraints - we model in useAxiom constructor
 - §4.2.7 describes frames - our Frame type directly corresponds
 
-**Next layer up**: Mario's Translate.Provable provides the semantic "big-step" view.
+**Next layer up**: Mario's DeclarativeSpec.Provable provides the semantic "big-step" view.
 We will prove ProofValid ↔ Mario.Provable in Equivalence.lean.
 -/
 

@@ -6399,23 +6399,6 @@ theorem stepProof_ok_bound
       have ⟨h, _⟩ := (Array.get?_eq_some_iff (a := pr.heap) (i := n) (x := el)).1 h_get
       exact h
 
-def actionStep? : Verify.ParserState.CompressedAction → Option Nat
-  | .step n => some n
-  | _ => none
-
--- NOTE: This theorem assumed save was disallowed in strict mode.
--- Now that save is always allowed (per Metamath spec), this theorem needs
--- to be restructured to handle saves. Left as sorry for compressed proof future work.
-theorem applyCompressedActions_strict_steps
-  (db : Verify.DB) (pr pr' : Verify.ProofState)
-  (acts : List Verify.ParserState.CompressedAction) :
-  db.permissive = false →
-  Verify.ParserState.applyCompressedActions db pr acts = Except.ok pr' →
-  ∃ steps,
-    acts.mapM actionStep? = some steps ∧
-    steps.foldlM (fun pr n => Verify.DB.stepProof db pr n) pr = Except.ok pr' := by
-  sorry  -- Compressed proof soundness: future work (needs to handle Z saves)
-
 /-- Phase 8.3: Compressed proof soundness (stepProof = stepNormal).
 
 Assuming:

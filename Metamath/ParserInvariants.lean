@@ -54,8 +54,9 @@ theorem parser_success_wellformed (db : DB)
   db.error? = none → WellFormedDB db := by
   intro h_ok
   rcases h_parse with ⟨bytes, rfl⟩
+  have h_zar_no_dup : Verify.ModeConfig.zar.allowDuplicateFloat = false := rfl
   have h_wf? : (Verify.checkBytes bytes).wellFormed? = true :=
-    Verify.checkBytes_no_error_wellFormed? bytes (permissive := false) h_ok
+    Verify.checkBytes_no_error_wellFormed? bytes (config := {}) h_zar_no_dup h_ok
   exact wellFormedDB_of_wellFormed? h_wf?
 
 /-! ## Parser Behavior Lemmas
