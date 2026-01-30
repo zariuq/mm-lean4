@@ -1,24 +1,28 @@
-/-
-Semantic layer for Metamath specification - Mario Carneiro's canonical foundation.
+import Metamath.DeclarativeSpec
 
-This file re-exports Mario Carneiro's Translate.lean types as the canonical
-semantic specification of Metamath provability.
+/-!
+# Semantic Specification
+
+Re-exports Mario Carneiro's `Provable` as the canonical semantic specification.
+
+**Metamath Spec References** (Chapter 4):
+- §4.2.4: Floating hypotheses (variable typing)
+- §4.2.5: Disjoint variable constraints
+- §4.2.6: Substitution semantics
+- §4.3: Proof verification algorithm
 
 **Why Mario's layer?**
 - Proven lemmas for substitution, DJ, trim/untrim
 - Clean declarative "big-step" semantics
 - Expert-written, production-tested formalization
-- Textbook-style mathematical definitions
 
 **Relationship to Operational layer**:
 - Semantic (this file): WHAT it means for an assertion to be provable
 - Operational (Operational.lean): HOW the verifier checks proofs
 - Bridge (Equivalence.lean): Proves they're equivalent
 
-Per Mario Carneiro's Translate.lean formalization.
+See `DeclarativeSpec.lean` for the actual `Provable` definition.
 -/
-
-import Metamath.Translate
 
 namespace Metamath.Spec.Semantic
 

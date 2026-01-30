@@ -1,7 +1,41 @@
--- WIP stuff. see Metamath.Verify for the verifier
-
 import Lean.Elab.Term
 import Metamath.Verify
+
+/-!
+# Declarative Specification
+
+Mario Carneiro's canonical declarative specification of Metamath proof validity.
+This defines **what** a valid proof is mathematically (the "big-step" view),
+as opposed to **how** the verifier checks it operationally (the "small-step" view
+in `Spec/Operational.lean`).
+
+## Metamath Specification References (Chapter 4)
+
+| Section | Topic | Lean Type |
+|---------|-------|-----------|
+| §4.2.2 | Constants and Variables | `CN`, `VR`, `Sym` |
+| §4.2.3 | Expressions | `Expr`, `Expr.subst` |
+| §4.2.4 | Disjoint variable restrictions | `DJ`, `DJ.subst` |
+| §4.2.5 | Floating ($f) and essential ($e) hypotheses | `Formula`, `VR.vhyp` |
+| §4.2.6 | Assertions ($a and $p statements) | `Statement`, `Statement.WellFormed` |
+| §4.2.7 | Frames (mandatory hypotheses + DV) | `Context` |
+| §4.3 | Proof verification algorithm | `Provable` |
+
+## Key Theorem
+
+The main result (in `Spec/Equivalence.lean`) is:
+```lean
+theorem operational_iff_semantic {Γ : Database} {fr : Frame} {e : Expr}
+    (h_wf : WellFormedDatabaseStrong Γ)
+    (h_fr_nodup : FloatVarNoDup fr) :
+    Provable Γ fr e ↔
+    Semantic.Provable (dbToAxioms Γ) (frameToContext fr)
+      (exprToFormula (varMapOfFrame fr) e)
+```
+
+This establishes both soundness and completeness: the operational verifier
+accepts exactly those proofs that are valid under Mario's declarative semantics.
+-/
 
 namespace Metamath
 open Lean Elab
@@ -29,16 +63,40 @@ partial def foo : TermElabM Unit := do
 
 -- #eval foo
 
+/-! ## Core Types (§4.2.2)
+
+Per §4.2.2: "The basic Metamath language has two kinds of math symbols:
+constants and variables."
+
+The substitution distinction (§4.2.2):
+- "In a Metamath proof, a constant may not be substituted with any expression."
+- "A variable can be substituted with any expression."
+
+This distinction is enforced in `Expr.subst`: constants pass through unchanged,
+variables are replaced by the substitution function. -/
+
+/-- Constant name: the string representation of a constant symbol.
+    Examples: "wff", "|-", "(", "->", "0" -/
 def CN := String
 instance : Inhabited CN := inferInstanceAs (Inhabited String)
 instance : DecidableEq CN := inferInstanceAs (DecidableEq String)
 
+/-- Variable reference: pairs a variable with its typecode.
+    - `type`: the typecode from the $f statement (e.g., "wff", "term", "set")
+    - `i`: index to distinguish variables of the same type (e.g., P vs Q)
+
+    Per §4.2.5: "A variable must have its type specified in a $f statement
+    before it may be used in a $e, $a, or $p statement." -/
 structure VR where (type : CN) (i : Nat)
 deriving DecidableEq
 
+/-- Math symbol: either a constant or a variable (§4.2.2).
+
+    The key distinction: in `Expr.subst`, constants pass through unchanged
+    while variables are replaced by their substitution values. -/
 inductive Sym
-  | const (c : CN)
-  | var (n : VR)
+  | const (c : CN)  -- constant: not substituted
+  | var (n : VR)    -- variable: replaced by σ(n) during substitution
   deriving Inhabited, DecidableEq
 open Sym
 
@@ -47,7 +105,13 @@ def Sym.isVar : Sym → Bool
   | const _ => false
   | var _ => true
 
+/-! ## Expressions
+
+Per §4.2.2: "An expression is any sequence of math symbols, possibly empty." -/
+
+/-- Expression: a sequence of symbols (§4.2.2) -/
 def Expr := List Sym
+/-- Variable as a singleton expression -/
 def VR.expr (v : VR) : Expr := [var v]
 
 instance : Append Expr := inferInstanceAs (Append (List Sym))
@@ -60,15 +124,28 @@ def Expr.mem (e : Expr) (v : VR) : Prop := var v ∈ e
 
 scoped notation:50 a:51 " ∈' " b:51 => Expr.mem b a
 
+/-- Variables occurring in an expression -/
 def Expr.vars : Expr → List VR
   | [] => []
   | const _ :: e => vars e
   | var v :: e => v :: vars e
 
+/-! ## Substitution (§4.2.2, §4.3)
+
+Per §4.2.2: "A variable can be substituted with any expression. This sequence
+may include other variables and may even include the variable being substituted."
+
+Per §4.3: During proof verification, "Metamath determines what substitutions
+have to be made into the variables of the assertion's mandatory hypotheses
+to make them identical to the associated stack entries." -/
+
+/-- Apply substitution to an expression: replace each variable v with σ(v).
+    - Constants pass through unchanged (per §4.2.2: "a constant may not be substituted")
+    - Variables are replaced by their image under σ -/
 def Expr.subst (σ : VR → Expr) : Expr → Expr
   | [] => []
-  | const c :: e => const c :: subst σ e
-  | var v :: e => σ v ++ subst σ e
+  | const c :: e => const c :: subst σ e  -- constant: unchanged
+  | var v :: e => σ v ++ subst σ e        -- variable: replaced
 
 theorem Expr.subst_id : (e : Expr) → Expr.subst VR.expr e = e
   | [] => rfl
@@ -97,8 +174,23 @@ theorem Expr.subst_tr (σ σ' : VR → Expr) : (e : Expr) →
   | const c :: e => congrArg (const c :: .) (subst_tr _ _ e)
   | var v :: e => by simp only [subst]; rw [subst_append, subst_tr _ _ e]; rfl
 
+/-! ## Formulas (§4.2.5)
+
+Per §4.2.5: "The expression in a $f, $e, $a, or $p statement consists of a
+typecode (an active constant math symbol) followed by a sequence of zero
+or more math symbols."
+
+A Formula is a (typecode, expression) pair. Examples:
+- `("wff", [P, "->", Q])` represents "wff ( P -> Q )"
+- `("|-", [P])` represents "|- P" (P is provable)
+
+Test: metamath-test/tests/unit/test12_non-constant_typecode.mm
+  (typecode must be a constant, not a variable) -/
+
+/-- Formula: a typecode paired with an expression (§4.2.5) -/
 def Formula := CN × Expr
 
+/-- Apply substitution to formula -/
 def Formula.subst (σ : VR → Expr) : Formula → Formula
   | (c, e) => (c, e.subst σ)
 
@@ -109,9 +201,20 @@ theorem Formula.subst_tr (σ σ' : VR → Expr) : (e : Formula) →
     e.subst (subst.trans σ σ') = (e.subst σ).subst σ'
   | (c, e) => congrArg (c, .) (e.subst_tr _ _)
 
+/-- Convert a variable to its floating hypothesis formula.
+
+    Per §4.2.5: The syntax of a $f statement is "$f typecode variable $."
+    This creates a formula (typecode, [variable]).
+
+    Example: If v has type "wff" and index 0 (representing variable P),
+    then v.vhyp = ("wff", [var v]), representing "wff P".
+
+    Test: metamath-test/tests/unit/test14_variable_without_f_hypothesis.mm
+      (every variable used must have a $f hypothesis) -/
 def VR.vhyp (v : VR) : Formula := (v.type, [var v])
 instance : Coe VR Formula := ⟨VR.vhyp⟩
 
+/-- Check if two expressions have no variables in common -/
 def Expr.δ (a b : Expr) : Bool :=
   a.all fun
   | const _ => true
@@ -119,6 +222,24 @@ def Expr.δ (a b : Expr) : Bool :=
     | const _ => true
     | var b => a != b
 
+/-! ## Disjoint Variable Constraints
+
+Per §4.2.4: "The $d statement is called a disjoint-variable restriction...
+The full meaning is that if any substitution is made to its two variables
+(during the course of a proof that references a $a or $p statement
+associated with the $d), the two expressions that result from the
+substitution must have no variables in common."
+
+Interpretations (§4.2.4):
+- `$d x y $.` means "assume x and y are distinct variables."
+- `$d x ph $.` means "assume x does not occur in φ."
+- `$d ph ps $.` means "assume φ and ψ have no variables in common."
+
+Tests:
+- metamath-test/tests/unit/test09_d_with_non-variables.mm
+- metamath-test/tests/core/small/dv-violation-bad1.mm -/
+
+/-- Disjoint variable relation (§4.2.4): symmetric, irreflexive -/
 structure DJ where
   disj : VR → VR → Prop
   irr : ¬ disj x x
@@ -145,6 +266,7 @@ def DJ.mk' (disj : List (VR × VR)) : DJ where
   irr := fun h => h.1 rfl
   symm := fun ⟨h, h'⟩ => ⟨h.symm, h'.symm⟩
 
+/-- Two expressions are disjoint under dj if all variable pairs are disjoint -/
 def Expr.disjoint (dj : DJ) (e₁ e₂ : Expr) : Prop :=
   ∀ a b, a ∈' e₁ → b ∈' e₂ → dj a b
 
@@ -152,6 +274,16 @@ theorem Expr.disjoint.mono {dj₁ dj₂ : DJ} (h : dj₁ ≤ dj₂) {e₁ e₂}
     (H : Expr.disjoint dj₁ e₁ e₂) : Expr.disjoint dj₂ e₁ e₂ :=
   fun a b ha hb => h _ _ (H a b ha hb)
 
+/-- Substitution respects DV constraints.
+
+    Per §4.2.4: "if any substitution is made to [two variables in a $d],
+    the two expressions that result from the substitution must have no
+    variables in common. In addition, each possible pair of variables,
+    one from each expression, must be in a $d statement associated with
+    the statement being proved."
+
+    `DJ.subst σ dj dj'` means: if (a, b) is in the source DV relation `dj`,
+    then the substituted expressions σ(a) and σ(b) are disjoint under `dj'`. -/
 def DJ.subst (σ : VR → Expr) (dj dj' : DJ) :=
   ∀ a b, dj a b → (σ a).disjoint dj' (σ b)
 
@@ -206,6 +338,20 @@ theorem DJ.untrim_trim (dj : DJ) (P : VR → Prop) : (dj.trim P).untrim P = dj.u
   DJ.le_antisymm (DJ.untrim.mono (DJ.trim_le_self _ _) (fun _ => id))
     fun _ _ ⟨h, H⟩ => ⟨h, fun ha hb => ⟨H ha hb, ha, hb⟩⟩
 
+/-! ## Context (Frame)
+
+Per §4.2.7: "A frame is a sequence of $d, $f, and $e statements (zero or more
+of each) followed by one $a or $p statement... A frame groups together those
+hypotheses (and $d statements) relevant to an assertion."
+
+Properties (§4.2.7):
+1. Variables in $e/$a/$p must have $f hypothesis (type specified)
+2. No two $f statements for the same variable
+3. $f must occur before $e using that variable
+
+Test: metamath-test/tests/unit/test15_multiple_f_for_same_variable_bad.mm -/
+
+/-- Context: hypotheses + DV constraints (corresponds to a frame, §4.2.7) -/
 structure Context where
   hyps : List Formula
   dj : DJ
@@ -217,6 +363,19 @@ instance : LE Context := ⟨fun Γ Γ' => (∀ a, a ∈ Γ.hyps → a ∈ Γ'.hy
 
 theorem Context.refl (Γ : Context) : Γ ≤ Γ := ⟨fun _ => id, DJ.refl _⟩
 
+/-! ## Statement (Assertion) (§4.2.6)
+
+Per §4.2.6: "There are two types of assertions, $a statements (axiomatic
+assertions) and $p statements (provable assertions). Their syntax is:
+  label $a typecode math-symbol ... math-symbol $.
+  label $p typecode math-symbol ... math-symbol $= proof $."
+
+A Statement packages together the context (frame's hypotheses + DV constraints)
+with the conclusion formula. This corresponds to what §4.2.7 calls a "frame"
+combined with its assertion. -/
+
+/-- Statement: context (hypotheses + DV) paired with conclusion formula.
+    Corresponds to an assertion ($a or $p) together with its frame (§4.2.6-7). -/
 structure Statement where
   ctx : Context
   fmla : Formula
@@ -283,9 +442,30 @@ theorem Statement.trim.trimmed (s : Statement) : s.trim.trimmed := DJ.trim.trimm
 theorem Statement.trimmed.trim_eq : {s : Statement} → s.trimmed → s.trim = s
   | ⟨⟨a, b⟩, c⟩, h => by simp only [trim]; rw [DJ.trimmed.trim_eq h]
 
+/-! ## Provable (Declarative/Big-Step Semantics)
+
+Per §4.3: "Each label in a proof must be either the label of a previous
+assertion ($a or $p statement) or the label of an active hypothesis
+($e or $f statement)."
+
+This is the **declarative** specification: what makes a proof valid, without
+describing the operational details of stack manipulation.
+
+Constructors:
+- `hyp`: Reference an essential hypothesis from the context
+- `var`: Reference a floating hypothesis (variable typing)
+- `ax`: Apply an axiom/theorem with substitution
+
+The key constraint (§4.2.4, §4.3): when applying an axiom, the substitution
+must respect all DV constraints. -/
+
+/-- Declarative provability (§4.3): the "big-step" semantics -/
 inductive Provable (axs : Statement → Prop) (Γ : Context) : Formula → Prop
+  /-- Use an essential hypothesis directly -/
   | hyp (h) : h ∈ Γ.hyps → Provable axs Γ h
+  /-- Use a floating hypothesis (variable typing) -/
   | var (v:VR) : v.vhyp ∈ Γ.hyps → Provable axs Γ v
+  /-- Apply an axiom with substitution σ, proving all hypotheses -/
   | ax (σ) {ax} : axs ax → ax.ctx.dj.subst σ Γ.dj →
     (∀ h ∈ ax.ctx.hyps, Provable axs Γ (h.subst σ)) →
     (∀ v ∈ ax.vars, Provable axs Γ (v.type, σ v)) →
@@ -322,8 +502,17 @@ theorem Statement.Provable'.of {axs} {s : Statement} (h : s.Provable' axs) : s.P
 theorem Statement.Provable.trim {axs} {s : Statement} : s.trim.Provable axs ↔ s.Provable axs := by
   simp only [Provable, untrim_trim]
 
-/-- Well-formed axiom: all variables used in the formula or hypotheses have
-    floating hypotheses in the context. -/
+/-- Well-formed statement (§4.2.5, §4.2.7): all variables used in the formula
+    or hypotheses have floating hypotheses in the context.
+
+    Per §4.2.5: "A variable must have its type specified in a $f statement
+    before it may be used in a $e, $a, or $p statement."
+
+    Per §4.2.7: "The set of variables contained in its $f statements must be
+    identical to the set of variables contained in its $e, $a, and/or $p
+    statements."
+
+    Test: metamath-test/tests/unit/test14_variable_without_f_hypothesis.mm -/
 def Statement.WellFormed (s : Statement) : Prop :=
   ∀ v ∈ s.vars, v.vhyp ∈ s.ctx.hyps
 

@@ -15,7 +15,7 @@ It imports and re-exports all specification components:
    - Theorems connecting proof execution to provability
 
 3. **Semantic layer** (future Spec/Semantic.lean): Mario's mathematical foundation
-   - Will re-export Mario Carneiro's Translate.Provable
+   - Will re-export Mario Carneiro's DeclarativeSpec.Provable
    - Bridge theorems proving operational ↔ semantic equivalence
 
 This modular structure separates:
@@ -48,7 +48,7 @@ This specification covers:
 ✅ Soundness statement
 
 Future additions:
-🔲 Semantic layer (Mario's Provable from Translate.lean)
+🔲 Semantic layer (Mario's Provable from DeclarativeSpec.lean)
 🔲 Bridge theorems (Operational ↔ Semantic)
 🔲 Invariant predicates (CreuSAT-style)
 

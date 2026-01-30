@@ -28,7 +28,7 @@ def dbWithError : DB := {
   objects := ∅
   interrupt := false
   error? := some ⟨Error.error {line := 0, col := 0} "previous error", default⟩
-  permissive := false
+  config := {}  -- Default (zar) config
 }
 
 /-- Verify the DB has error = true -/
@@ -36,8 +36,8 @@ theorem dbWithError_has_error : dbWithError.error = true := by
   unfold dbWithError DB.error
   simp
 
-/-- Verify the DB is not permissive and has inner scopes -/
-theorem dbWithError_strict_inner : (!dbWithError.permissive && dbWithError.scopes.size > 0) = true := by
+/-- Verify the DB does not allow const in inner scope and has inner scopes -/
+theorem dbWithError_strict_inner : (!dbWithError.config.allowConstInnerScope && dbWithError.scopes.size > 0) = true := by
   unfold dbWithError
   simp
 
@@ -57,13 +57,13 @@ theorem insert_const_inner_different_error :
   simp
   -- After simp, we should have a goal that reduces to String inequality
   -- The error messages "c must be in outermost block" ≠ "previous error"
-  decide
+  native_decide
 
 /-- The key counterexample: insert on const in inner scope changes the DB
 
     When we call insert with a const object while:
     1. db.error = true (error already set)
-    2. db.permissive = false
+    2. db.config.allowConstInnerScope = false
     3. db.scopes.size > 0 (in inner scope)
 
     Then insert will:

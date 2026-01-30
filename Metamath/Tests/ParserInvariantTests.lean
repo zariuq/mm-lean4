@@ -27,7 +27,7 @@ def mkTestDB : DB := {
   scopes := #[]
   objects := Std.HashMap.emptyWithCapacity 8
   interrupt := false
-  permissive := false
+  mode := .zar
 }
 
 /-- Check if DB has no error -/

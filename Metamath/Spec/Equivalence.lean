@@ -7,8 +7,9 @@ This file proves the equivalence between:
 
 **The key theorem** (soundness + completeness):
 ```lean
-theorem operational_iff_semantic (h_wf : WellFormedDatabase Γ) :
-  Operational.Provable Γ fr e ↔
+theorem operational_iff_semantic {Γ : Database} {fr : Frame} {e : Expr}
+    (h_wf : WellFormedDatabaseStrong Γ) (h_fr_nodup : FloatVarNoDup fr) :
+    Provable Γ fr e ↔
     Semantic.Provable (dbToAxioms Γ) (frameToContext fr)
       (exprToFormula (varMapOfFrame fr) e)
 ```
@@ -3526,16 +3527,9 @@ theorem operational_iff_semantic {Γ : Database} {fr : Frame} {e : Expr}
 3. Show each ProofValid constructor corresponds to Mario.Provable
 4. For backward direction, reconstruct proof steps from Mario's derivation
 
-**Current status**:
-- Structure in place
-- 4 sorries in forward direction (one per constructor case)
-- 3 sorries in backward direction (one per constructor case)
-- Need to prove conversion preserves semantics
-
-**Next steps** (Phase 4 continuation):
-1. Prove forward direction first (needed for soundness)
-2. Fill in constructor cases using Bridge lemmas
-3. Prove backward direction for completeness
+**Status**: COMPLETE (zero sorries)
+- Forward: `proofValid_to_mario` proven
+- Backward: `mario_to_proofValid` proven
 -/
 
 end Metamath.Spec.Equivalence

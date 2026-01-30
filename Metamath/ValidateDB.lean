@@ -117,11 +117,11 @@ def validateFrame (db : DB) (hyps : Array String) : Except String Unit := do
 /-! ## Database Validation Entry Point -/
 
 /-- Validate an entire database file. -/
-def validateDatabase (filename : String) (permissive : Bool := false) : IO Unit := do
+def validateDatabase (filename : String) (config : ModeConfig := {}) : IO Unit := do
   IO.println s!"Validating Metamath database: {filename}"
 
   -- Parse database
-  let db ← check filename permissive
+  let db ← check filename config
   match db.error? with
   | some ⟨Error.error pos err, _⟩ =>
       IO.println s!"Parse error at {pos}: {err}"

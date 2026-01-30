@@ -64,9 +64,9 @@ theorem mkError_preserves_scopes (db : DB) (pos : Pos) (msg : String) :
   unfold DB.mkError
   rfl
 
-/-- mkError doesn't change the permissive flag -/
-theorem mkError_preserves_permissive (db : DB) (pos : Pos) (msg : String) :
-    (db.mkError pos msg).permissive = db.permissive := by
+/-- mkError doesn't change the config -/
+theorem mkError_preserves_config (db : DB) (pos : Pos) (msg : String) :
+    (db.mkError pos msg).config = db.config := by
   unfold DB.mkError
   rfl
 
@@ -123,7 +123,7 @@ theorem insert_with_error (db : DB) (pos : Pos) (label : String) (obj : String �
 theorem insert_success_updates_objects (db : DB) (pos : Pos) (label : String) (obj : String → Object)
     (h_no_error : db.error = false)
     (h_no_dup : db.find? label = none)
-    (h_not_const_inner : ¬(match obj label with | .const _ => !db.permissive && db.scopes.size > 0 | _ => false)) :
+    (h_not_const_inner : ¬(match obj label with | .const _ => !db.config.allowConstInnerScope && db.scopes.size > 0 | _ => false)) :
     (db.insert pos label obj).objects = db.objects.insert label (obj label) := by
   -- Need to prove that insert doesn't error, then use DB.insert_no_dup_objects
   -- The h_not_const_inner hypothesis ensures the const check doesn't fail
@@ -146,7 +146,7 @@ theorem insert_success_updates_objects (db : DB) (pos : Pos) (label : String) (o
 theorem insert_success_find? (db : DB) (pos : Pos) (label : String) (obj : String → Object)
     (h_no_error : db.error = false)
     (h_no_dup : db.find? label = none)
-    (h_not_const_inner : ¬(match obj label with | .const _ => !db.permissive && db.scopes.size > 0 | _ => false)) :
+    (h_not_const_inner : ¬(match obj label with | .const _ => !db.config.allowConstInnerScope && db.scopes.size > 0 | _ => false)) :
     (db.insert pos label obj).find? label = some (obj label) := by
   -- Prove that insert doesn't error, then use DB.insert_find?_self
   have h_no_err_after : (db.insert pos label obj).error = false := by
@@ -163,7 +163,7 @@ theorem insert_success_find? (db : DB) (pos : Pos) (label : String) (obj : Strin
 theorem insert_preserves_no_error (db : DB) (pos : Pos) (label : String) (obj : String → Object)
     (h_no_error : db.error = false)
     (h_no_dup : db.find? label = none)
-    (h_not_const_inner : ¬(match obj label with | .const _ => !db.permissive && db.scopes.size > 0 | _ => false)) :
+    (h_not_const_inner : ¬(match obj label with | .const _ => !db.config.allowConstInnerScope && db.scopes.size > 0 | _ => false)) :
     (db.insert pos label obj).error = false := by
   unfold DB.insert DB.error at *
   split

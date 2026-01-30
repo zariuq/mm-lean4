@@ -10,13 +10,23 @@ import Metamath.ParserInvariantsStep1
 
 open Metamath.Verify in
 def main (args : List String) : IO UInt32 := do
-  let (permissive, fname) := match args with
-  | "--permissive" :: fname :: _ => (true, fname)
-  | fname :: "--permissive" :: _ => (true, fname)
-  | fname :: _ => (false, fname)
-  | [] => (false, "set.mm")
+  -- Parse mode from args: --mode=zar|knife|exe|permissive or legacy --permissive
+  -- The VerifierMode enum provides convenient CLI names that convert to ModeConfig
+  let (mode, fname) := match args with
+  | "--permissive" :: fname :: _ => (VerifierMode.permissive, fname)  -- Fully permissive
+  | fname :: "--permissive" :: _ => (VerifierMode.permissive, fname)
+  | "--mode=knife" :: fname :: _ => (VerifierMode.knife, fname)
+  | fname :: "--mode=knife" :: _ => (VerifierMode.knife, fname)
+  | "--mode=exe" :: fname :: _ => (VerifierMode.exe, fname)
+  | fname :: "--mode=exe" :: _ => (VerifierMode.exe, fname)
+  | "--mode=permissive" :: fname :: _ => (VerifierMode.permissive, fname)
+  | fname :: "--mode=permissive" :: _ => (VerifierMode.permissive, fname)
+  | "--mode=zar" :: fname :: _ => (VerifierMode.zar, fname)
+  | fname :: "--mode=zar" :: _ => (VerifierMode.zar, fname)
+  | fname :: _ => (VerifierMode.zar, fname)
+  | [] => (VerifierMode.zar, "set.mm")
 
-  let db ← check fname permissive
+  let db ← check fname mode.toConfig
   match db.error? with
   | none =>
     IO.println s!"verified, {db.objects.size} objects"
