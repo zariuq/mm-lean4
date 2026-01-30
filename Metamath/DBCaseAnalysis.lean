@@ -308,10 +308,7 @@ theorem insert_duplicate_error (db : DB) (pos : Pos) (label : String) (obj : Str
       cases o
       · -- o = .const c_found
         rename_i c_found
-        simp [h_some]
-        -- ok is false (const never matches), so mkError
-        unfold DB.error
-        exact DBLemmas.mkError_sets_error _ _ _
+        simp [h_some, DB.error, DBLemmas.mkError_sets_error]
       · -- o = .var v_found
         rename_i v_found
         simp [h_some]
@@ -334,15 +331,9 @@ theorem insert_duplicate_error (db : DB) (pos : Pos) (label : String) (obj : Str
           unfold DB.error
           exact DBLemmas.mkError_sets_error _ _ _
       · -- o = .hyp
-        simp [h_some]
-        -- ok is false, so mkError
-        unfold DB.error
-        exact DBLemmas.mkError_sets_error _ _ _
+        simp [h_some, DB.error, DBLemmas.mkError_sets_error]
       · -- o = .assert
-        simp [h_some]
-        -- ok is false, so mkError
-        unfold DB.error
-        exact DBLemmas.mkError_sets_error _ _ _
+        simp [h_some, DB.error, DBLemmas.mkError_sets_error]
 
 /-- Helper: insert with no error and no duplicate succeeds
 
@@ -533,8 +524,7 @@ theorem insert_cases (db : DB) (pos : Pos) (label : String) (obj : String → Ob
         simp only [h_classifier]
         -- Goal: (db.insert pos label obj).error = true
         unfold DB.insert
-        simp [h_obj, h_scope]
-        exact DBLemmas.mkError_sets_error _ _ _
+        simp [h_obj, h_scope, DB.error, DBLemmas.mkError_sets_error]
 
       · -- Const in outer scope or permissive: check duplicate
         by_cases h_dup : (db.find? label).isSome

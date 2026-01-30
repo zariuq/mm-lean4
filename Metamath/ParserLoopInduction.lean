@@ -1288,8 +1288,7 @@ theorem insertAxiom_hyps_behavior (db : DB) (pos : Pos) (l : String) (fmla : For
               simp
               left; exact congrArg Frame.hyps (insert_preserves_frame db pos l (.assert fmla fr))
       | error msg =>
-          simp [h_err, Verify.DB.error]
-          right; simp [Verify.DB.mkError]
+          right; simp [h_err, Verify.DB.error, Verify.DB.mkError]
   · -- head check fails: mkError sets error
     right
     simp [h_head, Verify.DB.error, Verify.DB.mkError]
