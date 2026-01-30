@@ -4544,7 +4544,7 @@ theorem float_step_ok
 
   -- Unfold stepNormal to see it just pushes f
   unfold Verify.DB.stepNormal at h_step
-  by_cases h_mem : label ∈ pr.frame.hyps.toList
+  by_cases h_mem : label ∈ db.frame.hyps.toList
   · by_cases h_shape : f.isFloatShape
     · simp [h_find, h_mem, h_shape] at h_step
       -- h_step : Except.ok (pr.push f) = Except.ok pr'
@@ -4609,7 +4609,7 @@ theorem essential_step_ok
 
   -- Unfold stepNormal to see it just pushes f (same as float!)
   unfold Verify.DB.stepNormal at h_step
-  by_cases h_mem : label ∈ pr.frame.hyps.toList
+  by_cases h_mem : label ∈ db.frame.hyps.toList
   · by_cases h_head : f.hasConstHead
     · simp [h_find, h_mem, h_head] at h_step
       -- h_step : Except.ok (pr.push f) = Except.ok pr'
@@ -5556,6 +5556,7 @@ theorem stepNormal_sound
   (h_db_wf : WellFormedDB db)
   (h_db : toDatabase db = some Γ)
   (h_fr : toFrame db pr.frame = some fr)
+  (h_frame_eq : pr.frame = db.frame)  -- Frame equality: impl checks db.frame, proof uses pr.frame
   (h_step : Verify.DB.stepNormal db pr label = Except.ok pr') :
   ∃ stack_new steps_new, ProofStateInv db pr' Γ fr stack_new steps_new := by
   -- Dispatch on what db.find? label returns
@@ -5572,16 +5573,19 @@ theorem stepNormal_sound
     | hyp ess f lbl =>
       -- Hypothesis case: use float_step_ok or essential_step_ok
       -- stepNormal only succeeds if the hypothesis label is in the frame
-      have h_mem : label ∈ pr.frame.hyps.toList := by
-        by_cases h_mem : label ∈ pr.frame.hyps.toList
+      have h_mem : label ∈ db.frame.hyps.toList := by
+        by_cases h_mem : label ∈ db.frame.hyps.toList
         · exact h_mem
         · have : False := by
             simp [h_find, h_mem] at h_step
           cases this
 
       -- Convert the hypothesis and locate it in the spec frame
+      -- Use frame equality to convert db.frame membership to pr.frame membership
+      have h_mem_pr : label ∈ pr.frame.hyps.toList := by
+        simpa [h_frame_eq] using h_mem
       obtain ⟨h_spec, h_conv, h_in_mand⟩ :=
-        convertHyp_mem_mand db pr.frame fr label h_fr h_mem
+        convertHyp_mem_mand db pr.frame fr label h_fr h_mem_pr
 
       cases ess
       · -- Floating hypothesis
@@ -5700,6 +5704,78 @@ theorem stepNormal_sound
 
 /-! ## PHASE 7: Fold & main theorem (PROVEN) -/
 
+/-! ### Frame preservation lemmas (needed for fold induction) -/
+
+theorem stepAssert_preserves_frame_heap'
+  (db : Verify.DB) (pr pr' : Verify.ProofState)
+  (f : Verify.Formula) (fr : Verify.Frame) :
+  Verify.DB.stepAssert db pr f fr = Except.ok pr' →
+  pr'.frame = pr.frame ∧ pr'.heap = pr.heap := by
+  intro h_step
+  unfold Verify.DB.stepAssert at h_step
+  by_cases h_hyp_size : fr.hyps.size ≤ pr.stack.size
+  · simp [h_hyp_size] at h_step
+    by_cases h_head : f.hasConstHead
+    · simp [h_head] at h_step
+      by_cases h_syms_ok : Verify.DB.formulaSymsRespectFrame db f fr
+      · simp [h_syms_ok] at h_step
+        rcases (Except.bind_ok_iff).1 h_step with ⟨subst, h_check, h_rest⟩
+        rcases (Except.bind_ok_iff).1 h_rest with ⟨_, h_dv, h_rest2⟩
+        rcases (Except.bind_ok_iff).1 h_rest2 with ⟨concl, h_subst, h_pure⟩
+        cases h_pure
+        exact ⟨rfl, rfl⟩
+      · simp [h_syms_ok] at h_step
+    · simp [h_head] at h_step
+  · simp [h_hyp_size] at h_step
+
+/-- stepNormal preserves the frame field of the proof state. -/
+theorem stepNormal_preserves_frame
+  (db : Verify.DB) (pr pr' : Verify.ProofState) (label : String) :
+  Verify.DB.stepNormal db pr label = Except.ok pr' →
+  pr'.frame = pr.frame := by
+  intro h_step
+  unfold Verify.DB.stepNormal at h_step
+  cases h_find : db.find? label with
+  | none =>
+      simp [h_find] at h_step
+  | some obj =>
+      cases obj with
+      | const _ | var _ =>
+          simp [h_find] at h_step
+      | hyp ess f lbl =>
+          simp only [h_find] at h_step
+          -- Implementation checks `l ∈ db.frame.hyps.toList` (List membership)
+          by_cases h_mem : label ∈ db.frame.hyps.toList
+          · -- label is in the frame, simplify the if
+            simp only [h_mem, ↓reduceIte] at h_step
+            cases ess with
+            | true =>
+                by_cases h_head : f.hasConstHead
+                · -- hasConstHead = true, so !hasConstHead = false, so we take the else branch (push)
+                  simp only [h_head, Bool.not_true, Bool.false_eq_true, ↓reduceIte,
+                    pure, Except.pure, Except.ok.injEq] at h_step
+                  rw [← h_step]
+                  simp only [Verify.ProofState.push]
+                · -- hasConstHead ≠ true, so !hasConstHead = true, throw error
+                  simp only [h_head, Bool.not_eq_true', ↓reduceIte] at h_step
+                  exact nomatch h_step
+            | false =>
+                by_cases h_shape : f.isFloatShape
+                · -- isFloatShape = true, so !isFloatShape = false, so we take the else branch (push)
+                  simp only [h_shape, Bool.not_true, Bool.false_eq_true, ↓reduceIte,
+                    pure, Except.pure, Except.ok.injEq] at h_step
+                  rw [← h_step]
+                  simp only [Verify.ProofState.push]
+                · -- isFloatShape ≠ true, so !isFloatShape = true, throw error
+                  simp only [h_shape, Bool.not_eq_true', ↓reduceIte] at h_step
+                  exact nomatch h_step
+          · -- label is not in the frame, the step must fail (contradiction)
+            simp only [h_mem, ↓reduceIte] at h_step
+            exact nomatch h_step
+      | assert f fr lbl =>
+          simp only [h_find] at h_step
+          exact (stepAssert_preserves_frame_heap' db pr pr' f fr h_step).1
+
 /-- Phase 7.1: Folding proof steps produces Provable when ending in singleton.
 
 When we fold stepNormal over a proof array:
@@ -5723,12 +5799,13 @@ theorem fold_maintains_provable
   toDatabase db = some Γ →
   toFrame db pr_init.frame = some fr →
   WellFormedFrame db pr_init.frame →
+  pr_init.frame = db.frame →  -- Frame equality: proof state frame = database frame
   proof.foldlM (fun pr step => Verify.DB.stepNormal db pr step) pr_init = Except.ok pr_final →
   pr_init.stack = #[] →  -- Start with empty stack
   pr_final.stack.size = 1 →  -- End with singleton stack
   pr_final.stack[0]? = some e_final →  -- Extract the final expression
   Spec.Provable Γ fr (toExpr e_final) := by
-  intro h_success h_db_wf h_db h_fr h_wf h_fold h_init h_size h_final
+  intro h_success h_db_wf h_db h_fr h_wf h_frame_eq h_fold h_init h_size h_final
 
   unfold Spec.Provable
 
@@ -5759,11 +5836,13 @@ theorem fold_maintains_provable
   clear h_proof_list  -- Work with the list now
 
   -- Induction on proof_list
+  -- The invariant includes frame equality, which is preserved by stepNormal
   have h_inv_final :
-      ∀ (pl : List String) (pr_init pr_final : Verify.ProofState)
+      ∀ (pl : List String) (pr_init' pr_final : Verify.ProofState)
         (stack_spec : List Spec.Expr) (steps : List Spec.ProofStep),
-        ProofStateInv db pr_init Γ fr stack_spec steps →
-        pl.foldlM (fun pr step => Verify.DB.stepNormal db pr step) pr_init =
+        ProofStateInv db pr_init' Γ fr stack_spec steps →
+        pr_init'.frame = db.frame →  -- Frame equality invariant
+        pl.foldlM (fun pr step => Verify.DB.stepNormal db pr step) pr_init' =
           Except.ok pr_final →
         ∃ stack_final steps_final, ProofStateInv db pr_final Γ fr stack_final steps_final := by
     intro pl
@@ -5771,7 +5850,7 @@ theorem fold_maintains_provable
   | nil =>
       -- Base case: empty proof
       -- foldlM [] pr_init = ok pr_init, so pr_final = pr_init
-      intro pr_init pr_final stack_spec steps h_inv h_fold
+      intro pr_init' pr_final stack_spec steps h_inv h_frame_eq' h_fold
       simp [List.foldlM] at h_fold
       cases h_fold
       exact ⟨stack_spec, steps, h_inv⟩
@@ -5779,28 +5858,31 @@ theorem fold_maintains_provable
   | cons label rest ih =>
       -- Inductive case: label :: rest
       -- foldlM (label :: rest) pr_init = foldlM rest (stepNormal pr_init label)
-      intro pr_init pr_final stack_spec steps h_inv h_fold
+      intro pr_init' pr_final stack_spec steps h_inv h_frame_eq' h_fold
       simp only [List.foldlM_cons] at h_fold
       -- Split on the result of stepNormal
-      cases h_step : Verify.DB.stepNormal db pr_init label with
+      cases h_step : Verify.DB.stepNormal db pr_init' label with
       | error e =>
           -- If stepNormal fails, foldlM propagates the error - contradiction!
           simp [h_step, Bind.bind, Except.bind] at h_fold
       | ok pr_next =>
           -- stepNormal succeeded, continue with rest
           simp [h_step] at h_fold
+          -- Frame is preserved by stepNormal
+          have h_frame_eq_next : pr_next.frame = db.frame :=
+            (stepNormal_preserves_frame db pr_init' pr_next label h_step).trans h_frame_eq'
           obtain ⟨stack_next, steps_next, h_inv_next⟩ :=
-            stepNormal_sound db pr_init pr_next label Γ fr stack_spec steps h_inv
-              h_success h_db_wf h_inv.db_ok h_inv.frame_ok h_step
+            stepNormal_sound db pr_init' pr_next label Γ fr stack_spec steps h_inv
+              h_success h_db_wf h_inv.db_ok h_inv.frame_ok h_frame_eq' h_step
           have h_fold' :
               rest.foldlM (fun pr step => Verify.DB.stepNormal db pr step) pr_next =
                 Except.ok pr_final := by
             simpa using h_fold
-          exact ih pr_next pr_final stack_next steps_next h_inv_next h_fold'
+          exact ih pr_next pr_final stack_next steps_next h_inv_next h_frame_eq_next h_fold'
 
   -- Use the fold invariant to get a proof-valid witness
   obtain ⟨stack_final, steps_final, h_inv_final⟩ :=
-    h_inv_final proof_list pr_init pr_final [] [] h_inv_init h_list_fold
+    h_inv_final proof_list pr_init pr_final [] [] h_inv_init h_frame_eq h_list_fold
 
   -- Compute the final stack view from the array facts
   have h_view_final : viewStack pr_final.stack = [toExpr e_final] := by
@@ -5893,11 +5975,12 @@ theorem verify_impl_sound
   obtain ⟨fr, h_frame⟩ := h_frame
 
   -- Step 3: Use fold_maintains_provable to get Provable directly!
+  -- The initial proof state has frame = db.frame, so frame equality is rfl
   have h_provable : Spec.Provable Γ fr (toExpr f) :=
     fold_maintains_provable db proof
       ⟨⟨0, 0⟩, label, f, db.frame, #[], #[], Verify.ProofTokenParser.normal⟩
       pr_final Γ fr f
-      h_success h_db_wf h_db h_frame h_db_wf.1 h_fold rfl h_size h_stack
+      h_success h_db_wf h_db h_frame h_db_wf.1 rfl h_fold rfl h_size h_stack
 
   -- Step 4: Package the result
   exact ⟨Γ, fr, h_db, h_frame, h_provable⟩
@@ -5934,12 +6017,12 @@ theorem stepProof_equiv_stepNormal
   (Γ : Spec.Database) (fr : Spec.Frame) :
   toDatabase db = some Γ →
   toFrame db pr.frame = some fr →
-  WellFormedFrame db pr.frame →
+  WellFormedFrame db db.frame →  -- Uses db.frame since impl checks db.frame.hyps
   (∃ obj, db.find? label = some obj ∧
     match obj with
     | .const _ => False  -- Symbol declarations are not valid proof steps
     | .var _ => False    -- Symbol declarations are not valid proof steps
-    | .hyp _ f _ => pr.heap[n]? = some (.fmla f) ∧ label ∈ pr.frame.hyps.toList
+    | .hyp _ f _ => pr.heap[n]? = some (.fmla f) ∧ label ∈ db.frame.hyps.toList
     | .assert f fr' _ => pr.heap[n]? = some (.assert f fr')) →
   Verify.DB.stepProof db pr n = Verify.DB.stepNormal db pr label := by
   intro h_db h_fr h_frame_wf ⟨obj, h_find, h_heap⟩
@@ -5969,14 +6052,14 @@ theorem stepProof_equiv_stepNormal
           exact h_heap_get.symm
         rw [this]
         -- Use frame well-formedness to show the runtime checks pass
-        obtain ⟨i, hi, h_lbl_eq⟩ := toList_mem_implies_index pr.frame.hyps label h_mem
+        obtain ⟨i, hi, h_lbl_eq⟩ := toList_mem_implies_index db.frame.hyps label h_mem
         have h_ok := h_frame_wf.1 i hi
         rcases h_ok with ⟨ess', f_wf, lbl', h_find_wf, h_wf_float, h_wf_ess⟩
-        have h_bang : pr.frame.hyps[i]! = pr.frame.hyps[i] := by simp [hi]
-        have h_lbl_eq' : label = pr.frame.hyps[i] := by
+        have h_bang : db.frame.hyps[i]! = db.frame.hyps[i] := by simp [hi]
+        have h_lbl_eq' : label = db.frame.hyps[i] := by
           calc
-            label = pr.frame.hyps[i]! := by symm; exact h_lbl_eq
-            _ = pr.frame.hyps[i] := h_bang
+            label = db.frame.hyps[i]! := by symm; exact h_lbl_eq
+            _ = db.frame.hyps[i] := h_bang
         have h_find_wf' : db.find? label = some (Verify.Object.hyp ess' f_wf lbl') := by
           simpa [h_lbl_eq'] using h_find_wf
         have h_eq :
@@ -5994,7 +6077,7 @@ theorem stepProof_equiv_stepNormal
               have h0_eq : f[0] = Verify.Sym.const c := by
                 simpa [getElem!_pos f 0 h_size] using h_const
               simp [h_size, h0_eq]
-            have h_mem' : label ∈ pr.frame.hyps := by
+            have h_mem' : label ∈ db.frame.hyps := by
               simpa using h_mem
             simp [h_mem', h_head]
         | false =>
@@ -6009,7 +6092,7 @@ theorem stepProof_equiv_stepNormal
               have h1' : f[1] = Verify.Sym.var v := by
                 simpa [getElem!_pos f 1 h_pos1] using h1
               simp [h_size2, h0', h1']
-            have h_mem' : label ∈ pr.frame.hyps := by
+            have h_mem' : label ∈ db.frame.hyps := by
               simpa using h_mem
             simp [h_mem', h_shape]
       | assert _ _ =>
@@ -6074,7 +6157,7 @@ theorem preload_sound
       -- Variables: preload throws error
       simp [h_find] at h_preload
     | hyp ess f lbl =>
-      by_cases h_mem : label ∈ pr.frame.hyps.toList
+      by_cases h_mem : label ∈ db.frame.hyps.toList
       · -- Hypothesis in frame: preload pushes formula
         simp [h_find, h_mem] at h_preload
         injection h_preload with h_eq
@@ -6140,7 +6223,7 @@ theorem preload_ok_heapEl
     | var _ =>
       simp [h_find] at h_preload
     | hyp ess f lbl =>
-      by_cases h_mem : label ∈ pr.frame.hyps.toList
+      by_cases h_mem : label ∈ db.frame.hyps.toList
       · simp [h_find, h_mem] at h_preload
         injection h_preload with h_eq
         refine ⟨Verify.Object.hyp ess f lbl, .fmla f, rfl, ?_, ?_⟩
@@ -6167,10 +6250,10 @@ theorem preload_ok_hyp_mem
   (label : String) (ess : Bool) (f : Verify.Formula) (lbl : String) :
   Verify.DB.preload db pr label = Except.ok pr' →
   db.find? label = some (Verify.Object.hyp ess f lbl) →
-  label ∈ pr.frame.hyps.toList := by
+  label ∈ db.frame.hyps.toList := by
   intro h_preload h_find
   unfold Verify.DB.preload at h_preload
-  by_cases h_mem : label ∈ pr.frame.hyps.toList
+  by_cases h_mem : label ∈ db.frame.hyps.toList
   · exact h_mem
   · simp [h_find, h_mem] at h_preload
 
@@ -6214,13 +6297,17 @@ theorem preload_fold_heap_toList
           _ = pr_init.heap.toList ++ (el :: els) := by
               simp [List.append_assoc]
 
+/-- If preload fold succeeds and a label in the list is a hypothesis,
+    then that label is in the database scope (db.frame.hyps).
+    Note: Returns db.frame membership, not pr_init.frame, because
+    the implementation checks db.frame for scope. -/
 theorem preload_fold_hyp_mem
   (db : Verify.DB) (labels : List String)
   (pr_init pr_final : Verify.ProofState) :
   labels.foldlM (Verify.DB.preload db) pr_init = Except.ok pr_final →
   ∀ label ∈ labels,
     ∀ ess f lbl, db.find? label = some (Verify.Object.hyp ess f lbl) →
-      label ∈ pr_init.frame.hyps.toList := by
+      label ∈ db.frame.hyps.toList := by
   revert pr_init
   induction labels with
   | nil =>
@@ -6238,13 +6325,11 @@ theorem preload_fold_hyp_mem
             simpa [h_preload] using h_fold
           cases h_mem with
           | head =>
-              -- label' = label
+              -- label' = label, use preload_ok_hyp_mem which returns db.frame membership
               exact preload_ok_hyp_mem db pr_init pr_mid label ess f lbl h_preload h_find
           | tail _ h_mem_tail =>
-              have h_mid := ih pr_mid h_rest label' h_mem_tail ess f lbl h_find
-              have h_frame : pr_mid.frame = pr_init.frame :=
-                preload_preserves_frame db pr_init pr_mid label h_preload
-              simpa [h_frame] using h_mid
+              -- Recursive case: db.frame doesn't change, so direct recursion works
+              exact ih pr_mid h_rest label' h_mem_tail ess f lbl h_find
 
 theorem preload_fold_preserves_frame
   (db : Verify.DB) (labels : List String)
@@ -6416,7 +6501,7 @@ theorem compressed_proof_sound
   (Γ : Spec.Database) (fr : Spec.Frame) :
   toDatabase db = some Γ →
   toFrame db pr_init.frame = some fr →
-  WellFormedFrame db pr_init.frame →
+  WellFormedFrame db db.frame →  -- Uses db.frame since impl checks db.frame.hyps
   pr_init.heap = #[] →
   labels.foldlM (Verify.DB.preload db) pr_init = Except.ok pr_preload →
   steps.foldlM (fun pr n => Verify.DB.stepProof db pr n) pr_preload = Except.ok pr_final →
@@ -6494,7 +6579,7 @@ theorem compressed_proof_sound
                 | .var _ => False
                 | .hyp _ f _ =>
                     pr.heap[n]? = some (.fmla f) ∧
-                    (labels[n]!) ∈ pr.frame.hyps.toList
+                    (labels[n]!) ∈ db.frame.hyps.toList
                 | .assert f fr _ =>
                     pr.heap[n]? = some (.assert f fr) := by
               refine ⟨obj, h_find, ?_⟩
@@ -6508,12 +6593,11 @@ theorem compressed_proof_sound
                     simpa [heapElOfObj] using h_el_obj.symm
                   have h_heap : pr.heap[n]? = some (.fmla f) := by
                     simpa [h_el] using h_heap_el'
-                  have h_mem_frame : labels[n]! ∈ pr_init.frame.hyps.toList :=
+                  -- preload_fold_hyp_mem now returns db.frame membership directly
+                  have h_mem_frame : labels[n]! ∈ db.frame.hyps.toList :=
                     preload_fold_hyp_mem db labels pr_init pr_preload h_preload
                       (labels[n]!) h_mem_label ess f lbl h_find
-                  have h_mem_frame' : labels[n]! ∈ pr.frame.hyps.toList := by
-                    simpa [h_frame_pr] using h_mem_frame
-                  exact ⟨h_heap, h_mem_frame'⟩
+                  exact ⟨h_heap, h_mem_frame⟩
               | assert f fr lbl =>
                   have h_el : el = .assert f fr := by
                     simpa [heapElOfObj] using h_el_obj.symm
@@ -6522,13 +6606,12 @@ theorem compressed_proof_sound
                   exact h_heap
             have h_fr_pr : toFrame db pr.frame = some fr := by
               simpa [h_frame_pr] using h_fr
-            have h_wf_pr : WellFormedFrame db pr.frame := by
-              simpa [h_frame_pr] using h_wf
+            -- stepProof_equiv_stepNormal now uses db.frame well-formedness
             have h_eq_step :
                 Verify.DB.stepProof db pr n =
                   Verify.DB.stepNormal db pr (labels[n]!) :=
               stepProof_equiv_stepNormal db pr n (labels[n]!) Γ fr
-                h_db h_fr_pr h_wf_pr h_heap_obj
+                h_db h_fr_pr h_wf h_heap_obj
             have h_stepNormal : Verify.DB.stepNormal db pr (labels[n]!) = Except.ok pr_next := by
               simpa [h_eq_step] using h_step
             have h_pres := stepProof_preserves_frame_heap db pr pr_next n h_step

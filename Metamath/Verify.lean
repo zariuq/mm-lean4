@@ -397,14 +397,26 @@ def mkError (s : DB) (pos : Pos) (msg : String) : DB :=
 @[simp] theorem mkError_config (s : DB) (pos : Pos) (msg : String) :
     (s.mkError pos msg).config = s.config := rfl
 
+@[simp] theorem mkError_error (s : DB) (pos : Pos) (msg : String) :
+    (s.mkError pos msg).error = true := rfl
+
+@[simp] theorem mkError_error?_isSome (s : DB) (pos : Pos) (msg : String) :
+    (s.mkError pos msg).error?.isSome = true := rfl
+
 def pushScope (s : DB) : DB :=
   { s with scopes := s.scopes.push s.frame.size }
+
+@[simp] theorem pushScope_config (s : DB) : (s.pushScope).config = s.config := rfl
 
 def popScope (pos : Pos) (db : DB) : DB :=
   if let some sc := db.scopes.back? then
     { db with frame := db.frame.shrink sc, scopes := db.scopes.pop }
   else
     db.mkError pos "can't pop global scope"
+
+@[simp] theorem popScope_config (pos : Pos) (s : DB) : (s.popScope pos).config = s.config := by
+  unfold popScope
+  cases h : s.scopes.back? <;> simp [DB.mkError_config]
 
 def find? (db : DB) (l : String) : Option Object := db.objects[l]?
 
@@ -423,11 +435,17 @@ def isSym (db : DB) (tk : String) : Bool :=
 @[inline] def withFrame (f : Frame → Frame) (db : DB) : DB :=
   { db with frame := f db.frame }
 
+@[simp] theorem withFrame_config (f : Frame → Frame) (s : DB) : (s.withFrame f).config = s.config := rfl
+
 @[inline] def withDJ (f : Array DJ → Array DJ) (db : DB) : DB :=
   db.withFrame fun ⟨dj, hyps⟩ => ⟨f dj, hyps⟩
 
+@[simp] theorem withDJ_config (f : Array DJ → Array DJ) (s : DB) : (s.withDJ f).config = s.config := rfl
+
 @[inline] def withHyps (f : Array String → Array String) (db : DB) : DB :=
   db.withFrame fun ⟨dj, hyps⟩ => ⟨dj, f hyps⟩
+
+@[simp] theorem withHyps_config (f : Array String → Array String) (s : DB) : (s.withHyps f).config = s.config := rfl
 
 def insert (db : DB) (pos : Pos) (l : String) (obj : String → Object) : DB :=
   -- Spec Section 4.2.8: $c must be in outermost block only
@@ -446,6 +464,14 @@ def insert (db : DB) (pos : Pos) (l : String) (obj : String → Object) : DB :=
     if ok then db else db.mkError pos s!"duplicate symbol/assert {l}"
   else
     { db with objects := db.objects.insert l (obj l) }
+
+/-- `insert` preserves `config`. -/
+@[simp] theorem insert_config (db : DB) (pos : Pos) (l : String) (obj : String → Object) :
+    (db.insert pos l obj).config = db.config := by
+  unfold insert
+  -- All branches either return db with config intact, or mkError which preserves config,
+  -- or construct a new DB with explicit config := db.config
+  repeat (first | split | simp [DB.mkError_config, DB.mkError_error] | rfl)
 
 /-- Equation lemma: When db has no error and db.find? l = none and insert doesn't error,
     it adds to objects. -/
@@ -553,12 +579,26 @@ def insertHypChecks (db : DB) (pos : Pos) (ess : Bool) (f : Formula) : DB :=
     else db
   else db
 
+@[simp] theorem insertHypChecks_config (db : DB) (pos : Pos) (ess : Bool) (f : Formula) :
+    (db.insertHypChecks pos ess f).config = db.config := by
+  unfold insertHypChecks
+  -- `mkError` preserves config, and no branch assigns to `config`.
+  repeat (first | split | simp [DB.error, DB.mkError_config, DB.mkError_error] | rfl)
+
 def insertHyp (db : DB) (pos : Pos) (l : String) (ess : Bool) (f : Formula) : DB :=
   let db := db.insertHypChecks pos ess f
   if db.error then db else
   let db := db.insert pos l (.hyp ess f)
   if db.error then db else
     db.withHyps fun hyps => hyps.push l
+
+@[simp] theorem insertHyp_config (db : DB) (pos : Pos) (l : String) (ess : Bool) (f : Formula) :
+    (db.insertHyp pos l ess f).config = db.config := by
+  unfold insertHyp
+  -- Each step preserves config: insertHypChecks, insert, withHyps
+  simp only [DB.error]
+  split <;> try simp [DB.insertHypChecks_config]
+  split <;> simp [DB.insertHypChecks_config, DB.insert_config, DB.withHyps_config]
 
 def trimFrameKeep (db : DB) (vars : HashSet String) (l : String) : Bool :=
   match db.find? l with
@@ -618,6 +658,24 @@ def insertAxiom (db : DB) (pos : Pos) (l : String) (fmla : Formula) : DB :=
       else db.insert pos l (.assert fmla fr)
     | .error msg => db.mkError pos msg
 
+@[simp] theorem insertAxiom_config (db : DB) (pos : Pos) (l : String) (fmla : Formula) :
+    (db.insertAxiom pos l fmla).config = db.config := by
+  unfold insertAxiom
+  by_cases h_head : fmla.hasConstHead
+  · simp only [h_head, ↓reduceIte, DB.error]
+    split  -- split on db.error?.isSome
+    · simp  -- error case: return db unchanged
+    · -- no error, split on trimFrame' result
+      cases h_trim : db.trimFrame' fmla with
+      | error msg => simp [DB.mkError_config]
+      | ok fr =>
+        simp only []
+        split  -- split on db.interrupt
+        · simp  -- interrupt: set error? with same config
+        · simp [DB.insert_config]  -- normal: insert preserves config
+  · -- hasConstHead = false: mkError sets error, so returns the errored db
+    simp only [h_head, Bool.false_eq_true, ↓reduceIte, DB.mkError_error, DB.mkError_config]
+
 def mkProofState (_db : DB) (pos : Pos) (l : String) (fmla : Formula) (fr : Frame) :
     ProofState := Id.run do
   ⟨pos, l, fmla, fr, #[], #[], .start⟩
@@ -625,10 +683,11 @@ def mkProofState (_db : DB) (pos : Pos) (l : String) (fmla : Formula) (fr : Fram
 def preload (db : DB) (pr : ProofState) (l : String) : Except String ProofState :=
   match db.find? l with
   | some (.hyp _ f _) =>
-      if l ∈ pr.frame.hyps.toList then
+      -- Check db.frame (all active hypotheses in scope), NOT pr.frame (trimmed mandatory)
+      if l ∈ db.frame.hyps.toList then
         return pr.pushHeap (.fmla f)
       else
-        throw s!"hypothesis {l} not in frame"
+        throw s!"hypothesis {l} not in database scope"
   | some (.assert f fr _) => return pr.pushHeap (.assert f fr)
   | _ => throw s!"statement {l} not found"
 
@@ -858,7 +917,8 @@ def stepAssert (db : DB) (pr : ProofState) (f : Formula) : Frame → Except Stri
 def stepNormal (db : DB) (pr : ProofState) (l : String) : Except String ProofState :=
   match db.find? l with
   | some (.hyp ess f _) =>
-      if l ∈ pr.frame.hyps.toList then
+      -- Check db.frame (all active hypotheses in scope), NOT pr.frame (trimmed mandatory)
+      if l ∈ db.frame.hyps.toList then
         if ess then
           if !f.hasConstHead then
             throw "hypothesis has no constant head"
@@ -870,7 +930,7 @@ def stepNormal (db : DB) (pr : ProofState) (l : String) : Except String ProofSta
           else
             return pr.push f
       else
-        throw s!"hypothesis {l} not in frame"
+        throw s!"hypothesis {l} not in database scope"
   | some (.assert f fr _) => db.stepAssert pr f fr
   | _ => throw s!"statement {l} not found"
 
@@ -945,16 +1005,31 @@ structure ParserState where
 
 namespace ParserState
 
+-- Helper lemmas for Id monad proofs
+@[simp] theorem pure_db_config (s : ParserState) : (pure s : Id ParserState).db.config = s.db.config := rfl
+@[simp] theorem Id_run_db_config (m : Id ParserState) : (Id.run m).db.config = m.db.config := rfl
+
 @[inline] def withDB (f : DB → DB) (s : ParserState) : ParserState :=
   { s with db := f s.db }
+
+@[simp] theorem withDB_db_config (f : DB → DB) (s : ParserState) :
+    (s.withDB f).db.config = (f s.db).config := rfl
 
 def mkPos (s : ParserState) (pos : Nat) : Pos := ⟨s.line, pos - s.linepos⟩
 
 def mkError (s : ParserState) (pos : Pos) (msg : String) : ParserState :=
   s.withDB fun db => db.mkError pos msg
 
+@[simp] theorem mkError_db_config (s : ParserState) (pos : Pos) (msg : String) :
+    (s.mkError pos msg).db.config = s.db.config := by
+  simp [ParserState.mkError, ParserState.withDB]
+
 def mkErrorAt (s : ParserState) (pos : Pos) (l msg : String) : ParserState :=
   s.mkError pos s!"at {l}: {msg}"
+
+@[simp] theorem mkErrorAt_db_config (s : ParserState) (pos : Pos) (l msg : String) :
+    (s.mkErrorAt pos l msg).db.config = s.db.config := by
+  simp [ParserState.mkErrorAt]
 
 def withAt (l : String) (f : Unit → ParserState) : ParserState :=
   let s := f ()
@@ -962,16 +1037,46 @@ def withAt (l : String) (f : Unit → ParserState) : ParserState :=
     s.withDB fun db => { db with error? := some ⟨.error pos s!"at {l}: {msg}", i⟩ }
   else s
 
+@[simp] theorem withAt_db_config (l : String) (f : Unit → ParserState) :
+    (ParserState.withAt l f).db.config = (f ()).db.config := by
+  unfold ParserState.withAt
+  -- `withAt` only rewrites the error message (if the interrupt is an `.error`), and does not touch `config`.
+  generalize hs : f () = s0
+  cases h_err : s0.db.error? with
+  | none =>
+      simp [hs, h_err]
+  | some intr =>
+      cases intr with
+      | mk e idx =>
+          cases e <;> simp [hs, h_err, ParserState.withDB]
+
 def label (s : ParserState) (pos : Pos) (tk : ByteSlice) : ParserState :=
   let (ok, tk) := toLabel tk
   if ok then { s with tokp := .label pos tk }
   else s.mkError pos s!"invalid label '{tk}'"
+
+@[simp] theorem label_db_config (s : ParserState) (pos : Pos) (tk : ByteSlice) :
+    (s.label pos tk).db.config = s.db.config := by
+  unfold ParserState.label
+  -- Split on the if condition (ok = true)
+  split <;> split <;> simp [ParserState.mkError_db_config]
 
 def withMath (s : ParserState) (pos : Pos) (tk : ByteSlice)
     (f : ParserState → String → ParserState) : ParserState :=
   let (ok, tk) := toMath tk
   if !ok then s.mkError pos s!"invalid math string '{tk}'" else
   f s tk
+
+@[simp] theorem withMath_db_config (s : ParserState) (pos : Pos) (tk : ByteSlice)
+    (f : ParserState → String → ParserState)
+    (hf : ∀ tk', (f s tk').db.config = s.db.config) :
+    (s.withMath pos tk f).db.config = s.db.config := by
+  unfold ParserState.withMath
+  split
+  · -- Let binding for (ok, tk)
+    split
+    · simp [ParserState.mkError_db_config]  -- !ok case
+    · exact hf _  -- ok case
 
 -- Proof-friendly djvars loop (recursive, avoids forIn elaboration).
 def djvars_loop_aux (arr : Array String) (s : ParserState) (pos : Pos) (tk : String) (i : Nat) : ParserState :=
@@ -987,11 +1092,55 @@ def djvars_loop_aux (arr : Array String) (s : ParserState) (pos : Pos) (tk : Str
     { s with tokp := .djvars (arr.push tk) }
 termination_by arr.size - i
 
+@[simp] theorem djvars_loop_aux_db_config (arr : Array String) (s : ParserState)
+    (pos : Pos) (tk : String) (i : Nat) :
+    (djvars_loop_aux arr s pos tk i).db.config = s.db.config := by
+  -- Induction on the remainder `arr.size - i`.
+  refine Nat.rec (motive := fun m => ∀ i (s : ParserState), arr.size - i = m →
+      (djvars_loop_aux arr s pos tk i).db.config = s.db.config) ?base ?step (arr.size - i) i s rfl
+  · intro i s hs
+    have hi : ¬ i < arr.size := by
+      intro hi
+      have : arr.size - i > 0 := Nat.sub_pos_of_lt hi
+      simpa [hs] using this
+    simp [djvars_loop_aux, hi]
+  · intro m ih i s hs
+    have hi : i < arr.size := by
+      by_cases hi' : i < arr.size
+      · exact hi'
+      ·
+        have hz : arr.size - i = 0 := Nat.sub_eq_zero_of_le (Nat.le_of_not_gt hi')
+        have : False := by
+          -- `hs` says `arr.size - i = Nat.succ m`, contradicting `hz`.
+          simpa [hz] using hs
+        exact False.elim this
+    -- Split on duplicate variable.
+    have hs' : arr.size - (i + 1) = m := by
+      -- `arr.size - (i+1) = pred (arr.size - i)` and `pred (succ m) = m`.
+      simp only [Nat.add_one, Nat.sub_succ, hs, Nat.pred_succ]
+    -- Unfold one step and discharge each branch.
+    unfold djvars_loop_aux
+    simp only [hi, ↓reduceDIte]
+    split  -- split on arr[i] == tk
+    · -- duplicate case: mkError preserves config
+      simp [ParserState.mkError_db_config]
+    · -- non-duplicate: recurse, and `withDB`/`withDJ` preserve config
+      have h_cfg : (s.withDB (fun db => db.withDJ fun dj => dj.push (if arr[i] < tk then (arr[i], tk) else (tk, arr[i])))).db.config = s.db.config := by
+        simp [ParserState.withDB, DB.withDJ_config]
+      -- Apply IH on the recursive call and rewrite the state's config back to `s`.
+      simpa [h_cfg] using ih (i + 1) _ hs'
+
 def djvars_loop (arr : Array String) (s : ParserState) (pos : Pos) (tk : String) : ParserState :=
   if s.db.isVar tk then
     djvars_loop_aux arr s pos tk 0
   else
     s.mkError pos s!"{tk} is not a variable"
+
+@[simp] theorem djvars_loop_db_config (arr : Array String) (s : ParserState)
+    (pos : Pos) (tk : String) :
+    (djvars_loop arr s pos tk).db.config = s.db.config := by
+  unfold djvars_loop
+  by_cases h : s.db.isVar tk <;> simp [h, ParserState.mkError_db_config, djvars_loop_aux_db_config]
 
 def sym (s : ParserState) (pos : Pos) (tk : ByteSlice) (f : String → Object) : ParserState :=
   if tk.eqArray "$.".toAscii then
@@ -999,14 +1148,34 @@ def sym (s : ParserState) (pos : Pos) (tk : ByteSlice) (f : String → Object) :
   else s.withMath pos tk fun s tk =>
     s.withDB fun db => db.insert pos tk f
 
+@[simp] theorem sym_db_config (s : ParserState) (pos : Pos) (tk : ByteSlice) (f : String → Object) :
+    (s.sym pos tk f).db.config = s.db.config := by
+  unfold ParserState.sym ParserState.withMath
+  by_cases h_end : tk.eqArray "$.".toAscii
+  · simp [h_end]
+  · simp only [h_end, Bool.false_eq_true, ↓reduceIte]
+    by_cases h_ok : (toMath tk).fst = false
+    · simp [h_ok, ParserState.mkError_db_config]
+    · simp [h_ok, ParserState.withDB, DB.insert_config]
+
 def resumeAxiom (s : ParserState)
     (pos : Pos) (l : String) (fmla : Formula) (fr : Frame) : ParserState :=
   s.withDB fun db => db.insert pos l (.assert fmla fr)
+
+@[simp] theorem resumeAxiom_db_config (s : ParserState)
+    (pos : Pos) (l : String) (fmla : Formula) (fr : Frame) :
+    (s.resumeAxiom pos l fmla fr).db.config = s.db.config := by
+  simp [ParserState.resumeAxiom, ParserState.withDB, DB.insert_config]
 
 def resumeThm (s : ParserState)
     (pos : Pos) (l : String) (fmla : Formula) (fr : Frame) : ParserState :=
   let pr := s.db.mkProofState pos l fmla fr
   { s with tokp := .proof pr }
+
+@[simp] theorem resumeThm_db_config (s : ParserState)
+    (pos : Pos) (l : String) (fmla : Formula) (fr : Frame) :
+    (s.resumeThm pos l fmla fr).db.config = s.db.config := by
+  simp [ParserState.resumeThm]
 
 inductive CompressedAction
   | step (n : Nat)
@@ -1084,6 +1253,17 @@ def feedTokens (s : ParserState) (arr : Array Sym) : TokensParser → ParserStat
         else s.resumeThm pos l arr fr
       | .error msg => s.mkError pos msg
 
+@[simp] theorem feedTokens_db_config (s : ParserState) (arr : Array Sym) (p : TokensParser) :
+    (s.feedTokens arr p).db.config = s.db.config := by
+  cases p with
+  | mk k pos l =>
+      -- `withAt` only rewrites error messages; it doesn't touch the DB config.
+      unfold ParserState.feedTokens
+      simp only [ParserState.withAt_db_config, ParserState.Id_run_db_config]
+      -- Split on all conditions and handle each case
+      repeat (first | split | simp [ParserState.mkError_db_config, ParserState.withDB, DB.insertHyp_config,
+        DB.insertAxiom_config, ParserState.resumeThm_db_config, ParserState.pure_db_config] | rfl)
+
 def feedProof (s : ParserState) (tk : ByteSlice) (pr : ProofState) : ParserState :=
   withAt pr.label fun _ =>
     match go pr with
@@ -1127,6 +1307,14 @@ where
       pr ← applyCompressedActions s.db pr acts
       pure { pr with ptp := .compressed chr }
 
+@[simp] theorem feedProof_db_config (s : ParserState) (tk : ByteSlice) (pr : ProofState) :
+    (s.feedProof tk pr).db.config = s.db.config := by
+  -- `go` only manipulates the proof state; the DB is changed only via `mkError` on failure.
+  unfold ParserState.feedProof
+  simp only [ParserState.withAt_db_config]
+  -- Split on match result: ok returns unchanged db, error uses mkError
+  split <;> simp [ParserState.mkError_db_config]
+
 def finishProof (s : ParserState) : ProofState → ParserState
   | ⟨pos, l, fmla, fr, _, stack, ptp⟩ => withAt l fun _ => Id.run do
     let s := { s with tokp := .start }
@@ -1139,6 +1327,35 @@ def finishProof (s : ParserState) : ProofState → ParserState
     unless stack[0]! == fmla do
       return s.mkError pos "theorem does not prove what it claims"
     s.withDB fun db => db.insert pos l (.assert fmla fr)
+
+@[simp] theorem finishProof_db_config (s : ParserState) (pr : ProofState) :
+    (s.finishProof pr).db.config = s.db.config := by
+  cases pr with
+  | mk pos l fmla fr heap stack ptp =>
+      unfold ParserState.finishProof
+      simp only [ParserState.withAt_db_config, Id.run]
+      -- The function returns either mkError or insert via withDB; all preserve config
+      cases ptp with
+      | start => simp [ParserState.mkError_db_config]
+      | preload => simp [ParserState.mkError_db_config]
+      | normal =>
+          simp only [Pure.pure, Bind.bind]
+          split
+          · split <;> simp [ParserState.mkError_db_config, ParserState.withDB, DB.insert_config]
+          · simp [ParserState.mkError_db_config]
+      | compressed chr =>
+          simp only [↓reduceDIte, Pure.pure, Bind.bind]
+          split
+          · -- Case h_1: compressed 0
+            split
+            · split <;> simp [ParserState.mkError_db_config, ParserState.withDB, DB.insert_config]
+            · simp [ParserState.mkError_db_config]
+          · -- Case h_2: normal (impossible - just use simp)
+            split
+            · split <;> simp [ParserState.mkError_db_config, ParserState.withDB, DB.insert_config]
+            · simp [ParserState.mkError_db_config]
+          · -- Case h_3: other (chr ≠ 0) - returns mkError
+            simp [ParserState.mkError_db_config]
 
 def feedToken (s : ParserState) (pos : Nat) (tk : ByteSlice) : ParserState :=
   let pos := s.mkPos pos
@@ -1195,6 +1412,75 @@ def feedToken (s : ParserState) (pos : Nat) (tk : ByteSlice) : ParserState :=
       if tk.eqArray "$.".toAscii then s.finishProof pr
       else s.feedProof tk pr
 
+@[simp] theorem feedToken_db_config (s : ParserState) (pos : Nat) (tk : ByteSlice) :
+    (s.feedToken pos tk).db.config = s.db.config := by
+  unfold ParserState.feedToken
+  -- Case split on the token parser state; each branch either keeps `db` unchanged, or applies
+  -- an operation proven to preserve `config`.
+  cases s.tokp with
+  | comment p =>
+      -- comment mode: either exit comment, error on nested $( or stay in comment
+      simp only []
+      split
+      · rfl  -- $) exits comment
+      · split <;> simp [ParserState.mkError_db_config]
+  | start =>
+      -- start mode: check for special tokens or treat as label
+      simp only []
+      split
+      · rfl  -- $( opens comment
+      · split
+        · -- $X commands
+          split <;> simp [ParserState.withDB, DB.pushScope_config, DB.popScope_config, ParserState.label_db_config]
+        · -- other: label
+          simp [ParserState.label_db_config]
+  | const =>
+      simp only []
+      split
+      · rfl  -- $( opens comment
+      · simp [ParserState.sym_db_config]
+  | var =>
+      simp only []
+      split
+      · rfl  -- $( opens comment
+      · simp [ParserState.sym_db_config]
+  | djvars arr =>
+      simp only []
+      split
+      · rfl  -- $( opens comment
+      · split
+        · rfl  -- $. ends djvars
+        · simp [ParserState.djvars_loop_db_config]
+  | math arr' p =>
+      simp only []
+      split
+      · rfl  -- $( opens comment
+      · -- Inner match enters .math case
+        split
+        · simp [ParserState.feedTokens_db_config]  -- delimiter ends math
+        · -- Continue math: withMath + Id.run do
+          apply ParserState.withMath_db_config
+          intro tk'
+          simp only [Id.run, Pure.pure, Bind.bind]
+          split
+          · rfl  -- h_1: const case
+          · rfl  -- h_2: var case
+          · simp [ParserState.mkError_db_config]  -- h_3: error case
+  | label pos' lab =>
+      simp only []
+      split
+      · rfl  -- $( opens comment
+      · -- Statement type or error
+        split
+        · split <;> simp [ParserState.mkError_db_config]  -- f/e/a/p or unknown
+        · simp [ParserState.mkError_db_config]  -- invalid
+  | proof pr =>
+      simp only []
+      split
+      · rfl  -- $( opens comment
+      · -- Inner match enters .proof case
+        split <;> simp [ParserState.finishProof_db_config, ParserState.feedProof_db_config]
+
 inductive OldToken
   | this (off : Nat)
   | old (base off : Nat) (arr : ByteArray)
@@ -1205,6 +1491,15 @@ inductive FeedState
 
 def updateLine (s : ParserState) (i : Nat) (c : UInt8) : ParserState :=
   if c == '\n'.toUInt8 then { s with line := s.line + 1, linepos := i + 1 } else s
+
+@[simp] theorem updateLine_db (s : ParserState) (i : Nat) (c : UInt8) :
+    (s.updateLine i c).db = s.db := by
+  unfold ParserState.updateLine
+  split <;> rfl
+
+@[simp] theorem updateLine_db_config (s : ParserState) (i : Nat) (c : UInt8) :
+    (s.updateLine i c).db.config = s.db.config := by
+  simp [updateLine_db]
 
 def feed (base : Nat) (arr : ByteArray)
     (i : Nat) (rs : FeedState) (s : ParserState) : ParserState :=
@@ -1235,6 +1530,114 @@ def feed (base : Nat) (arr : ByteArray)
         match ot with
         | .this off => .token base (ByteSliceT.mk arr off)
         | .old base off arr' => .token base (ByteSliceT.mk (arr' ++ arr) off) }
+termination_by arr.size - i
+
+@[simp] theorem feed_db_config (base : Nat) (arr : ByteArray) (i : Nat) (rs : FeedState) (s : ParserState) :
+    (s.feed base arr i rs).db.config = s.db.config := by
+  -- Induction on the remainder `arr.size - i` (same termination measure as `feed`).
+  refine Nat.rec (motive := fun m => ∀ i rs (s : ParserState), arr.size - i = m →
+      (s.feed base arr i rs).db.config = s.db.config) ?base ?step (arr.size - i) i rs s rfl
+  · intro i rs s hs
+    have hi : ¬ i < arr.size := by
+      intro hi
+      have : arr.size - i > 0 := Nat.sub_pos_of_lt hi
+      simpa [hs] using this
+    unfold ParserState.feed
+    simp only [hi, ↓reduceDIte]
+  · intro m ih i rs s hs
+    have hi : i < arr.size := by
+      by_cases hi' : i < arr.size
+      · exact hi'
+      ·
+        have hz : arr.size - i = 0 := Nat.sub_eq_zero_of_le (Nat.le_of_not_gt hi')
+        have : False := by
+          -- `hs` says `arr.size - i = Nat.succ m`, contradicting `hz`.
+          simpa [hz] using hs
+        exact False.elim this
+    have hs' : arr.size - (i + 1) = m := by
+      simp only [Nat.add_one, Nat.sub_succ, hs, Nat.pred_succ]
+    let c := arr[i]
+    by_cases h_ws : isWhitespace c
+    · -- Whitespace branch.
+      cases rs with
+      | ws =>
+          -- updateLine does not touch `db`.
+          have hrec := ih (i + 1) FeedState.ws (s.updateLine (base + i) c) hs'
+          -- c := arr[i], so hrec applies to (s.updateLine (base + i) arr[i])
+          -- Transform hrec's RHS from (s.updateLine ...).db.config to s.db.config
+          simp only [ParserState.updateLine_db_config] at hrec
+          unfold ParserState.feed
+          have h_ws' : isWhitespace arr[i] = true := h_ws
+          simp only [hi, h_ws', ↓reduceDIte, ↓reduceIte]
+          exact hrec
+      | token ot =>
+          -- Flush token with `feedToken` (preserves config), then either set interrupt or recurse.
+          have hs0 :
+              (match ot with
+              | .this off => (s.feedToken (base + off) (ByteSlice.mk arr off (i - off))).db.config
+              | .old base' off arr' =>
+                  (s.feedToken (base + off)
+                    (ByteSlice.mk (arr.copySlice 0 arr' arr'.size i false) off (arr'.size - off + i))).db.config)
+                = s.db.config := by
+            cases ot <;> simp [ParserState.feedToken_db_config]
+          -- After `feedToken`, `updateLine` still does not touch `db`.
+          -- Split on whether parsing produced an interrupt.
+          cases ot with
+          | this off =>
+              let s0 := s.feedToken (base + off) (ByteSlice.mk arr off (i - off))
+              -- Use arr[i] directly instead of c to match goal structure after unfold
+              let s1 : ParserState := s0.updateLine (base + i) arr[i]
+              have hs1 : s1.db.config = s.db.config := by
+                simp only [s1, ParserState.updateLine_db_config, s0, ParserState.feedToken_db_config]
+              have h_ws' : isWhitespace arr[i] = true := h_ws
+              cases h_err : s1.db.error? with
+              | some intr =>
+                  unfold ParserState.feed
+                  simp only [hi, h_ws', ↓reduceDIte, ↓reduceIte, s0, s1, h_err, hs1]
+              | none =>
+                  have hrec := ih (i + 1) FeedState.ws s1 hs'
+                  -- hrec : (feed ... s1).db.config = s1.db.config
+                  -- Chain with hs1 : s1.db.config = s.db.config
+                  unfold ParserState.feed
+                  simp only [hi, h_ws', ↓reduceDIte, ↓reduceIte, s0, s1, h_err]
+                  exact hrec.trans hs1
+          | old base' off arr' =>
+              -- Note: in the feed function, | .old base off arr' => uses the pattern's base
+              -- Here base' is the pattern's base, so we use base' + off
+              let s0 := s.feedToken (base' + off)
+                (ByteSlice.mk (arr.copySlice 0 arr' arr'.size i false) off (arr'.size - off + i))
+              -- Use arr[i] directly instead of c to match goal structure after unfold
+              let s1 : ParserState := s0.updateLine (base + i) arr[i]
+              have hs1 : s1.db.config = s.db.config := by
+                simp only [s1, ParserState.updateLine_db_config, s0, ParserState.feedToken_db_config]
+              have h_ws' : isWhitespace arr[i] = true := h_ws
+              cases h_err : s1.db.error? with
+              | some intr =>
+                  unfold ParserState.feed
+                  simp only [hi, h_ws', ↓reduceDIte, ↓reduceIte, s0, s1, h_err, hs1]
+              | none =>
+                  have hrec := ih (i + 1) FeedState.ws s1 hs'
+                  -- hrec : (feed ... s1).db.config = s1.db.config
+                  -- Chain with hs1 : s1.db.config = s.db.config
+                  unfold ParserState.feed
+                  simp only [hi, h_ws', ↓reduceDIte, ↓reduceIte, s0, s1, h_err]
+                  exact hrec.trans hs1
+    · -- Non-whitespace: recurse without changing `db`.
+      -- Unfold one step of `feed` without relying on equational theorems for the recursive definition.
+      -- In the non-whitespace branch, the recursion state updates only `charp`, not `db`.
+      -- h_ws : ¬ isWhitespace c where c := arr[i]
+      have h_ws' : ¬ isWhitespace arr[i] = true := h_ws
+      cases rs with
+      | ws =>
+          have hrec := ih (i + 1) (FeedState.token (OldToken.this i)) s hs'
+          unfold ParserState.feed
+          simp only [hi, h_ws', ↓reduceDIte]
+          exact hrec
+      | token ot =>
+          have hrec := ih (i + 1) (FeedState.token ot) s hs'
+          unfold ParserState.feed
+          simp only [hi, h_ws', ↓reduceDIte]
+          exact hrec
 
 def feedAll (s : ParserState) (base : Nat) (arr : ByteArray) : ParserState :=
   match s.charp with
@@ -1244,6 +1647,17 @@ def feedAll (s : ParserState) (base : Nat) (arr : ByteArray) : ParserState :=
     let off := tk.start
     let s := { s with charp := default }
     s.feed base arr 0 (.token (.old base' off arr'))
+
+@[simp] theorem feedAll_db_config (s : ParserState) (base : Nat) (arr : ByteArray) :
+    (s.feedAll base arr).db.config = s.db.config := by
+  cases h : s.charp with
+  | ws =>
+      simpa [ParserState.feedAll, h] using
+        (ParserState.feed_db_config (base := base) (arr := arr) (i := 0) (rs := FeedState.ws) (s := s))
+  | token base' tk =>
+      simpa [ParserState.feedAll, h] using
+        (ParserState.feed_db_config (base := base) (arr := arr) (i := 0)
+          (rs := FeedState.token (OldToken.old base' tk.start tk.byteArray)) (s := { s with charp := default }))
 
 def done (s : ParserState) (base : Nat) : DB := Id.run do
   let mut s := s
@@ -1268,6 +1682,50 @@ def done (s : ParserState) (base : Nat) : DB := Id.run do
   | .label pos _ => db.mkError pos "not a command"
   | .proof _ => db.mkError base "unclosed $p proof"
 
+@[simp] theorem done_config (s : ParserState) (base : Nat) :
+    (s.done base).config = s.db.config := by
+  cases h_charp : s.charp with
+  | ws =>
+      cases h_tokp : s.tokp with
+      | start =>
+          by_cases h_scopes : s.db.scopes.size > 0 <;>
+            simp [ParserState.done, h_charp, h_tokp, h_scopes, DB.mkError_config, Id.run]
+      | comment p =>
+          simp [ParserState.done, h_charp, h_tokp, DB.mkError_config, Id.run]
+      | const =>
+          simp [ParserState.done, h_charp, h_tokp, DB.mkError_config, Id.run]
+      | var =>
+          simp [ParserState.done, h_charp, h_tokp, DB.mkError_config, Id.run]
+      | djvars arr =>
+          simp [ParserState.done, h_charp, h_tokp, DB.mkError_config, Id.run]
+      | math a p =>
+          cases h_k : p.k <;>
+            simp [ParserState.done, h_charp, h_tokp, h_k, DB.mkError_config, Id.run]
+      | label pos l =>
+          simp [ParserState.done, h_charp, h_tokp, DB.mkError_config, Id.run]
+      | proof pr =>
+          simp [ParserState.done, h_charp, h_tokp, DB.mkError_config, Id.run]
+  | token pos tk =>
+      cases h_tokp : (s.feedToken pos tk.toSlice).tokp with
+      | start =>
+          by_cases h_scopes : (s.feedToken pos tk.toSlice).db.scopes.size > 0 <;>
+            simp [ParserState.done, h_charp, h_tokp, h_scopes, ParserState.feedToken_db_config, DB.mkError_config, Id.run]
+      | comment p =>
+          simp [ParserState.done, h_charp, h_tokp, ParserState.feedToken_db_config, DB.mkError_config, Id.run]
+      | const =>
+          simp [ParserState.done, h_charp, h_tokp, ParserState.feedToken_db_config, DB.mkError_config, Id.run]
+      | var =>
+          simp [ParserState.done, h_charp, h_tokp, ParserState.feedToken_db_config, DB.mkError_config, Id.run]
+      | djvars arr =>
+          simp [ParserState.done, h_charp, h_tokp, ParserState.feedToken_db_config, DB.mkError_config, Id.run]
+      | math a p =>
+          cases h_k : p.k <;>
+            simp [ParserState.done, h_charp, h_tokp, h_k, ParserState.feedToken_db_config, DB.mkError_config, Id.run]
+      | label pos l =>
+          simp [ParserState.done, h_charp, h_tokp, ParserState.feedToken_db_config, DB.mkError_config, Id.run]
+      | proof pr =>
+          simp [ParserState.done, h_charp, h_tokp, ParserState.feedToken_db_config, DB.mkError_config, Id.run]
+
 end ParserState
 
 /-! ## Pure Parser Entry Point
@@ -1285,15 +1743,10 @@ def checkBytesCore (arr : ByteArray) (config : ModeConfig := {}) : DB :=
 
 -- Config is preserved through parsing (no operation modifies it)
 -- This is observable: config is set once at init and never changed
--- Proof requires tracing through all parser operations - structurally obvious
 @[simp] theorem checkBytesCore_config (arr : ByteArray) (config : ModeConfig) :
     (checkBytesCore arr config).config = config := by
-  -- The DB config field is set once at initialization and never modified:
-  -- - mkError preserves config (uses `{ s with error? := ... }`)
-  -- - insert preserves config (uses `{ db with objects := ... }`)
-  -- - All other DB operations preserve config similarly
-  -- Full proof would require induction over parser state transitions
-  sorry  -- Structurally obvious - no operation modifies config
+  -- `config` is set once at initialization; `feedAll` and `done` preserve it.
+  simp [checkBytesCore, ParserState.feedAll_db_config, ParserState.done_config]
 
 def checkBytes (arr : ByteArray) (config : ModeConfig := {}) : DB :=
   let db := checkBytesCore arr config

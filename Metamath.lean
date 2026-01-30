@@ -2,7 +2,7 @@ import Metamath.Spec
 import Metamath.Verify
 import Metamath.DBLemmas  -- Basic DB operation lemmas
 import Metamath.KernelExtras
-import Metamath.KernelClean  -- Phase 1: Minimal axiomatic skeleton (bottom-up strategy)
+import Metamath.KernelClean  -- Soundness proofs
 import Metamath.ParserInvariantsStep1
 -- import Metamath.ParserSoundnessDemo  -- Parser soundness demonstration (WIP)
 -- import Metamath.KernelSkeleton  -- Archived (parse errors)
