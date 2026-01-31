@@ -1,7 +1,0 @@
-name = "lean-curriculum"
-version = "0.1.0"
-defaultTargets = ["LeanCurriculum"]
-
-[[lean_lib]]
-name = "LeanCurriculum"
-roots = ["."]

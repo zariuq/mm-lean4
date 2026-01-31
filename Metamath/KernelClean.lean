@@ -1623,6 +1623,65 @@ theorem convertHyp_at_index
   refine ⟨h_spec, h_conv', ?_⟩
   exact ⟨h_len', by simpa using h_at⟩
 
+/-- Reverse direction of convertHyp_mem_mand: every hypothesis in fr_spec.mand
+    has a corresponding label in fr_impl.hyps.
+
+    This is the key lemma for implementation completeness - given a spec hypothesis,
+    we can find its implementation label.
+
+    **Proof strategy**: Since toFrame uses mapM over fr_impl.hyps.toList,
+    and mapM preserves indices, each h_spec ∈ fr_spec.mand corresponds to
+    a label at the same index in fr_impl.hyps. -/
+theorem mand_mem_has_label
+    (db : Verify.DB) (fr_impl : Verify.Frame) (fr_spec : Spec.Frame) (h_spec : Spec.Hyp)
+    (h_fr : toFrame db fr_impl = some fr_spec)
+    (h_mem : h_spec ∈ fr_spec.mand) :
+    ∃ label, label ∈ fr_impl.hyps.toList ∧ convertHyp db label = some h_spec := by
+  -- Get the index of h_spec in fr_spec.mand
+  obtain ⟨⟨i, hi⟩, h_at⟩ := List.mem_iff_get.mp h_mem
+
+  -- Extract the mapM result from toFrame
+  have h_map : fr_impl.hyps.toList.mapM (convertHyp db) = some fr_spec.mand := by
+    unfold toFrame at h_fr
+    cases h_m : fr_impl.hyps.toList.mapM (convertHyp db) with
+    | none =>
+        simp [h_m] at h_fr
+    | some hyps_spec =>
+        simp [h_m] at h_fr
+        have h_eq : (Spec.Frame.mk hyps_spec (fr_impl.dj.toList.map convertDV)) = fr_spec := by
+          simpa using h_fr
+        have h_mand : fr_spec.mand = hyps_spec := by
+          cases h_eq
+          rfl
+        cases h_mand
+        rfl
+
+  -- mapM preserves length, so i is valid in fr_impl.hyps
+  have h_len : fr_spec.mand.length = fr_impl.hyps.toList.length :=
+    List.mapM_length_option (convertHyp db) h_map
+  have hi_impl : i < fr_impl.hyps.toList.length := by
+    rw [← h_len]; exact hi
+
+  -- Use mapM_get_some to get the conversion at index i
+  let i_fin : Fin fr_impl.hyps.toList.length := ⟨i, hi_impl⟩
+  obtain ⟨h_spec', h_conv, h_at'⟩ :=
+    KernelExtras.List.mapM_get_some (convertHyp db)
+      fr_impl.hyps.toList fr_spec.mand h_map i_fin hi
+
+  -- The hypothesis at index i in mand equals h_spec
+  have h_eq_spec : h_spec' = h_spec := by
+    have h_get : fr_spec.mand.get ⟨i, hi⟩ = h_spec' := by simpa using h_at'
+    have h_at_h : fr_spec.mand.get ⟨i, hi⟩ = h_spec := h_at
+    rw [h_get] at h_at_h
+    exact h_at_h
+  subst h_eq_spec
+
+  -- The label at index i is in the list
+  have h_label_mem : fr_impl.hyps.toList[i_fin] ∈ fr_impl.hyps.toList :=
+    List.get_mem fr_impl.hyps.toList i_fin
+
+  exact ⟨fr_impl.hyps.toList[i_fin], h_label_mem, h_conv⟩
+
 theorem toFrame_hypsOnly_of_toFrame
     (db : Verify.DB) (fr_impl : Verify.Frame) (fr_spec : Spec.Frame)
     (h_fr : toFrame db fr_impl = some fr_spec) :
@@ -2814,39 +2873,6 @@ theorem flatMap_toSym_correspondence
           simp [List.drop_one] at ih_tail
           rw [h_syms_tail, ih_tail]
           simp [Sym.value]
-
-/-
--- PROOF ATTEMPT (inductive structure - complete but has sorries for edge cases)
--- Keeping this as a comment to show the proof strategy:
-
-theorem flatMap_toSym_correspondence_ATTEMPT
-    (syms : List Verify.Sym)
-    (σ_impl : Std.HashMap String Verify.Formula)
-    (vars : List Spec.Variable) (σ_spec : Spec.Variable → Spec.Expr)
-    (h_match : ∀ v ∈ vars, ∃ f_v, σ_impl[v.v]? = some f_v ∧ toExpr f_v = σ_spec v) :
-  (syms.flatMap ...).map toSym = (syms.map toSym).flatMap ... := by
-  induction syms with
-  | nil => simp [List.flatMap, List.map]
-  | cons s tail ih =>
-      simp only [List.flatMap_cons, List.map_append, List.map_cons]
-      cases s with
-      | const c =>
-          -- Constant case: both sides give [toSym c]
-          -- Needs: lemma that toSym (const c) ∉ vars
-          sorry
-      | var v =>
-          -- Variable case: split on σ_impl[v]?
-          cases h_lookup : σ_impl[v]? with
-          | none =>
-              -- If none and v ∈ vars: contradiction with h_match
-              -- If none and v ∉ vars: mismatch (LHS=[], RHS=[v])
-              --   This case means subst would fail
-              sorry
-          | some f_v =>
-              -- If some and v ∈ vars: use h_match to show correspondence
-              -- If some and v ∉ vars: contradictory (impl substitutes, spec doesn't)
-              sorry
--/
 
 -- =============================================================================
 -- SECTION 1: SUBSTITUTION CORRESPONDENCE (PROVEN ✅)
@@ -6697,6 +6723,460 @@ theorem verify_compressed_sound
 2. Extend parser invariants to cover compressed proof decoding
 
 **Impact:** Enables verification of real Metamath libraries (set.mm, etc.)
+-/
+
+/-! ## Phase 9: Implementation Completeness
+
+The reverse of Phase 7: showing that spec-valid proofs can be verified.
+
+**Key insight**: Combined with verify_impl_sound, this gives the full equivalence:
+  implementation accepts ↔ spec valid
+
+**Theorem structure**:
+1. proofStepToLabel: Extract implementation label from spec proof step
+2. proofStepsToLabels: Convert spec proof steps to label array
+3. stepNormal_of_hyp: stepNormal accepts hypothesis labels from the frame
+4. stepNormal_of_assert: stepNormal accepts assertion labels with correct stack
+5. verify_impl_complete: Main completeness theorem
+
+**Key helper proven**: mand_mem_has_label (line ~1627)
+  Given h ∈ fr_spec.mand, find label ∈ fr_impl.hyps with convertHyp db label = some h
+-/
+
+/-- Extract implementation label for a hypothesis in the frame.
+
+Given a spec hypothesis h ∈ fr_spec.mand, returns the corresponding label
+in fr_impl.hyps. This is the computational inverse of convertHyp.
+
+**Note**: This function is noncomputable because List.find? is noncomputable
+when used with a decidable predicate that we can't compute. We use it only
+for existence proofs. -/
+noncomputable def hypToLabel (db : Verify.DB) (fr_impl : Verify.Frame)
+    (h : Spec.Hyp) : Option String :=
+  fr_impl.hyps.toList.find? fun label =>
+    convertHyp db label = some h
+
+/-- hypToLabel succeeds when h ∈ fr_spec.mand and toFrame succeeds.
+
+This is the computational version of mand_mem_has_label.
+Note: The returned label might not be the same as the one from mand_mem_has_label
+(if there are duplicate hypotheses), but it will still satisfy convertHyp. -/
+theorem hypToLabel_some_of_mand_mem
+    (db : Verify.DB) (fr_impl : Verify.Frame) (fr_spec : Spec.Frame) (h : Spec.Hyp)
+    (h_fr : toFrame db fr_impl = some fr_spec)
+    (h_mem : h ∈ fr_spec.mand) :
+    ∃ label, hypToLabel db fr_impl h = some label ∧
+      label ∈ fr_impl.hyps.toList ∧ convertHyp db label = some h := by
+  -- Use mand_mem_has_label to get a label that converts to h
+  obtain ⟨label₀, h_in₀, h_conv₀⟩ := mand_mem_has_label db fr_impl fr_spec h h_fr h_mem
+
+  -- hypToLabel uses List.find? which may return a different label
+  -- but any label it returns will satisfy the predicate
+  unfold hypToLabel
+
+  -- The predicate: convertHyp db label = some h
+  let p := fun l => decide (convertHyp db l = some h)
+
+  -- Show the predicate holds for label₀
+  have h_pred₀ : p label₀ = true := by simp [p, h_conv₀]
+
+  -- Therefore find? returns some (using List.find?_isSome)
+  have h_isSome : (fr_impl.hyps.toList.find? p).isSome := by
+    rw [List.find?_isSome]
+    exact ⟨label₀, h_in₀, h_pred₀⟩
+
+  -- Extract the found label
+  obtain ⟨label, h_find⟩ := Option.isSome_iff_exists.mp h_isSome
+
+  -- The found label satisfies the predicate (by List.find?_some)
+  have h_pred : p label = true := List.find?_some h_find
+  have h_conv : convertHyp db label = some h := by
+    simp only [p] at h_pred
+    exact of_decide_eq_true h_pred
+
+  -- The found label is in the list (by List.mem_of_find?_eq_some)
+  have h_in : label ∈ fr_impl.hyps.toList := List.mem_of_find?_eq_some h_find
+
+  exact ⟨label, h_find, h_in, h_conv⟩
+
+/-- Convert a spec proof step to an implementation label.
+
+For useHyp: uses hypToLabel to find the label in the frame
+For useAssertion: directly returns the assertion label -/
+noncomputable def proofStepToLabel (db : Verify.DB) (fr_impl : Verify.Frame)
+    : Spec.ProofStep → Option String
+  | .useHyp h => hypToLabel db fr_impl h
+  | .useAssertion l _ => some l
+
+/-- proofStepToLabel succeeds for valid proof steps.
+
+A proof step is valid if:
+- useHyp h: h ∈ fr_spec.mand
+- useAssertion l σ: Γ l = some (fr', e') for some fr', e' -/
+theorem proofStepToLabel_some_of_valid
+    (db : Verify.DB) (fr_impl : Verify.Frame) (fr_spec : Spec.Frame) (Γ : Spec.Database)
+    (h_fr : toFrame db fr_impl = some fr_spec)
+    (h_db : toDatabase db = some Γ)
+    (step : Spec.ProofStep)
+    (h_valid : match step with
+      | .useHyp h => h ∈ fr_spec.mand
+      | .useAssertion l _ => ∃ fr' e', Γ l = some (fr', e')) :
+    ∃ label, proofStepToLabel db fr_impl step = some label := by
+  cases step with
+  | useHyp h =>
+      simp only at h_valid
+      unfold proofStepToLabel
+      obtain ⟨label, h_find, _, _⟩ := hypToLabel_some_of_mand_mem db fr_impl fr_spec h h_fr h_valid
+      exact ⟨label, h_find⟩
+  | useAssertion l σ =>
+      unfold proofStepToLabel
+      exact ⟨l, rfl⟩
+
+/-! ### Phase 9.2: stepNormal Acceptance Lemmas
+
+These lemmas show that stepNormal accepts labels for valid proof steps.
+-/
+
+/-- stepNormal accepts essential hypothesis labels.
+
+If label ∈ db.frame.hyps and it's an essential hypothesis, stepNormal pushes the formula. -/
+theorem stepNormal_essential_success
+    (db : Verify.DB) (pr : Verify.ProofState) (label : String)
+    (f : Verify.Formula) (lbl : String)
+    (h_find : db.find? label = some (.hyp true f lbl))
+    (h_in_frame : label ∈ db.frame.hyps.toList)
+    (h_hasConstHead : f.hasConstHead = true) :
+    Verify.DB.stepNormal db pr label = Except.ok (pr.push f) := by
+  unfold Verify.DB.stepNormal
+  simp only [h_find, h_in_frame, ↓reduceIte, h_hasConstHead]
+  rfl
+
+/-- stepNormal accepts floating hypothesis labels.
+
+If label ∈ db.frame.hyps and it's a floating hypothesis, stepNormal pushes the formula. -/
+theorem stepNormal_floating_success
+    (db : Verify.DB) (pr : Verify.ProofState) (label : String)
+    (f : Verify.Formula) (lbl : String)
+    (h_find : db.find? label = some (.hyp false f lbl))
+    (h_in_frame : label ∈ db.frame.hyps.toList)
+    (h_isFloatShape : f.isFloatShape = true) :
+    Verify.DB.stepNormal db pr label = Except.ok (pr.push f) := by
+  unfold Verify.DB.stepNormal
+  simp only [h_find, h_in_frame, ↓reduceIte, h_isFloatShape]
+  rfl
+
+/-- If convertHyp produces a floating hypothesis and the label is in a well-formed frame,
+    then the formula has float shape.
+
+    **Key insight**: WellFormedFloat from HypOK gives us exactly what isFloatShape needs:
+    f.size = 2, f[0]! is const, f[1]! is var. -/
+theorem convertHyp_floating_implies_isFloatShape
+    (db : Verify.DB) (label : String) (c : Spec.Constant) (v : Spec.Variable)
+    (h_wf : WellFormedFrame db db.frame)
+    (h_in : label ∈ db.frame.hyps.toList)
+    (h_conv : convertHyp db label = some (Spec.Hyp.floating c v)) :
+    ∃ f lbl, db.find? label = some (.hyp false f lbl) ∧ f.isFloatShape = true := by
+  -- Get index from membership
+  obtain ⟨i, hi, h_label⟩ := toList_mem_implies_index db.frame.hyps label h_in
+  have h_bang : db.frame.hyps[i]! = db.frame.hyps[i] := by simp [hi]
+  rw [h_bang] at h_label
+  -- h_label : db.frame.hyps[i] = label
+
+  -- Get HypOK for this label
+  have h_hypOK := h_wf.1 i hi
+  unfold HypOK at h_hypOK
+  obtain ⟨ess, f, lbl, h_find_raw, h_float_wf, _⟩ := h_hypOK
+  -- h_find_raw : db.find? db.frame.hyps[i] = some (.hyp ess f lbl)
+  -- Rewrite to use label
+  have h_find : db.find? label = some (.hyp ess f lbl) := by
+    rw [← h_label]; exact h_find_raw
+
+  -- Since convertHyp returns floating, ess must be false
+  have h_ess_false : ess = false := by
+    cases ess with
+    | true =>
+        -- If essential, convertHyp would return Hyp.essential, not Hyp.floating
+        unfold convertHyp at h_conv
+        simp only [h_find, Option.bind_eq_bind] at h_conv
+        cases h_e : toExprOpt f with
+        | none => simp [h_e] at h_conv
+        | some e => simp [h_e] at h_conv
+    | false => rfl
+
+  subst h_ess_false
+
+  -- Get WellFormedFloat
+  have h_wf_float : WellFormedFloat f := h_float_wf rfl
+  unfold WellFormedFloat at h_wf_float
+  obtain ⟨h_size, c_str, v_str, h_c, h_v⟩ := h_wf_float
+
+  -- Prove isFloatShape
+  have h_shape : f.isFloatShape = true := by
+    unfold Verify.Formula.isFloatShape
+    simp only [h_size, ↓reduceIte]
+    simp only [h_c, h_v]
+
+  exact ⟨f, lbl, h_find, h_shape⟩
+
+/-- Key lemma: convertHyp preserves the formula structure for essential hypotheses.
+
+If convertHyp produces an essential hypothesis, the original formula has const head.
+
+**Note**: Requires WellFormedFrame to ensure the first symbol is a constant. -/
+theorem convertHyp_essential_implies_hasConstHead
+    (db : Verify.DB) (label : String) (e : Spec.Expr)
+    (h_wf : WellFormedFrame db db.frame)
+    (h_in : label ∈ db.frame.hyps.toList)
+    (h_conv : convertHyp db label = some (Spec.Hyp.essential e)) :
+    ∃ f lbl, db.find? label = some (.hyp true f lbl) ∧ f.hasConstHead = true := by
+  -- Step 1: Get index and HypOK from WellFormedFrame
+  obtain ⟨i, hi, h_label⟩ := toList_mem_implies_index db.frame.hyps label h_in
+  have h_hypOK := h_wf.1 i hi
+  unfold HypOK at h_hypOK
+
+  -- Step 2: Connect db.frame.hyps[i] to label
+  have h_bang : db.frame.hyps[i]! = db.frame.hyps[i] := by simp [hi]
+  rw [h_bang] at h_label
+  rw [h_label] at h_hypOK
+
+  -- Step 3: Extract hypothesis info
+  obtain ⟨ess, f, lbl, h_find, h_float_wf, h_ess_wf⟩ := h_hypOK
+
+  -- Step 4: Show ess = true from convertHyp producing Essential
+  unfold convertHyp at h_conv
+  rw [h_find] at h_conv
+
+  cases ess with
+  | true =>
+      -- Essential case: use WellFormedFormula to get hasConstHead
+      simp only [Option.bind_eq_bind] at h_conv
+      cases h_e : toExprOpt f with
+      | none => simp [h_e] at h_conv
+      | some e' =>
+          simp [h_e] at h_conv
+          -- Use WellFormedFormula
+          have h_wf_form : WellFormedFormula f := h_ess_wf rfl
+          unfold WellFormedFormula at h_wf_form
+          obtain ⟨h_sz, c', h_const⟩ := h_wf_form
+          -- Convert to hasConstHead
+          have h_head : f.hasConstHead = true := by
+            unfold Verify.Formula.hasConstHead
+            simp [h_sz]
+            have h_bang' : f[0]! = f[0] := by simp [h_sz]
+            rw [h_bang'] at h_const
+            rw [h_const]
+          exact ⟨f, lbl, h_find, h_head⟩
+  | false =>
+      -- Floating case: contradiction - convertHyp wouldn't return Essential
+      simp only [Option.bind_eq_bind] at h_conv
+      cases h_e : toExprOpt f with
+      | none => simp [h_e] at h_conv
+      | some e' =>
+          simp [h_e] at h_conv
+          cases e' with
+          | mk tc syms =>
+              cases syms with
+              | nil => simp at h_conv
+              | cons s rest =>
+                  cases rest with
+                  | nil => simp at h_conv
+                  | cons _ _ => simp at h_conv
+
+/-! ### Phase 9.3: Main Completeness Theorem
+
+**Status**: Statement complete, proof in progress.
+
+**Proof strategy**:
+1. Unfold Spec.Provable to get ProofValid with steps
+2. Induct on ProofValid to build the proof array
+3. For each step, use proofStepToLabel to get the label
+4. Show stepNormal accepts each label with correct stack state
+
+**Challenge**: The spec proof steps are in reverse order (cons-based).
+The implementation processes them in forward order. Need to reverse.
+-/
+
+/-- Convert a list of spec proof steps to impl labels.
+    For valid steps, this produces a complete list (no None results). -/
+noncomputable def proofStepsToLabels (db : Verify.DB) (fr : Verify.Frame)
+    (steps : List Spec.ProofStep) : List String :=
+  steps.filterMap (proofStepToLabel db fr)
+
+/-- Helper predicate: a proof step is valid in the given context. -/
+def isValidStep (fr_spec : Spec.Frame) (Γ : Spec.Database) (step : Spec.ProofStep) : Prop :=
+  match step with
+  | .useHyp h => h ∈ fr_spec.mand
+  | .useAssertion l _ => ∃ fr' e', Γ l = some (fr', e')
+
+/-- For valid proof steps, proofStepsToLabels preserves length.
+
+This is because proofStepToLabel succeeds for all valid steps. -/
+theorem proofStepsToLabels_length
+    (db : Verify.DB) (fr_impl : Verify.Frame) (fr_spec : Spec.Frame) (Γ : Spec.Database)
+    (h_fr : toFrame db fr_impl = some fr_spec)
+    (h_db : toDatabase db = some Γ)
+    (steps : List Spec.ProofStep)
+    (h_all_valid : ∀ step ∈ steps, isValidStep fr_spec Γ step) :
+    (proofStepsToLabels db fr_impl steps).length = steps.length := by
+  induction steps with
+  | nil => simp [proofStepsToLabels]
+  | cons step rest ih =>
+      unfold proofStepsToLabels
+      simp only [List.filterMap_cons]
+      have h_step_valid := h_all_valid step List.mem_cons_self
+      unfold isValidStep at h_step_valid
+      have ⟨lbl, h_lbl⟩ := proofStepToLabel_some_of_valid db fr_impl fr_spec Γ h_fr h_db step h_step_valid
+      simp only [h_lbl, Option.toList_some, List.singleton_append, List.length_cons]
+      have h_rest_valid : ∀ s ∈ rest, isValidStep fr_spec Γ s :=
+        fun s hs => h_all_valid s (List.mem_cons_of_mem step hs)
+      simp only [proofStepsToLabels] at ih
+      rw [ih h_rest_valid]
+
+/-- Key lemma: stepNormal accepts hypothesis labels from the frame.
+
+    If a label is in db.frame.hyps and corresponds to a spec hypothesis via convertHyp,
+    then stepNormal pushes the correct formula to the stack. -/
+theorem stepNormal_of_hyp_in_frame
+    (db : Verify.DB) (pr : Verify.ProofState) (label : String) (h : Spec.Hyp)
+    (h_wf : WellFormedDB db)
+    (h_in : label ∈ db.frame.hyps.toList)
+    (h_conv : convertHyp db label = some h) :
+    ∃ pr', Verify.DB.stepNormal db pr label = Except.ok pr' := by
+  cases h with
+  | floating c v =>
+      -- Get formula info from convertHyp
+      have ⟨f, lbl, h_find, h_shape⟩ :=
+        convertHyp_floating_implies_isFloatShape db label c v h_wf.1 h_in h_conv
+      exact ⟨pr.push f, stepNormal_floating_success db pr label f lbl h_find h_in h_shape⟩
+  | essential e =>
+      -- Get formula info from convertHyp
+      have ⟨f, lbl, h_find, h_head⟩ :=
+        convertHyp_essential_implies_hasConstHead db label e h_wf.1 h_in h_conv
+      exact ⟨pr.push f, stepNormal_essential_success db pr label f lbl h_find h_in h_head⟩
+
+/-- Core lemma: Each step in ProofValid has a corresponding impl label.
+
+This shows that for valid proof steps, proofStepToLabel always succeeds.
+Combined with stepNormal acceptance lemmas, this gives completeness. -/
+theorem proofValid_steps_have_labels
+    (db : Verify.DB) (Γ : Spec.Database) (fr_spec : Spec.Frame)
+    (h_db : toDatabase db = some Γ)
+    (h_frame : toFrame db db.frame = some fr_spec)
+    (stack_spec : List Spec.Expr) (steps : List Spec.ProofStep)
+    (h_valid : Spec.ProofValid Γ fr_spec stack_spec steps) :
+    ∀ step ∈ steps, ∃ label, proofStepToLabel db db.frame step = some label := by
+  induction h_valid
+  case nil =>
+      intro step h_mem
+      simp at h_mem
+  case useEssential =>
+      -- Inaccessibles: h_mem (membership), _ (something), ih
+      rename_i h_mem _ ih
+      intro step h_step_mem
+      cases h_step_mem with
+      | head =>
+          unfold proofStepToLabel
+          -- hypToLabel_some_of_mand_mem gives ∃ label, ... ∧ ... ∧ ...
+          -- We just need the label and first equality
+          obtain ⟨label, h_eq, _, _⟩ := hypToLabel_some_of_mand_mem db db.frame fr_spec _ h_frame h_mem
+          exact ⟨label, h_eq⟩
+      | tail _ h_rest =>
+          exact ih step h_rest
+  case useFloating =>
+      rename_i h_mem _ ih
+      intro step h_step_mem
+      cases h_step_mem with
+      | head =>
+          unfold proofStepToLabel
+          obtain ⟨label, h_eq, _, _⟩ := hypToLabel_some_of_mand_mem db db.frame fr_spec _ h_frame h_mem
+          exact ⟨label, h_eq⟩
+      | tail _ h_rest =>
+          exact ih step h_rest
+  case useAxiom =>
+      -- For useAxiom, step is ProofStep.useAssertion l σ
+      -- Position 4 expects Constant (∀ c v, ...), try earlier or later
+      -- IH might need different approach - maybe it's generated differently
+      -- Let me check the goal structure after intro
+      intro step h_step_mem
+      rename_i ih
+      cases h_step_mem with
+      | head =>
+          unfold proofStepToLabel
+          refine ⟨_, rfl⟩
+      | tail _ h_rest =>
+          -- ih should now be the last unnamed thing
+          exact ih step h_rest
+
+/-- **MAIN COMPLETENESS THEOREM**: Semantically valid proofs can be verified.
+
+If an expression is provable in the specification, then there exists
+a proof that the implementation verifier accepts.
+
+**Combined with verify_impl_sound**, this establishes full equivalence:
+  implementation accepts ↔ spec valid
+
+**Status**: Key helpers proven. Remaining: assertion step handling. -/
+theorem verify_impl_complete
+    (db : Verify.DB)
+    (label : String)
+    (f : Verify.Formula)
+    (h_success : db.error? = none)
+    (h_db_wf : WellFormedDB db)
+    (Γ : Spec.Database) (fr : Spec.Frame)
+    (h_db : toDatabase db = some Γ)
+    (h_frame : toFrame db db.frame = some fr)
+    (h_provable : Spec.Provable Γ fr (toExpr f)) :
+  ∃ (proof : Array String) (pr_final : Verify.ProofState),
+    proof.foldlM (fun pr step => Verify.DB.stepNormal db pr step)
+      ⟨⟨0, 0⟩, label, f, db.frame, #[], #[], Verify.ProofTokenParser.normal⟩ = Except.ok pr_final ∧
+    pr_final.stack.size = 1 ∧
+    pr_final.stack[0]? = some f := by
+  -- Unfold Spec.Provable to get the proof structure
+  obtain ⟨steps, finalStack, h_valid, h_stack⟩ := h_provable
+
+  -- The strategy:
+  -- 1. Convert spec steps to impl labels using proofStepToLabel
+  -- 2. The steps need to be reversed because ProofValid cons-es to front
+  -- 3. Show foldlM on these labels succeeds and produces the right stack
+  --
+  -- Key insight: For hypothesis steps, hypToLabel finds the label,
+  -- and stepNormal_of_hyp_in_frame shows it works.
+  -- For assertion steps, we need to show stepNormal handles them correctly.
+
+  -- For now, we construct the witness using choice (noncomputably)
+  -- and prove the properties by induction on ProofValid.
+
+  -- TODO: The full proof requires careful induction on h_valid,
+  -- tracking correspondence between spec stack and impl stack.
+  -- Each step must:
+  -- 1. Find the impl label (proofStepToLabel)
+  -- 2. Show stepNormal accepts it
+  -- 3. Show the stack correspondence is maintained
+  --
+  -- This is a substantial proof that requires additional helper lemmas
+  -- for the assertion case (handling substitution and stack popping).
+  sorry
+
+/-! ## Phase 9 Status Summary
+
+**Proven theorems (implementation completeness helpers):**
+- mand_mem_has_label: ✅ proven - Spec hyps have impl labels
+- hypToLabel_some_of_mand_mem: ✅ proven - hypToLabel succeeds for mand hyps
+- proofStepsToLabels_length: ✅ proven - Length preservation under proofStepToLabel
+- stepNormal_of_hyp_in_frame: ✅ proven - stepNormal accepts frame hypotheses
+- proofValid_steps_have_labels: ✅ proven - Every valid step maps to an impl label
+
+**Main theorem:**
+- verify_impl_complete: ⚠️ statement + sorry
+
+**Remaining work for verify_impl_complete**:
+1. stepNormal_of_assert: Show stepNormal accepts assertion labels with correct stack
+2. Stack correspondence: Show impl stack matches spec stack after each step
+3. Step reversal: Handle that spec uses cons to front, impl uses foldlM from left
+4. Combine helpers into main induction
+
+**Impact**: Combined with verify_impl_sound, establishes full equivalence:
+  implementation accepts ↔ spec valid
 -/
 
 end Metamath.Kernel
