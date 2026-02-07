@@ -7,8 +7,8 @@ This file proves the equivalence between:
 
 **The key theorem** (soundness + completeness):
 ```lean
-theorem operational_iff_semantic {Γ : Database} {fr : Frame} {e : Expr}
-    (h_wf : WellFormedDatabaseStrong Γ) (h_fr_nodup : FloatVarNoDup fr) :
+theorem operational_iff_semantic {Γ : Database} {consts : ConstSet} {fr : Frame} {e : Expr}
+    (h_wf : WellFormedDatabaseStrong Γ consts) (h_fr_nodup : FloatVarNoDup fr) :
     Provable Γ fr e ↔
     Semantic.Provable (dbToAxioms Γ) (frameToContext fr)
       (exprToFormula (varMapOfFrame fr) e)
@@ -21,6 +21,10 @@ import Metamath.Spec.Core
 import Metamath.Spec.Operational
 import Metamath.Spec.Semantic
 import Metamath.Spec.Bridge
+set_option linter.unnecessarySimpa false
+set_option linter.unusedSimpArgs false
+set_option linter.unusedVariables false
+
 
 namespace Metamath.Spec.Equivalence
 
@@ -94,8 +98,8 @@ def DVWellFormed (fr : Frame) : Prop :=
 
 /-- A database is strongly well-formed if all frames satisfy FrameWellFormed
     and DVWellFormed, in addition to the basic WellFormedDatabase properties. -/
-def WellFormedDatabaseStrong (Γ : Database) : Prop :=
-  Spec.WellFormedDatabase Γ ∧
+def WellFormedDatabaseStrong (Γ : Database) (consts : ConstSet) : Prop :=
+  Spec.WellFormedDatabase Γ consts ∧
   ∀ l fr e, Γ l = some (fr, e) → FrameWellFormed fr ∧ DVWellFormed fr
 
 /-- Convert a symbol string using a typed variable map. -/
@@ -1681,9 +1685,10 @@ theorem exprToMarioExpr_applySubst_eq_subst_aux
     if a symbol appears in an expression and has no floating hypothesis in that
     frame, then it's a constant and cannot be a variable in any other frame. -/
 theorem exprToMarioExpr_applySubst_eq_subst
-    {Γ : Database} {l : Label} {frAx fr : Frame} {σ : Subst} {eAx : Expr}
-    (h_wf : Spec.WellFormedDatabase Γ)
-    (h_lookup : Γ l = some (frAx, eAx)) :
+    {Γ : Database} {consts : ConstSet} {l : Label} {frAx fr : Frame} {σ : Subst} {eAx : Expr}
+    (h_wf : Spec.WellFormedDatabase Γ consts)
+    (h_lookup : Γ l = some (frAx, eAx))
+    (h_fr_disjoint : Spec.FrameVarsDisjointConsts consts fr) :
     exprToMarioExpr (varMapOfFrame fr) (Spec.applySubst frAx.vars σ eAx) =
     Metamath.Expr.subst (toMarioSubst (varMapOfFrame frAx) (varMapOfFrame fr) σ)
                         (exprToMarioExpr (varMapOfFrame frAx) eAx) := by
@@ -1705,16 +1710,21 @@ theorem exprToMarioExpr_applySubst_eq_subst
   rw [marioExpr_subst_eq_flatMap]
 
   -- Now apply aux lemma
-  have h_const : ∀ s ∈ eAx.syms, Variable.mk s ∉ frAx.vars → Variable.mk s ∉ fr.vars :=
-    fun s h_s_in h_not_var => Spec.const_global_of_wellFormed h_wf h_lookup s h_s_in h_not_var
+  have h_const : ∀ s ∈ eAx.syms, Variable.mk s ∉ frAx.vars → Variable.mk s ∉ fr.vars := by
+    intro s h_s_in h_not_var h_in_fr
+    have h_const : consts s :=
+      Spec.const_global_of_wellFormed h_wf h_lookup s h_s_in h_not_var
+    have h_disj := h_fr_disjoint (Variable.mk s) h_in_fr
+    exact (h_disj h_const).elim
   exact exprToMarioExpr_applySubst_eq_subst_aux eAx.syms h_const
 
 /-- Substitution correspondence for essential hypothesis expressions. -/
 theorem exprToMarioExpr_applySubst_eq_subst_hyp
-    {Γ : Database} {l : Label} {frAx fr : Frame} {σ : Subst} {eAx e_hyp : Expr}
-    (h_wf : Spec.WellFormedDatabase Γ)
+    {Γ : Database} {consts : ConstSet} {l : Label} {frAx fr : Frame} {σ : Subst} {eAx e_hyp : Expr}
+    (h_wf : Spec.WellFormedDatabase Γ consts)
     (h_lookup : Γ l = some (frAx, eAx))
-    (h_hyp_in : Hyp.essential e_hyp ∈ frAx.mand) :
+    (h_hyp_in : Hyp.essential e_hyp ∈ frAx.mand)
+    (h_fr_disjoint : Spec.FrameVarsDisjointConsts consts fr) :
     exprToMarioExpr (varMapOfFrame fr) (Spec.applySubst frAx.vars σ e_hyp) =
     Metamath.Expr.subst (toMarioSubst (varMapOfFrame frAx) (varMapOfFrame fr) σ)
                         (exprToMarioExpr (varMapOfFrame frAx) e_hyp) := by
@@ -1724,8 +1734,12 @@ theorem exprToMarioExpr_applySubst_eq_subst_hyp
   unfold exprToMarioExpr Spec.applySubst
   simp only []
   rw [marioExpr_subst_eq_flatMap]
-  have h_const : ∀ s ∈ e_hyp.syms, Variable.mk s ∉ frAx.vars → Variable.mk s ∉ fr.vars :=
-    fun s h_s_in h_not_var => Spec.const_global_of_wellFormed_hyp h_wf h_lookup h_hyp_in s h_s_in h_not_var
+  have h_const : ∀ s ∈ e_hyp.syms, Variable.mk s ∉ frAx.vars → Variable.mk s ∉ fr.vars := by
+    intro s h_s_in h_not_var h_in_fr
+    have h_const : consts s :=
+      Spec.const_global_of_wellFormed_hyp h_wf h_lookup h_hyp_in s h_s_in h_not_var
+    have h_disj := h_fr_disjoint (Variable.mk s) h_in_fr
+    exact (h_disj h_const).elim
   exact exprToMarioExpr_applySubst_eq_subst_aux e_hyp.syms h_const
 
 /-! ## Forward Direction: ProofValid → Mario.Provable
@@ -1736,9 +1750,10 @@ then derive the singleton-stack case as a corollary.
 
 /-- Any element on a valid proof stack is Mario-provable.
     Requires database well-formedness for substitution correspondence. -/
-theorem proofValid_stack_provable {Γ : Database} {fr : Frame} {stack : List Expr}
-    {steps : List ProofStep}
-    (h_wf : Spec.WellFormedDatabase Γ) :
+theorem proofValid_stack_provable {Γ : Database} {consts : ConstSet} {fr : Frame}
+    {stack : List Expr} {steps : List ProofStep}
+    (h_wf : Spec.WellFormedDatabase Γ consts)
+    (h_fr_disjoint : Spec.FrameVarsDisjointConsts consts fr) :
     ProofValid Γ fr stack steps →
     ∀ e ∈ stack,
       Semantic.Provable (dbToAxioms Γ) (frameToContext fr)
@@ -2003,7 +2018,7 @@ theorem proofValid_stack_provable {Γ : Database} {fr : Frame} {stack : List Exp
                   rw [h_tc]
                   congr 1
                   -- Now just need the expression part (need to swap sides)
-                  exact (exprToMarioExpr_applySubst_eq_subst_hyp h_wf h_ax h_hyp_in).symm
+                  exact (exprToMarioExpr_applySubst_eq_subst_hyp h_wf h_ax h_hyp_in h_fr_disjoint).symm
                 rw [h_subst_eq]
                 -- Now need to show applySubst frAx.vars σ e_hyp is on stack
                 have h_in_needed : Spec.applySubst frAx.vars σ e_hyp ∈ needed := by
@@ -2180,7 +2195,7 @@ theorem proofValid_stack_provable {Γ : Database} {fr : Frame} {stack : List Exp
             --       (typecode, (exprToMarioExpr vmAx eAx).subst σ_mario)
             congr 1
             -- Now just the expression part
-            exact exprToMarioExpr_applySubst_eq_subst h_wf h_ax
+            exact exprToMarioExpr_applySubst_eq_subst h_wf h_ax h_fr_disjoint
 
           -- Apply Provable.ax and rewrite goal
           rw [h_result]
@@ -2194,13 +2209,15 @@ theorem proofValid_stack_provable {Γ : Database} {fr : Frame} {stack : List Exp
 
 /-- Forward direction: If we have a valid operational proof ending with [e],
     then e is provable in Mario's semantic system. -/
-theorem proofValid_to_mario {Γ : Database} {fr : Frame} {e : Expr} {steps : List ProofStep}
-    (h_wf : Spec.WellFormedDatabase Γ) :
+theorem proofValid_to_mario {Γ : Database} {consts : ConstSet} {fr : Frame} {e : Expr}
+    {steps : List ProofStep}
+    (h_wf : Spec.WellFormedDatabase Γ consts)
+    (h_fr_disjoint : Spec.FrameVarsDisjointConsts consts fr) :
     ProofValid Γ fr [e] steps →
     Semantic.Provable (dbToAxioms Γ) (frameToContext fr)
       (exprToFormula (varMapOfFrame fr) e) := by
   intro h
-  have h_all := proofValid_stack_provable h_wf h
+  have h_all := proofValid_stack_provable h_wf h_fr_disjoint h
   simpa using h_all e (by simp)
 
 /-! ## Backward Direction: Mario.Provable → ProofValid
@@ -2362,8 +2379,9 @@ def MarioExprConstSep (fr : Frame) (me : MarioExpr) : Prop :=
     - var case: formula is (v.type, [.var v]) with no constants
     - ax case: axiom formulas come from database, substitution preserves the property
 -/
-theorem provable_const_separation {Γ : Database} {fr : Frame} {fmla : MarioFormula}
-    (h_wf : WellFormedDatabaseStrong Γ)
+theorem provable_const_separation {Γ : Database} {consts : ConstSet} {fr : Frame} {fmla : MarioFormula}
+    (h_wf : WellFormedDatabaseStrong Γ consts)
+    (h_fr_disjoint : Spec.FrameVarsDisjointConsts consts fr)
     (h_provable : Semantic.Provable (dbToAxioms Γ) (frameToContext fr) fmla) :
     MarioExprConstSep fr fmla.2 := by
   induction h_provable with
@@ -2453,7 +2471,7 @@ theorem provable_const_separation {Γ : Database} {fr : Frame} {fmla : MarioForm
 
       -- Get the axiom info from database
       obtain ⟨l, frAx, eAx, h_lookup, h_ctx_eq, h_fmla_eq⟩ := dbToAxioms_inverse h_axs
-      have h_wf_base : Spec.WellFormedDatabase Γ := h_wf.1
+      have h_wf_base : Spec.WellFormedDatabase Γ consts := h_wf.1
       let vmAx := varMapOfFrame frAx
       -- The implicit ax satisfies (from dbToAxioms_inverse):
       -- - ax.ctx = frameToContext frAx
@@ -2500,8 +2518,11 @@ theorem provable_const_separation {Γ : Database} {fr : Frame} {fmla : MarioForm
                 obtain ⟨vr, h_vr⟩ := h_some
                 rw [h_find] at h_vr
                 cases h_vr
-              -- By const_global_of_wellFormed, constants are global
-              exact Spec.const_global_of_wellFormed h_wf_base h_lookup s h_s_in h_s_not_in_frAx h_in_vars
+              -- By const_global_of_wellFormed, s is a global constant
+              have h_const : consts s :=
+                Spec.const_global_of_wellFormed h_wf_base h_lookup s h_s_in h_s_not_in_frAx
+              have h_disj := h_fr_disjoint (Variable.mk s) h_in_vars
+              exact (h_disj h_const).elim
           | some vr =>
               -- s is a variable, so toMarioSym returns .var vr
               -- But h_s_eq says it equals .const c - contradiction
@@ -2535,8 +2556,8 @@ theorem provable_const_separation {Γ : Database} {fr : Frame} {fmla : MarioForm
     - hyp case: hypotheses come from frame, VRs are from floating hypotheses
     - var case: the VR is a variable from the context
     - ax case: substitution maps VRs to provable formulas, IH applies -/
-theorem provable_wellformed {Γ : Database} {fr : Frame} {fmla : MarioFormula}
-    (h_wf : WellFormedDatabaseStrong Γ)
+theorem provable_wellformed {Γ : Database} {consts : ConstSet} {fr : Frame} {fmla : MarioFormula}
+    (h_wf : WellFormedDatabaseStrong Γ consts)
     (h_provable : Semantic.Provable (dbToAxioms Γ) (frameToContext fr) fmla) :
     MarioExprWellFormed fr fmla.2 := by
   induction h_provable with
@@ -2711,16 +2732,17 @@ Requires WellFormedDatabaseStrong to ensure:
 
 Also requires FloatVarNoDup fr for the target frame (needed for substitution roundtrip).
 -/
-theorem mario_to_proofValid_aux {Γ : Database} {fr : Frame}
-    (h_wf_strong : WellFormedDatabaseStrong Γ)
+theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
+    (h_wf_strong : WellFormedDatabaseStrong Γ consts)
     (h_fr_nodup : FloatVarNoDup fr)
+    (h_fr_disjoint : Spec.FrameVarsDisjointConsts consts fr)
     {fmla : Semantic.Formula}
     (h_mario : Semantic.Provable (dbToAxioms Γ) (frameToContext fr) fmla)
     {e : Expr}
     (h_eq : fmla = exprToFormula (varMapOfFrame fr) e) :
     Provable Γ fr e := by
   -- Extract the basic well-formedness
-  have h_wf : Spec.WellFormedDatabase Γ := h_wf_strong.1
+  have h_wf : Spec.WellFormedDatabase Γ consts := h_wf_strong.1
   -- Induct on the Mario proof structure
   induction h_mario generalizing e with
   | hyp h h_in =>
@@ -2995,7 +3017,7 @@ theorem mario_to_proofValid_aux {Γ : Database} {fr : Frame}
                   refine ⟨hypToMarioFormula vmAx (Hyp.floating c_float v'), ?_, ?_⟩
                   · right; exact h_hyp_in_ctx
                   · rw [h_snd_eq]; exact h_vr_in_snd)
-                have h_sep_v := provable_const_separation h_wf_strong h_vr_v'_prov
+                have h_sep_v := provable_const_separation h_wf_strong h_fr_disjoint h_vr_v'_prov
                 have h_wf_v : ∀ c, Metamath.Sym.const c ∈ (σ vr_v') → Variable.mk c ∉ fr.vars := h_sep_v
 
                 have h_vr_w'_prov := h_hyps_var vr_w' (by
@@ -3024,7 +3046,7 @@ theorem mario_to_proofValid_aux {Γ : Database} {fr : Frame}
                   refine ⟨hypToMarioFormula vmAx (Hyp.floating c_float w'), ?_, ?_⟩
                   · right; exact h_hyp_in_ctx
                   · rw [h_snd_eq]; exact h_vr_in_snd)
-                have h_sep_w := provable_const_separation h_wf_strong h_vr_w'_prov
+                have h_sep_w := provable_const_separation h_wf_strong h_fr_disjoint h_vr_w'_prov
                 have h_wf_w : ∀ c, Metamath.Sym.const c ∈ (σ vr_w') → Variable.mk c ∉ fr.vars := h_sep_w
 
                 -- Step 5: Extract VRs from memberships
@@ -3081,7 +3103,7 @@ theorem mario_to_proofValid_aux {Γ : Database} {fr : Frame}
         -- Symbols: use exprToMarioExpr_applySubst_eq_subst
         have h_apply_subst : exprToMarioExpr vm (Spec.applySubst frAx.vars σ' eAx) =
             (exprToMarioExpr vmAx eAx).subst (toMarioSubst vmAx vm σ') :=
-          exprToMarioExpr_applySubst_eq_subst h_wf h_lookup
+          exprToMarioExpr_applySubst_eq_subst h_wf h_lookup h_fr_disjoint
 
         -- Need to show: toMarioSubst vmAx vm σ' = σ on VRs in exprToMarioExpr vmAx eAx
         -- This requires the roundtrip theorem with well-formedness
@@ -3138,7 +3160,8 @@ theorem mario_to_proofValid_aux {Γ : Database} {fr : Frame}
           -- MarioExprConstSeparated: constants in σ vr aren't variable names
           -- Convert MarioExprConstSep to MarioExprConstSeparated via varMapDomain_ofFrame
           have h_sep_vr : MarioExprConstSeparated fr (σ vr) := by
-            have h_constSep : MarioExprConstSep fr (σ vr) := provable_const_separation h_wf_strong h_vr_prov
+            have h_constSep : MarioExprConstSep fr (σ vr) :=
+              provable_const_separation h_wf_strong h_fr_disjoint h_vr_prov
             -- MarioExprConstSep says: Variable.mk c ∉ fr.vars
             -- MarioExprConstSeparated says: findVR vm ⟨c⟩ = none
             -- These are equivalent by varMapDomain_ofFrame
@@ -3296,7 +3319,7 @@ theorem mario_to_proofValid_aux {Γ : Database} {fr : Frame}
                 -- Step 1: exprToMarioExpr_applySubst_eq_subst_hyp gives direction with toMarioSubst
                 have h_apply_subst : exprToMarioExpr vm (Spec.applySubst frAx.vars σ' e_hyp) =
                     Metamath.Expr.subst (toMarioSubst vmAx vm σ') (exprToMarioExpr vmAx e_hyp) :=
-                  exprToMarioExpr_applySubst_eq_subst_hyp h_wf h_lookup h_in
+                  exprToMarioExpr_applySubst_eq_subst_hyp h_wf h_lookup h_in h_fr_disjoint
 
                 -- Step 2: Show toMarioSubst vmAx vm σ' = σ extensionally on vars in e_hyp
                 have h_subst_ext : Metamath.Expr.subst (toMarioSubst vmAx vm σ') (exprToMarioExpr vmAx e_hyp) =
@@ -3342,7 +3365,8 @@ theorem mario_to_proofValid_aux {Γ : Database} {fr : Frame}
                   -- Get well-formedness and const-separation from h_vr_prov
                   have h_wf_vr : MarioExprWellFormed fr (σ vr) := provable_wellformed h_wf_strong h_vr_prov
                   have h_sep_vr : MarioExprConstSeparated fr (σ vr) := by
-                    have h_constSep : MarioExprConstSep fr (σ vr) := provable_const_separation h_wf_strong h_vr_prov
+                    have h_constSep : MarioExprConstSep fr (σ vr) :=
+                      provable_const_separation h_wf_strong h_fr_disjoint h_vr_prov
                     intro c h_c_mem
                     have h_not_in_vars := h_constSep c h_c_mem
                     cases h_find : findVR vm ⟨c⟩ with
@@ -3406,7 +3430,7 @@ theorem mario_to_proofValid_aux {Γ : Database} {fr : Frame}
               · -- fromMarioExpr/exprToMarioExpr roundtrip
                 simp only [exprToMarioExpr]
                 have h_wf_sigma := provable_wellformed h_wf_strong h_prov_mario
-                have h_constSep := provable_const_separation h_wf_strong h_prov_mario
+                have h_constSep := provable_const_separation h_wf_strong h_fr_disjoint h_prov_mario
                 -- Convert MarioExprConstSep to MarioExprConstSeparated
                 have h_sep_sigma : MarioExprConstSeparated fr (σ vr) := by
                   intro s h_s_mem
@@ -3471,13 +3495,14 @@ theorem mario_to_proofValid_aux {Γ : Database} {fr : Frame}
       exact ProofValid.useAxiom fr (needed.reverse) hyp_steps l frAx eAx σ'
         h_lookup h_dvOK h_typecode h_hyp_valid needed rfl [] (by simp)
 
-theorem mario_to_proofValid {Γ : Database} {fr : Frame} {e : Expr}
-    (h_wf : WellFormedDatabaseStrong Γ)
+theorem mario_to_proofValid {Γ : Database} {consts : ConstSet} {fr : Frame} {e : Expr}
+    (h_wf : WellFormedDatabaseStrong Γ consts)
     (h_fr_nodup : FloatVarNoDup fr)
+    (h_fr_disjoint : Spec.FrameVarsDisjointConsts consts fr)
     (h_mario : Semantic.Provable (dbToAxioms Γ) (frameToContext fr)
                                    (exprToFormula (varMapOfFrame fr) e)) :
     Provable Γ fr e :=
-  mario_to_proofValid_aux h_wf h_fr_nodup h_mario rfl
+  mario_to_proofValid_aux h_wf h_fr_nodup h_fr_disjoint h_mario rfl
 
 /-! ## Main Equivalence Theorem
 
@@ -3499,9 +3524,10 @@ Combines both directions to show operational ↔ semantic equivalence.
     2. Reasoning about our verifier using textbook mathematics
     3. Confidence that our operational model matches the spec
 -/
-theorem operational_iff_semantic {Γ : Database} {fr : Frame} {e : Expr}
-    (h_wf : WellFormedDatabaseStrong Γ)
-    (h_fr_nodup : FloatVarNoDup fr) :
+theorem operational_iff_semantic {Γ : Database} {consts : ConstSet} {fr : Frame} {e : Expr}
+    (h_wf : WellFormedDatabaseStrong Γ consts)
+    (h_fr_nodup : FloatVarNoDup fr)
+    (h_fr_disjoint : Spec.FrameVarsDisjointConsts consts fr) :
     Provable Γ fr e ↔
     Semantic.Provable (dbToAxioms Γ) (frameToContext fr)
       (exprToFormula (varMapOfFrame fr) e) := by
@@ -3509,9 +3535,9 @@ theorem operational_iff_semantic {Γ : Database} {fr : Frame} {e : Expr}
   · -- Forward: Operational → Semantic
     intro ⟨steps, finalStack, h_valid, h_stack⟩
     rw [h_stack] at h_valid
-    exact proofValid_to_mario h_wf.1 h_valid
+    exact proofValid_to_mario h_wf.1 h_fr_disjoint h_valid
   · -- Backward: Semantic → Operational
-    exact mario_to_proofValid h_wf h_fr_nodup
+    exact mario_to_proofValid h_wf h_fr_nodup h_fr_disjoint
 
 /-! ## Design Notes
 

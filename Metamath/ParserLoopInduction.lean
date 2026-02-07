@@ -425,13 +425,14 @@ private theorem djvars_list_forIn_preserves_error
         exact ParserCorrectness.withDJ_preserves_error s.db _ h
       · exact h_err
 
-/-- When the isVar check passes, djvars_loop reduces to djvars_loop_aux. -/
+/-- When isVar + in-scope checks pass, djvars_loop reduces to djvars_loop_aux. -/
 theorem djvars_loop_eq_aux
     (arr : Array String) (s : ParserState) (pos : Pos) (tk : String)
-    (h_isVar : s.db.isVar tk = true) :
+    (h_isVar : s.db.isVar tk = true)
+    (h_in_scope : s.db.floatVarOccursInFrame tk = true) :
     _root_.Metamath.Verify.ParserState.djvars_loop arr s pos tk =
       _root_.Metamath.Verify.ParserState.djvars_loop_aux arr s pos tk 0 := by
-  simp [_root_.Metamath.Verify.ParserState.djvars_loop, h_isVar]
+  simp [_root_.Metamath.Verify.ParserState.djvars_loop, h_isVar, h_in_scope]
 
 /-- The djvars for-loop preserves error.
 
@@ -443,8 +444,13 @@ theorem djvars_loop_preserves_error
     (_root_.Metamath.Verify.ParserState.djvars_loop arr s pos tk).db.error? ≠ none := by
   cases h_isVar : s.db.isVar tk with
   | true =>
-      simp [_root_.Metamath.Verify.ParserState.djvars_loop, h_isVar]
-      exact djvars_loop_aux_preserves_error arr s pos tk 0 h_err
+      cases h_in_scope : s.db.floatVarOccursInFrame tk with
+      | true =>
+          simp [_root_.Metamath.Verify.ParserState.djvars_loop, h_isVar, h_in_scope]
+          exact djvars_loop_aux_preserves_error arr s pos tk 0 h_err
+      | false =>
+          simp [_root_.Metamath.Verify.ParserState.djvars_loop, h_isVar, h_in_scope]
+          exact ParserState_mkError_sets_error s pos _
   | false =>
       simp [_root_.Metamath.Verify.ParserState.djvars_loop, h_isVar]
       exact ParserState_mkError_sets_error s pos _
@@ -456,8 +462,17 @@ theorem djvars_loop_hyps_behavior
     (_root_.Metamath.Verify.ParserState.djvars_loop arr s pos tk).db.error = true := by
   cases h_isVar : s.db.isVar tk with
   | true =>
-      simp [_root_.Metamath.Verify.ParserState.djvars_loop, h_isVar]
-      exact djvars_loop_aux_hyps_behavior arr s pos tk 0
+      cases h_in_scope : s.db.floatVarOccursInFrame tk with
+      | true =>
+          simp [_root_.Metamath.Verify.ParserState.djvars_loop, h_isVar, h_in_scope]
+          exact djvars_loop_aux_hyps_behavior arr s pos tk 0
+      | false =>
+          right
+          have h_err : (s.mkError pos s!"{tk} not in scope").db.error? ≠ none :=
+            ParserState_mkError_sets_error s pos _
+          have h_err' : (s.mkError pos s!"{tk} not in scope").db.error = true :=
+            (error_iff_error?_ne_none _).2 h_err
+          simpa [_root_.Metamath.Verify.ParserState.djvars_loop, h_isVar, h_in_scope] using h_err'
   | false =>
       right
       have h_err : (s.mkError pos s!"{tk} is not a variable").db.error? ≠ none :=

@@ -17,6 +17,9 @@ import Metamath.WellFormedness
 import Metamath.CounterexampleInsertError
 import Metamath.HashMapLemmas
 import Metamath.ArrayListExt
+set_option linter.unnecessarySimpa false
+set_option linter.unusedSimpArgs false
+
 
 namespace Metamath.DBCaseAnalysis
 
@@ -308,7 +311,7 @@ theorem insert_duplicate_error (db : DB) (pos : Pos) (label : String) (obj : Str
       cases o
       · -- o = .const c_found
         rename_i c_found
-        simp [h_some, DB.error, DBLemmas.mkError_sets_error]
+        simp [h_some, DB.error]
       · -- o = .var v_found
         rename_i v_found
         simp [h_some]
@@ -331,9 +334,9 @@ theorem insert_duplicate_error (db : DB) (pos : Pos) (label : String) (obj : Str
           unfold DB.error
           exact DBLemmas.mkError_sets_error _ _ _
       · -- o = .hyp
-        simp [h_some, DB.error, DBLemmas.mkError_sets_error]
+        simp [h_some, DB.error]
       · -- o = .assert
-        simp [h_some, DB.error, DBLemmas.mkError_sets_error]
+        simp [h_some, DB.error]
 
 /-- Helper: insert with no error and no duplicate succeeds
 
@@ -524,7 +527,7 @@ theorem insert_cases (db : DB) (pos : Pos) (label : String) (obj : String → Ob
         simp only [h_classifier]
         -- Goal: (db.insert pos label obj).error = true
         unfold DB.insert
-        simp [h_obj, h_scope, DB.error, DBLemmas.mkError_sets_error]
+        simp [h_obj, h_scope, DB.error]
 
       · -- Const in outer scope or permissive: check duplicate
         by_cases h_dup : (db.find? label).isSome
@@ -773,6 +776,8 @@ def classifyInsertHyp (db : DB) (_ : Pos) (label : String) (ess : Bool) (f : For
   if db.error then
     .error_already
   else if f.hasConstHead = false then
+    .error_bad_shape
+  else if ess && db.formulaSymsRespectFrame f (Verify.Frame.mk #[] db.frame.hyps) = false then
     .error_bad_shape
   else if !ess && f.isFloatShape = false then
     .error_bad_shape
@@ -1163,7 +1168,7 @@ theorem float_check_dup_sets_error (db : DB) (pos : Pos) (v : String)
                         simpa [pred, h_find] using h_pred
                       have h_err_set :
                           (db.mkError pos s!"variable {v} already has $f hypothesis").error = true := by
-                        simpa using
+                        exact
                           (DBLemmas.mkError_sets_error db pos
                             s!"variable {v} already has $f hypothesis")
                       have h_pres :=
@@ -1250,7 +1255,7 @@ theorem insertHyp_preserves_error_when_set (db : DB) (pos : Pos) (label : String
     unfold DB.insertHypChecks
     by_cases h_head : f.hasConstHead
     · simp [h_head, h_err]
-    · simp [h_head, DBLemmas.mkError_sets_error]
+    · simp [h_head]
   simp [h_checks]
 
 /-- hasFloatBinding is false when no hypothesis matches the float-var predicate. -/
@@ -1277,14 +1282,15 @@ They allow reasoning about insertHyp composition: float_check >> insert >> withH
 theorem insertHyp_eq_when_no_float_check (db : DB) (pos : Pos) (label : String) (ess : Bool) (f : Formula)
     (h_no_err : db.error = false)
     (h_head : f.hasConstHead = true)
-    (h_ess : ess = true) :
+    (h_ess : ess = true)
+    (h_syms : db.formulaSymsRespectFrame f (Verify.Frame.mk #[] db.frame.hyps) = true) :
     db.insertHyp pos label ess f =
       if (db.insert pos label (.hyp ess f)).error = true then
         db.insert pos label (.hyp ess f)
       else
         (db.insert pos label (.hyp ess f)).withHyps (fun hyps => hyps.push label) := by
   unfold DB.insertHyp
-  simp [DB.insertHypChecks, h_no_err, h_head, h_ess]
+  simp [DB.insertHypChecks, h_no_err, h_head, h_ess, h_syms]
 
 /-! ## Helper Lemmas for insertHyp_cases Branches
 
@@ -1297,11 +1303,12 @@ theorem insertHyp_essential_success (db : DB) (pos : Pos) (label : String) (ess 
     (h_no_err : db.error = false)
     (h_head : f.hasConstHead = true)
     (h_ess : ess = true)
+    (h_syms : db.formulaSymsRespectFrame f (Verify.Frame.mk #[] db.frame.hyps) = true)
     (h_no_dup : (db.find? label).isSome = false) :
     let db' := db.insertHyp pos label ess f
     db'.find? label = some (.hyp ess f label) ∧ label ∈ db'.frame.hyps := by
   -- Use the structural lemma
-  rw [insertHyp_eq_when_no_float_check db pos label ess f h_no_err h_head h_ess]
+  rw [insertHyp_eq_when_no_float_check db pos label ess f h_no_err h_head h_ess h_syms]
   have h_no_scope : (match Object.hyp ess f label with
                      | Object.const _ => !db.config.allowConstInnerScope && db.scopes.size > 0
                      | _ => false) = false := by simp
@@ -1329,10 +1336,11 @@ theorem insertHyp_essential_duplicate (db : DB) (pos : Pos) (label : String) (es
     (h_no_err : db.error = false)
     (h_head : f.hasConstHead = true)
     (h_ess : ess = true)
+    (h_syms : db.formulaSymsRespectFrame f (Verify.Frame.mk #[] db.frame.hyps) = true)
     (h_dup : (db.find? label).isSome = true) :
     (db.insertHyp pos label ess f).error = true := by
   -- Use the structural lemma
-  rw [insertHyp_eq_when_no_float_check db pos label ess f h_no_err h_head h_ess]
+  rw [insertHyp_eq_when_no_float_check db pos label ess f h_no_err h_head h_ess h_syms]
   have h_not_err : ¬(db.error = true) := by
     intro h
     rw [h] at h_no_err
@@ -1380,8 +1388,8 @@ theorem insertHyp_float_const_bad_shape (db : DB) (pos : Pos) (label : String) (
   have h_checks : (db.insertHypChecks pos false f).error = true := by
     unfold DB.insertHypChecks
     by_cases h_head : f.hasConstHead
-    · simp [h_head, h_no_err, h_shape, DBLemmas.mkError_sets_error]
-    · simp [h_head, DBLemmas.mkError_sets_error]
+    · simp [h_head, h_no_err, h_shape]
+    · simp [h_head]
   simp [DB.insertHyp, h_checks]
 
 /-- Float with var, duplicate float case.
@@ -1405,7 +1413,7 @@ theorem insertHyp_float_var_dup_float (db : DB) (pos : Pos) (label : String) (f 
     simpa [hasFloatBinding, Verify.DB.floatVarOccursInFrame, floatVarMatches] using h_has_float
   have h_checks : (db.insertHypChecks pos false f).error = true := by
     unfold DB.insertHypChecks
-    simp [h_head, h_no_err, h_shape, h_size, h_f1_val, h_dup, h_perm, DBLemmas.mkError_sets_error]
+    simp [h_head, h_no_err, h_shape, h_size, h_f1_val, h_dup, h_perm]
   simp [DB.insertHyp, h_checks]
 
 /-- Float with var, no dup float, but insert dup case -/
@@ -1518,15 +1526,27 @@ theorem insertHyp_cases (db : DB) (pos : Pos) (label : String) (ess : Bool) (f :
       | true =>
           -- Essential hypothesis
           subst h_ess
-          by_cases h_dup : (db.find? label).isSome
-          · -- error_from_insert
-            have h_dup' : (db.find? label).isSome = true := by simp [h_dup]
-            simp [h_dup]
-            exact insertHyp_essential_duplicate db pos label true f h_no_err h_head rfl h_dup'
-          · -- success
-            have h_no_dup : (db.find? label).isSome = false := by simp [h_dup]
-            simp [h_dup]
-            exact insertHyp_essential_success db pos label true f h_no_err h_head rfl h_no_dup
+          by_cases h_syms :
+            db.formulaSymsRespectFrame f (Verify.Frame.mk #[] db.frame.hyps) = true
+          · -- Symbols in scope
+            by_cases h_dup : (db.find? label).isSome
+            · -- error_from_insert
+              have h_dup' : (db.find? label).isSome = true := by simp [h_dup]
+              simp [h_syms, h_dup]
+              exact insertHyp_essential_duplicate db pos label true f h_no_err h_head rfl h_syms h_dup'
+            · -- success
+              have h_no_dup : (db.find? label).isSome = false := by simp [h_dup]
+              simp [h_syms, h_dup]
+              exact insertHyp_essential_success db pos label true f h_no_err h_head rfl h_syms h_no_dup
+          · -- Symbols out of scope: bad shape
+            have h_syms' :
+                db.formulaSymsRespectFrame f (Verify.Frame.mk #[] db.frame.hyps) = false := by
+              exact eq_false_of_ne_true h_syms
+            simp [h_syms']
+            have h_checks : (db.insertHypChecks pos true f).error = true := by
+              unfold DB.insertHypChecks
+              simp [h_no_err, h_head, h_syms']
+            simp [DB.insertHyp, h_checks]
       | false =>
           -- Float hypothesis: require float shape
           by_cases h_shape : f.isFloatShape
@@ -1582,7 +1602,7 @@ theorem insertHyp_cases (db : DB) (pos : Pos) (label : String) (ess : Bool) (f :
             simp [h_shape']
             have h_checks : (db.insertHypChecks pos ess f).error = true := by
               unfold DB.insertHypChecks
-              simp [h_head, h_no_err, h_ess, h_shape', DBLemmas.mkError_sets_error]
+              simp [h_head, h_no_err, h_ess, h_shape']
             have h_checks' : (db.insertHypChecks pos false f).error = true := by
               simpa [h_ess] using h_checks
             simp [DB.insertHyp, h_checks']
@@ -1592,7 +1612,7 @@ theorem insertHyp_cases (db : DB) (pos : Pos) (label : String) (ess : Bool) (f :
       simp [h_head']
       have h_checks : (db.insertHypChecks pos ess f).error = true := by
         unfold DB.insertHypChecks
-        simp [h_head', DBLemmas.mkError_sets_error]
+        simp [h_head']
       simp [DB.insertHyp, h_checks]
 
 /-! ## Pattern: Checking Hypotheses

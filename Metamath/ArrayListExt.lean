@@ -12,6 +12,9 @@ After Lean 4.24.0 + Batteries v4.24.0 upgrade (November 2025):
 
 import Batteries.Data.List.Lemmas
 import Batteries.Data.Array.Lemmas
+set_option linter.unnecessarySimpa false
+set_option linter.unusedSimpArgs false
+
 
 /-! ## List helpers -/
 
@@ -682,6 +685,28 @@ Proven using getElem!_pos to convert to bounded access, then standard membership
 theorem getElem!_mem_toList {α} [Inhabited α] (a : Array α) (i : Nat) (h : i < a.size) :
   a[i]! ∈ a.toList := by
   simp [getElem!_pos, h]
+
+/-! ## Array.toList membership → index -/
+
+/-- If `x` appears in `a.toList`, then it appears at some index of the array. -/
+theorem toList_mem_implies_index {α} [Inhabited α] (a : Array α) (x : α) (h : x ∈ a.toList) :
+  ∃ i, i < a.size ∧ a[i]! = x := by
+  -- Use List.mem_iff_get to obtain an index in the list
+  rcases List.mem_iff_getElem.mp h with ⟨i, hi_list, h_get⟩
+  have hi : i < a.size := by
+    -- toList length is definitional for Arrays
+    have h_len : a.toList.length = a.size := by
+      cases a <;> rfl
+    simpa [h_len] using hi_list
+  -- Relate list.get to array.get
+  have h_toList_get : a.toList.get ⟨i, hi_list⟩ = a[i] := by
+    exact Array.toList_get a i hi hi_list
+  have h_arr : a[i] = x := by
+    -- h_get : list.get = x, h_toList_get : list.get = a[i]
+    exact h_toList_get.symm.trans h_get
+  have h_bang : a[i]! = a[i] := by
+    simp [getElem!_pos, hi]
+  exact ⟨i, hi, h_bang.trans h_arr⟩
 
 /-- Correspondence between get? and getElem!.
 

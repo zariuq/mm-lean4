@@ -1,6 +1,9 @@
 import Std.Data.HashMap
 import Std.Data.HashSet
 import Metamath.ByteSliceCompat
+set_option linter.unnecessarySimpa false
+set_option linter.unusedSimpArgs false
+
 
 /-! ## Array Bridging Lemmas
 
@@ -561,12 +564,40 @@ def wellFormedObjects? (db : DB) : Bool :=
 def wellFormed? (db : DB) : Bool :=
   db.wellFormedFrame? db.frame && db.wellFormedObjects?
 
+/-- Extract float variable names from a frame (only well-formed $f hyps contribute). -/
+def frameFloatVars (db : DB) (fr : Frame) : List String :=
+  fr.hyps.toList.filterMap fun lbl =>
+    match db.find? lbl with
+    | some (.hyp false f _) =>
+        if f.isFloatShape then
+          match f[1]! with
+          | .var v => some v
+          | _ => none
+        else
+          none
+    | _ => none
+
+/-- Check that formula symbols respect the frame's float variables.
+
+For each tail symbol in the formula:
+- variables must be declared by some $f in the frame
+- constants must not be declared as frame variables
+-/
+def formulaSymsRespectFrame (db : DB) (f : Formula) (fr : Frame) : Bool :=
+  let vars := frameFloatVars db fr
+  (f.toList.tail).all fun s =>
+    match s with
+    | .var v => decide (v ∈ vars)
+    | .const c => decide (c ∉ vars)
+
 def insertHypChecks (db : DB) (pos : Pos) (ess : Bool) (f : Formula) : DB :=
   -- Validate basic formula shape (used by parser invariants)
   let db := if f.hasConstHead then db else db.mkError pos "first symbol is not a constant"
   if db.error then db else
   let db :=
-    if ess then db
+    if ess then
+      if formulaSymsRespectFrame db f (Verify.Frame.mk #[] db.frame.hyps) then db
+      else db.mkError pos "hypothesis symbols not in frame"
     else if f.isFloatShape then db
     else db.mkError pos "expected a constant and a variable"
   if db.error then db else
@@ -582,8 +613,33 @@ def insertHypChecks (db : DB) (pos : Pos) (ess : Bool) (f : Formula) : DB :=
 @[simp] theorem insertHypChecks_config (db : DB) (pos : Pos) (ess : Bool) (f : Formula) :
     (db.insertHypChecks pos ess f).config = db.config := by
   unfold insertHypChecks
-  -- `mkError` preserves config, and no branch assigns to `config`.
-  repeat (first | split | simp [DB.error, DB.mkError_config, DB.mkError_error] | rfl)
+  by_cases h_head : f.hasConstHead
+  · simp [h_head]
+    cases h_err : db.error with
+    | true =>
+        simp
+    | false =>
+        simp
+        cases h_ess : ess with
+        | true =>
+            simp
+            by_cases h_syms : formulaSymsRespectFrame db f (Verify.Frame.mk #[] db.frame.hyps)
+            · simp [h_syms]
+            · simp [h_syms, DB.mkError_config]
+        | false =>
+            simp
+            by_cases h_shape : f.isFloatShape
+            · simp [h_shape]
+              by_cases h_size : f.size >= 2
+              · simp [h_size]
+                by_cases h_dup :
+                  db.config.allowDuplicateFloat = false ∧
+                    db.floatVarOccursInFrame f[1]!.value = true
+                · simp [h_err, h_dup, DB.mkError_config]
+                · simp [h_err, h_dup]
+              · simp [h_size]
+            · simp [h_shape, DB.mkError_config]
+  · simp [h_head, DB.mkError_config]
 
 def insertHyp (db : DB) (pos : Pos) (l : String) (ess : Bool) (f : Formula) : DB :=
   let db := db.insertHypChecks pos ess f
@@ -702,32 +758,6 @@ def preloadMandatoryHyps (db : DB) (pr : ProofState) : Except String ProofState 
     | some (.hyp _ f _) => pr := pr.pushHeap (.fmla f)
     | _ => throw s!"mandatory hypothesis {lbl} not found in database"
   return pr
-
-/-- Extract float variable names from a frame (only well-formed $f hyps contribute). -/
-def frameFloatVars (db : DB) (fr : Frame) : List String :=
-  fr.hyps.toList.filterMap fun lbl =>
-    match db.find? lbl with
-    | some (.hyp false f _) =>
-        if f.isFloatShape then
-          match f[1]! with
-          | .var v => some v
-          | _ => none
-        else
-          none
-    | _ => none
-
-/-- Check that formula symbols respect the frame's float variables.
-
-For each tail symbol in the formula:
-- variables must be declared by some $f in the frame
-- constants must not be declared as frame variables
--/
-def formulaSymsRespectFrame (db : DB) (f : Formula) (fr : Frame) : Bool :=
-  let vars := frameFloatVars db fr
-  (f.toList.tail).all fun s =>
-    match s with
-    | .var v => decide (v ∈ vars)
-    | .const c => decide (c ∉ vars)
 
 variable (db : DB) (hyps : Array String) (stack : Array Formula)
   (off : {off // off + hyps.size = stack.size}) in
@@ -1044,11 +1074,23 @@ def withAt (l : String) (f : Unit → ParserState) : ParserState :=
   generalize hs : f () = s0
   cases h_err : s0.db.error? with
   | none =>
-      simp [hs, h_err]
+      simp [h_err]
   | some intr =>
       cases intr with
       | mk e idx =>
-          cases e <;> simp [hs, h_err, ParserState.withDB]
+          cases e <;> simp [h_err, ParserState.withDB]
+
+@[simp] theorem withAt_tokp (l : String) (f : Unit → ParserState) :
+    (ParserState.withAt l f).tokp = (f ()).tokp := by
+  unfold ParserState.withAt
+  generalize hs : f () = s0
+  cases h_err : s0.db.error? with
+  | none =>
+      simp [h_err]
+  | some intr =>
+      cases intr with
+      | mk e idx =>
+          cases e <;> simp [h_err, ParserState.withDB]
 
 def label (s : ParserState) (pos : Pos) (tk : ByteSlice) : ParserState :=
   let (ok, tk) := toLabel tk
@@ -1101,8 +1143,8 @@ termination_by arr.size - i
   · intro i s hs
     have hi : ¬ i < arr.size := by
       intro hi
-      have : arr.size - i > 0 := Nat.sub_pos_of_lt hi
-      simpa [hs] using this
+      have hpos : arr.size - i > 0 := Nat.sub_pos_of_lt hi
+      simpa [hs] using hpos
     simp [djvars_loop_aux, hi]
   · intro m ih i s hs
     have hi : i < arr.size := by
@@ -1112,7 +1154,8 @@ termination_by arr.size - i
         have hz : arr.size - i = 0 := Nat.sub_eq_zero_of_le (Nat.le_of_not_gt hi')
         have : False := by
           -- `hs` says `arr.size - i = Nat.succ m`, contradicting `hz`.
-          simpa [hz] using hs
+          have hs' := hs
+          simpa [hz] using hs'
         exact False.elim this
     -- Split on duplicate variable.
     have hs' : arr.size - (i + 1) = m := by
@@ -1132,7 +1175,10 @@ termination_by arr.size - i
 
 def djvars_loop (arr : Array String) (s : ParserState) (pos : Pos) (tk : String) : ParserState :=
   if s.db.isVar tk then
-    djvars_loop_aux arr s pos tk 0
+    if s.db.floatVarOccursInFrame tk then
+      djvars_loop_aux arr s pos tk 0
+    else
+      s.mkError pos s!"{tk} not in scope"
   else
     s.mkError pos s!"{tk} is not a variable"
 
@@ -1140,7 +1186,11 @@ def djvars_loop (arr : Array String) (s : ParserState) (pos : Pos) (tk : String)
     (pos : Pos) (tk : String) :
     (djvars_loop arr s pos tk).db.config = s.db.config := by
   unfold djvars_loop
-  by_cases h : s.db.isVar tk <;> simp [h, ParserState.mkError_db_config, djvars_loop_aux_db_config]
+  by_cases h_var : s.db.isVar tk
+  · by_cases h_float : s.db.floatVarOccursInFrame tk
+    · simp [h_var, h_float, djvars_loop_aux_db_config]
+    · simp [h_var, h_float, ParserState.mkError_db_config]
+  · simp [h_var, ParserState.mkError_db_config]
 
 def sym (s : ParserState) (pos : Pos) (tk : ByteSlice) (f : String → Object) : ParserState :=
   if tk.eqArray "$.".toAscii then
@@ -1344,7 +1394,7 @@ def finishProof (s : ParserState) : ProofState → ParserState
           · split <;> simp [ParserState.mkError_db_config, ParserState.withDB, DB.insert_config]
           · simp [ParserState.mkError_db_config]
       | compressed chr =>
-          simp only [↓reduceDIte, Pure.pure, Bind.bind]
+          simp only [Pure.pure, Bind.bind]
           split
           · -- Case h_1: compressed 0
             split
@@ -1540,8 +1590,8 @@ termination_by arr.size - i
   · intro i rs s hs
     have hi : ¬ i < arr.size := by
       intro hi
-      have : arr.size - i > 0 := Nat.sub_pos_of_lt hi
-      simpa [hs] using this
+      have hpos : arr.size - i > 0 := Nat.sub_pos_of_lt hi
+      simpa [hs] using hpos
     unfold ParserState.feed
     simp only [hi, ↓reduceDIte]
   · intro m ih i rs s hs
@@ -1552,7 +1602,8 @@ termination_by arr.size - i
         have hz : arr.size - i = 0 := Nat.sub_eq_zero_of_le (Nat.le_of_not_gt hi')
         have : False := by
           -- `hs` says `arr.size - i = Nat.succ m`, contradicting `hz`.
-          simpa [hz] using hs
+          have hs' := hs
+          simpa [hz] using hs'
         exact False.elim this
     have hs' : arr.size - (i + 1) = m := by
       simp only [Nat.add_one, Nat.sub_succ, hs, Nat.pred_succ]
@@ -1652,12 +1703,9 @@ def feedAll (s : ParserState) (base : Nat) (arr : ByteArray) : ParserState :=
     (s.feedAll base arr).db.config = s.db.config := by
   cases h : s.charp with
   | ws =>
-      simpa [ParserState.feedAll, h] using
-        (ParserState.feed_db_config (base := base) (arr := arr) (i := 0) (rs := FeedState.ws) (s := s))
+      simp [ParserState.feedAll, h, ParserState.feed_db_config]
   | token base' tk =>
-      simpa [ParserState.feedAll, h] using
-        (ParserState.feed_db_config (base := base) (arr := arr) (i := 0)
-          (rs := FeedState.token (OldToken.old base' tk.start tk.byteArray)) (s := { s with charp := default }))
+      simp [ParserState.feedAll, h, ParserState.feed_db_config]
 
 def done (s : ParserState) (base : Nat) : DB := Id.run do
   let mut s := s
@@ -1681,6 +1729,22 @@ def done (s : ParserState) (base : Nat) : DB := Id.run do
     | .thm => db.mkError base "unclosed $p"
   | .label pos _ => db.mkError pos "not a command"
   | .proof _ => db.mkError base "unclosed $p proof"
+
+/-- If parsing ends in `$d` mode at whitespace boundary, `done` reports unclosed `$d`. -/
+theorem done_error_if_djvars_ws
+    (s : ParserState) (base : Nat) (vars : Array String)
+    (h_charp : s.charp = .ws)
+    (h_tokp : s.tokp = .djvars vars) :
+    (s.done base).error? ≠ none := by
+  simp [ParserState.done, h_charp, h_tokp, DB.mkError, Id.run]
+
+/-- If parsing ends in `$d` mode after flushing a pending token, `done` reports unclosed `$d`. -/
+theorem done_error_if_djvars_token
+    (s : ParserState) (base : Nat) (pos : Nat) (tk : ByteSliceT) (vars : Array String)
+    (h_charp : s.charp = .token pos tk)
+    (h_tokp : (s.feedToken pos tk.toSlice).tokp = .djvars vars) :
+    (s.done base).error? ≠ none := by
+  simp [ParserState.done, h_charp, h_tokp, DB.mkError, Id.run]
 
 @[simp] theorem done_config (s : ParserState) (base : Nat) :
     (s.done base).config = s.db.config := by

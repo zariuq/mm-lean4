@@ -25,6 +25,9 @@ import Metamath.Verify
 import Metamath.WellFormedness
 import Metamath.ParserBasics
 import Std.Data.HashMap.Lemmas
+set_option linter.unnecessarySimpa false
+set_option linter.unusedSimpArgs false
+
 
 namespace Metamath.ParserCorrectness
 
@@ -39,6 +42,143 @@ These are the bedrock - properties of data structures we rely on.
 They are now proven from `Std.Data.HashMap.Lemmas` and lawful BEq
 instances for strings.
 -/
+
+/-! ## Well-Scoped Helpers -/
+
+theorem insert_preserves_find?_ne
+    (db : DB) (pos : Pos) (label other : String) (obj : String → Object)
+    (h_ne : other ≠ label) :
+    (db.insert pos label obj).find? other = db.find? other := by
+  unfold DB.insert
+  have h_eq : (label == other) = false := by
+    by_cases h : label = other
+    · exact (h_ne h.symm).elim
+    · simp [h]
+  cases h_obj : obj label with
+  | const c =>
+      by_cases h_scope : !db.config.allowConstInnerScope && db.scopes.size > 0
+      · simp [h_scope, DB.mkError, DB.error, DB.find?]
+      · simp [h_scope]
+        by_cases h_err : db.error
+        · simp [h_err, DB.find?]
+        · simp [h_err]
+          cases h_find : db.find? label with
+          | none =>
+              -- insertion path
+              have h_other :
+                  (db.objects.insert label (Object.const c))[other]? = db.objects[other]? := by
+                simp [Std.HashMap.getElem?_insert, h_eq]
+              simpa [h_find, DB.find?] using h_other
+          | some val =>
+              cases val <;> simp [DB.mkError, DB.find?]
+  | var v =>
+      by_cases h_err : db.error
+      · simp [h_err, DB.find?]
+      · simp [h_err]
+        cases h_find : db.find? label with
+        | none =>
+            have h_other :
+                (db.objects.insert label (Object.var v))[other]? = db.objects[other]? := by
+              simp [Std.HashMap.getElem?_insert, h_eq]
+            simpa [h_find, DB.find?] using h_other
+        | some val =>
+            cases val <;> simp [DB.mkError, DB.find?]
+  | hyp ess f lbl =>
+      by_cases h_err : db.error
+      · simp [h_err, DB.find?]
+      · simp [h_err]
+        cases h_find : db.find? label with
+        | none =>
+            have h_other :
+                (db.objects.insert label (Object.hyp ess f lbl))[other]? = db.objects[other]? := by
+              simp [Std.HashMap.getElem?_insert, h_eq]
+            simpa [h_find, DB.find?] using h_other
+        | some val =>
+            cases val <;> simp [DB.mkError, DB.find?]
+  | assert f fr lbl =>
+      by_cases h_err : db.error
+      · simp [h_err, DB.find?]
+      · simp [h_err]
+        cases h_find : db.find? label with
+        | none =>
+            have h_other :
+                (db.objects.insert label (Object.assert f fr lbl))[other]? = db.objects[other]? := by
+              simp [Std.HashMap.getElem?_insert, h_eq]
+            simpa [h_find, DB.find?] using h_other
+        | some val =>
+            cases val <;> simp [DB.mkError, DB.find?]
+
+theorem isConst_preserved_by_insert
+    (db : DB) (pos : Pos) (label c : String) (obj : String → Object)
+    (h_ne : c ≠ label) :
+    db.isConst c = true → (db.insert pos label obj).isConst c = true := by
+  intro h_const
+  have h_find :
+      (db.insert pos label obj).find? c = db.find? c :=
+    insert_preserves_find?_ne db pos label c obj h_ne
+  have h_eq : (db.insert pos label obj).isConst c = db.isConst c := by
+    unfold DB.isConst
+    simp [h_find]
+  simpa [h_eq] using h_const
+
+theorem isVar_preserved_by_insert
+    (db : DB) (pos : Pos) (label v : String) (obj : String → Object)
+    (h_ne : v ≠ label) :
+    db.isVar v = true → (db.insert pos label obj).isVar v = true := by
+  intro h_var
+  have h_find :
+      (db.insert pos label obj).find? v = db.find? v :=
+    insert_preserves_find?_ne db pos label v obj h_ne
+  have h_eq : (db.insert pos label obj).isVar v = db.isVar v := by
+    unfold DB.isVar
+    simp [h_find]
+  simpa [h_eq] using h_var
+
+theorem formulaSymbolsDeclared_preserved_by_insert
+    (db : DB) (pos : Pos) (label : String) (obj : String → Object) (f : Formula)
+    (h_decl : FormulaSymbolsDeclared db f)
+    (h_fresh : db.find? label = none) :
+    FormulaSymbolsDeclared (db.insert pos label obj) f := by
+  intro s h_mem
+  cases s with
+  | const c =>
+      have h_isConst : db.isConst c = true := h_decl (Sym.const c) h_mem
+      have h_find_const : ∃ c', db.find? c = some (.const c') := by
+        cases h_find : db.find? c with
+        | none =>
+            simp [DB.isConst, h_find] at h_isConst
+        | some obj =>
+            cases obj with
+            | const c' => exact ⟨c', rfl⟩
+            | var _ => simp [DB.isConst, h_find] at h_isConst
+            | hyp _ _ _ => simp [DB.isConst, h_find] at h_isConst
+            | assert _ _ _ => simp [DB.isConst, h_find] at h_isConst
+      have h_ne : c ≠ label := by
+        intro h_eq
+        subst h_eq
+        rcases h_find_const with ⟨c', h_find_const⟩
+        simpa [h_find_const] using h_fresh
+      have h_isConst' := isConst_preserved_by_insert db pos label c obj h_ne h_isConst
+      simpa using h_isConst'
+  | var v =>
+      have h_isVar : db.isVar v = true := h_decl (Sym.var v) h_mem
+      have h_find_var : ∃ v', db.find? v = some (.var v') := by
+        cases h_find : db.find? v with
+        | none =>
+            simp [DB.isVar, h_find] at h_isVar
+        | some obj =>
+            cases obj with
+            | var v' => exact ⟨v', rfl⟩
+            | const _ => simp [DB.isVar, h_find] at h_isVar
+            | hyp _ _ _ => simp [DB.isVar, h_find] at h_isVar
+            | assert _ _ _ => simp [DB.isVar, h_find] at h_isVar
+      have h_ne : v ≠ label := by
+        intro h_eq
+        subst h_eq
+        rcases h_find_var with ⟨v', h_find_var⟩
+        simpa [h_find_var] using h_fresh
+      have h_isVar' := isVar_preserved_by_insert db pos label v obj h_ne h_isVar
+      simpa using h_isVar'
 
 /-- HashMap.insert makes the key findable -/
 @[simp] theorem HashMap.find?_insert_eq {α β} [BEq α] [Hashable α]
@@ -131,7 +271,7 @@ theorem insert_preserves_error (db : DB) (pos : Pos) (label : String) (obj : Str
   split
   · -- Case: obj label is .const
     split
-    · simp [mkError_creates_error]
+    · simp
     · simp [h]
   · simp [h]
 
@@ -410,7 +550,7 @@ theorem insertHyp_preserves_error (db : DB) (pos : Pos) (label : String) (ess : 
     unfold DB.insertHypChecks
     by_cases h_head : f.hasConstHead
     · simp [h_head, h_err]
-    · simp [h_head, mkError_creates_error]
+    · simp [h_head]
   simp [h_checks]
 
 /-- insertAxiom preserves error state -/
@@ -422,7 +562,7 @@ theorem insertAxiom_preserves_error (db : DB) (pos : Pos) (label : String) (fmla
   · -- head check passes, db unchanged
     simp [h_head, h]
   · -- head check fails, mkError sets error
-    simp [h_head, mkError_creates_error]
+    simp [h_head]
 
 /-- THE KEY PROPERTY: Parser stops on first error
 
@@ -621,7 +761,7 @@ theorem insert_preserves_others (db : DB) (pos : Pos) (label label' : String) (o
   | const c =>
       by_cases h_scope : !db.config.allowConstInnerScope && db.scopes.size > 0
       · -- Const scope check fails: mkError, objects unchanged.
-        simp [h_scope, mkError_creates_error]
+        simp [h_scope]
         simp [DB.find?, DB.mkError]
       · -- Const scope check passes: normal insert.
         simp [h_scope, h_no_err, h_not_found', DB.find?]
@@ -652,7 +792,7 @@ theorem insert_duplicate_error (db : DB) (pos : Pos) (label : String) (obj : Str
   | const c =>
       by_cases h_scope : !db.config.allowConstInnerScope && db.scopes.size > 0
       · -- Const scope check fails: mkError
-        simp [h_scope, mkError_creates_error]
+        simp [h_scope]
       · -- Const scope check passes, duplicate triggers mkError
         cases existing <;> simp [h_scope, h_no_err', h_exists, DB.error, DB.mkError]
   | var v =>
@@ -747,7 +887,7 @@ theorem insertHyp_rejects_duplicate_float
   have h_dup' : db.floatVarOccursInFrame f[1]!.value = true := by
     simpa [h_new_val] using h_dup
   have h_check_err : (DB.insertHypChecks db pos false f).error = true := by
-    simp [DB.insertHypChecks, h_head, h_shape, h_size_ge, h_dup', h_no_err, h_perm, mkError_creates_error]
+    simp [DB.insertHypChecks, h_head, h_shape, h_size_ge, h_dup', h_no_err, h_perm]
   simp [DB.insertHyp, h_check_err]
 
 /-- insertHyp succeeds when no duplicate exists -/

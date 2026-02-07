@@ -24,6 +24,9 @@ Metamath has three kinds of symbols:
 -/
 
 abbrev Sym := String
+
+/-- Global constant set (as a predicate). -/
+abbrev ConstSet := Sym → Prop
 abbrev Label := String
 
 structure Constant where
@@ -167,56 +170,62 @@ A well-formed database satisfies key invariants:
 These are enforced by the parser's insert function.
 -/
 
-/-- Variables in an expression must have floating hypotheses in the frame.
+/-- Variables in an expression must have floating hypotheses in the frame,
+    or be declared constants.
+
     Per §4.2.2: "Each variable that occurs in the math symbol sequence of an
     assertion must have an active $f statement."
-
-    Equivalently: symbols not in fr.vars are constants (globally).
-    Since constants are global, they can't be variables in any other frame. -/
-def ExprVarsInScope (fr : Frame) (e : Expr) : Prop :=
-  ∀ s ∈ e.syms, Variable.mk s ∈ fr.vars ∨ ∀ fr' : Frame, Variable.mk s ∉ fr'.vars
+    Per §4.1.3: "$c declares constants, $v declares variables" (global sets). -/
+def ExprVarsInScope (consts : ConstSet) (fr : Frame) (e : Expr) : Prop :=
+  ∀ s ∈ e.syms, Variable.mk s ∈ fr.vars ∨ consts s
 
 /-- All expressions in a frame (assertion + essential hypotheses) have variables in scope. -/
-def FrameExprsInScope (fr : Frame) (e : Expr) : Prop :=
-  ExprVarsInScope fr e ∧
+def FrameExprsInScope (consts : ConstSet) (fr : Frame) (e : Expr) : Prop :=
+  ExprVarsInScope consts fr e ∧
   ∀ h ∈ fr.mand, match h with
-    | Hyp.essential e_hyp => ExprVarsInScope fr e_hyp
+    | Hyp.essential e_hyp => ExprVarsInScope consts fr e_hyp
     | Hyp.floating _ _ => True
+
+/-- Frame variables are disjoint from the global constant set. -/
+def FrameVarsDisjointConsts (consts : ConstSet) (fr : Frame) : Prop :=
+  ∀ v ∈ fr.vars, ¬ consts v.v
 
 /-- A database is well-formed if all expressions have their variables in scope.
     This captures the Metamath invariant that the parser enforces. -/
-def WellFormedDatabase (Γ : Database) : Prop :=
-  ∀ l fr e, Γ l = some (fr, e) → FrameExprsInScope fr e
+def WellFormedDatabase (Γ : Database) (consts : ConstSet) : Prop :=
+  (∀ l fr e, Γ l = some (fr, e) → FrameExprsInScope consts fr e) ∧
+  (∀ l fr e, Γ l = some (fr, e) → FrameVarsDisjointConsts consts fr)
 
-/-- Key consequence: if a symbol is a constant in one frame's expression,
-    it's a constant in all frames. -/
-theorem const_global_of_wellFormed {Γ : Database} {fr fr' : Frame} {e : Expr} {l : Label}
-    (h_wf : WellFormedDatabase Γ)
+/-- Key consequence: if a symbol is not a variable in the frame, it is a constant. -/
+theorem const_global_of_wellFormed {Γ : Database} {consts : ConstSet}
+    {fr : Frame} {e : Expr} {l : Label}
+    (h_wf : WellFormedDatabase Γ consts)
     (h_lookup : Γ l = some (fr, e))
     (s : Sym)
     (h_s_in : s ∈ e.syms)
     (h_not_var : Variable.mk s ∉ fr.vars) :
-    Variable.mk s ∉ fr'.vars := by
-  have h := (h_wf l fr e h_lookup).1 s h_s_in
+    consts s := by
+  have h := (h_wf.1 l fr e h_lookup).1 s h_s_in
   cases h with
   | inl h_in => exact absurd h_in h_not_var
-  | inr h_global => exact h_global fr'
+  | inr h_const => exact h_const
 
 /-- Same property for essential hypothesis expressions. -/
-theorem const_global_of_wellFormed_hyp {Γ : Database} {fr fr' : Frame} {e e_hyp : Expr} {l : Label}
-    (h_wf : WellFormedDatabase Γ)
+theorem const_global_of_wellFormed_hyp {Γ : Database} {consts : ConstSet}
+    {fr : Frame} {e e_hyp : Expr} {l : Label}
+    (h_wf : WellFormedDatabase Γ consts)
     (h_lookup : Γ l = some (fr, e))
     (h_hyp_in : Hyp.essential e_hyp ∈ fr.mand)
     (s : Sym)
     (h_s_in : s ∈ e_hyp.syms)
     (h_not_var : Variable.mk s ∉ fr.vars) :
-    Variable.mk s ∉ fr'.vars := by
-  have h_frame := h_wf l fr e h_lookup
+    consts s := by
+  have h_frame := (h_wf.1 l fr e h_lookup)
   have h_hyp := h_frame.2 (Hyp.essential e_hyp) h_hyp_in
   simp only at h_hyp
   have h := h_hyp s h_s_in
   cases h with
   | inl h_in => exact absurd h_in h_not_var
-  | inr h_global => exact h_global fr'
+  | inr h_const => exact h_const
 
 end Metamath.Spec
