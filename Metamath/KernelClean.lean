@@ -12,6 +12,7 @@ Goal: eliminate sorries without introducing axioms.
 -/
 
 import Metamath.Spec
+import Metamath.Spec.Equivalence
 import Metamath.Verify
 import Metamath.KernelExtras
 import Metamath.HashMapLemmas
@@ -22,16 +23,25 @@ import Metamath.DBLemmas
 import Metamath.ArrayListExt
 import Batteries.Data.List.Basic
 import Std.Data.HashMap.Lemmas
+set_option linter.unnecessarySimpa false
+set_option linter.unusedSimpArgs false
+
 -- import Metamath.ParserProofs  -- Temporarily disabled due to Batteries 4.24.0 ByteSlice conflict
 
 namespace Metamath.Kernel
 
 open Metamath.Spec
+open Metamath.Spec.Equivalence
 open Metamath.Verify
 open Metamath.Bridge
 open Metamath.WF
 open Metamath.HashMapLemmas
 open scoped Classical
+
+-- Avoid name clash with DeclarativeSpec.Formula
+abbrev Formula := Verify.Formula
+-- Avoid name clash with DeclarativeSpec.Sym
+abbrev Sym := Verify.Sym
 
 /-! ## Array getElem! helpers -/
 
@@ -413,7 +423,7 @@ theorem foldlM_substStep_preserves_head
     _ = Verify.Sym.const c := rfl
 
 theorem subst_preserves_head_of_const0 {σ : Std.HashMap String Formula} {f g : Formula}
-    (hf : 0 < f.size) (hhead : ∃ c, f[0]! = Sym.const c) (h_sub : f.subst σ = Except.ok g) :
+    (hf : 0 < f.size) (hhead : ∃ c, f[0]! = Verify.Sym.const c) (h_sub : f.subst σ = Except.ok g) :
     ∃ (hg : 0 < g.size), g[0]'hg = f[0]'hf := by
   classical
   obtain ⟨c, hc⟩ := hhead
@@ -438,26 +448,26 @@ theorem subst_preserves_head_of_const0 {σ : Std.HashMap String Formula} {f g : 
   have h_s_eq : s = f[0]! := by
     have h_get := getElem!_toList f 0 hf
     exact h_toList_head.symm.trans h_get.symm
-  have h_s_const : s = Sym.const c := by simpa [h_s_eq] using hc
+  have h_s_const : s = Verify.Sym.const c := by simpa [h_s_eq] using hc
   have h_step :
-      Formula.substStep σ #[] s = Except.ok #[Sym.const c] := by
+      Formula.substStep σ #[] s = Except.ok #[Verify.Sym.const c] := by
     simp [Formula.substStep, h_s_const]
   have h_rest :
-      rest.foldlM (Formula.substStep σ) #[Sym.const c] = Except.ok g := by
+      rest.foldlM (Formula.substStep σ) #[Verify.Sym.const c] = Except.ok g := by
     have h := h_fold_list
     simpa [h_list, List.foldlM_cons, Bind.bind, Except.bind, h_step] using h
   have hg : 0 < g.size := foldlM_substStep_nonempty (σ := σ) rest g h_rest
-  have h_g_head! : g[0]! = Sym.const c :=
+  have h_g_head! : g[0]! = Verify.Sym.const c :=
     foldlM_substStep_preserves_head (σ := σ) rest g h_rest
-  have h_g_head : g[0]'hg = Sym.const c := by
+  have h_g_head : g[0]'hg = Verify.Sym.const c := by
     have h_get := getElem!_pos g 0 hg
     exact h_get.symm.trans h_g_head!
-  have h_f_head : f[0]'hf = Sym.const c := by
+  have h_f_head : f[0]'hf = Verify.Sym.const c := by
     have h_get := getElem!_pos f 0 hf
     exact h_get.symm.trans hc
   refine ⟨hg, ?_⟩
   calc
-    g[0]'hg = Sym.const c := h_g_head
+    g[0]'hg = Verify.Sym.const c := h_g_head
     _ = f[0]'hf := h_f_head.symm
 
 /-- Tail fragment contributed by a single symbol in substitution flatMap. -/
@@ -489,12 +499,12 @@ def substTailMap (σ : Std.HashMap String Formula) (s : Verify.Sym) :
       cases s with
       | const symVal =>
           have h_step :
-              Formula.substStep σ acc (Sym.const symVal) =
-                Except.ok (acc.push (Sym.const symVal)) := by
+              Formula.substStep σ acc (Verify.Sym.const symVal) =
+                Except.ok (acc.push (Verify.Sym.const symVal)) := by
             simp [Formula.substStep]
           simp [h_step] at h_fold
           have h_rec :=
-            ih (acc := acc.push (Sym.const symVal)) (result := result) h_fold
+            ih (acc := acc.push (Verify.Sym.const symVal)) (result := result) h_fold
           simp [substTailMap, Array.toList_push, h_rec, List.flatMap_cons, List.append_assoc]
       | var v =>
           cases h_lookup : σ[v]? with
@@ -545,23 +555,23 @@ theorem subst_ok_flatMap_tail {σ : Std.HashMap String Formula} {f g : Formula}
   have h_s_eq : s = f[0]! := by
     have h_get := getElem!_toList f 0 hf
     exact h_toList_head.symm.trans h_get.symm
-  have h_s_const : s = Sym.const c := by simpa [h_s_eq] using hc
+  have h_s_const : s = Verify.Sym.const c := by simpa [h_s_eq] using hc
   have h_step :
-      Formula.substStep σ #[] s = Except.ok #[Sym.const c] := by
+      Formula.substStep σ #[] s = Except.ok #[Verify.Sym.const c] := by
     simp [Formula.substStep, h_s_const]
   have h_rest :
-      rest.foldlM (Formula.substStep σ) #[Sym.const c] = Except.ok g := by
+      rest.foldlM (Formula.substStep σ) #[Verify.Sym.const c] = Except.ok g := by
     have h := h_fold_list
     simpa [h_list, List.foldlM_cons, Bind.bind, Except.bind, h_step] using h
   have h_toList :
-      g.toList = (#[Sym.const c] : Formula).toList ++
+      g.toList = (#[Verify.Sym.const c] : Formula).toList ++
         rest.flatMap (substTailMap σ) :=
-    subst_toList_eq (σ := σ) (syms := rest) (acc := #[Sym.const c]) h_rest
+    subst_toList_eq (σ := σ) (syms := rest) (acc := #[Verify.Sym.const c]) h_rest
   have h_rest_eq : rest = f.toList.tail := by
     simp [h_list]
   have h_tail :
       g.toList.tail = rest.flatMap (substTailMap σ) := by
-    have h_ne : ((#[Sym.const c] : Formula).toList) ≠ ([] : List Verify.Sym) := by
+    have h_ne : ((#[Verify.Sym.const c] : Formula).toList) ≠ ([] : List Verify.Sym) := by
       simp
     have := congrArg List.tail h_toList
     simpa [Array.toList, List.singleton_append, List.append_assoc,
@@ -595,6 +605,25 @@ theorem toSym_var_ne_const {v c : String} (h : v ≠ c) :
     toSym (Verify.Sym.var v) ≠ toSym (Verify.Sym.const c) := by
   unfold toSym Verify.Sym.value
   exact h
+
+theorem isConst_not_isVar (db : Verify.DB) (c : String) :
+    db.isConst c = true → db.isVar c = false := by
+  intro h_const
+  cases h_find : db.find? c with
+  | none =>
+      -- isConst = false, contradiction
+      simp [Verify.DB.isConst, h_find] at h_const
+  | some obj =>
+      cases obj with
+      | const _ =>
+          -- isVar = false when find? is const
+          simp [Verify.DB.isVar, h_find]
+      | var _ =>
+          simp [Verify.DB.isConst, h_find] at h_const
+      | hyp _ _ _ =>
+          simp [Verify.DB.isConst, h_find] at h_const
+      | assert _ _ _ =>
+          simp [Verify.DB.isConst, h_find] at h_const
 
 /-- For size-2 array, toList has exactly 2 elements -/
 theorem array_size2_toList {f : Verify.Formula} (h_size : f.size = 2) :
@@ -842,45 +871,6 @@ These predicates capture the extra scoping/order invariants that the implementat
 assumes when running checkHyp and dvCheck. They are intended as completeness
 preconditions (parser-enforced in practice).
 -/
-
-/-- A variable `v` is declared by some earlier floating hypothesis in the frame. -/
-def FloatDeclaredBefore (db : Verify.DB) (fr : Verify.Frame) (i : Nat) (v : String) : Prop :=
-  ∃ j : Nat, j < i ∧
-    ∃ (f : Verify.Formula) (lbl : String),
-      db.find? fr.hyps[j]! = some (.hyp false f lbl) ∧
-      f.isFloatShape = true ∧
-      f[1]! = Verify.Sym.var v
-
-/-- A frame is well-scoped if:
-1. Every essential hypothesis respects the frame's float variables
-2. Every variable in an essential hypothesis is declared by an earlier float
-3. DV pairs are ordered (v < w) and both variables are in the frame
--/
-def WellScopedFrame (db : Verify.DB) (fr : Verify.Frame) : Prop :=
-  (∀ i, i < fr.hyps.size →
-    match db.find? fr.hyps[i]! with
-    | some (.hyp true f _) =>
-        Verify.DB.formulaSymsRespectFrame db f (Verify.Frame.mk #[] fr.hyps) = true ∧
-        (∀ v, Verify.Sym.var v ∈ f.toList.tail → FloatDeclaredBefore db fr i v)
-    | _ => True) ∧
-  (∀ v w, (v, w) ∈ fr.dj.toList →
-    v < w ∧
-    v ∈ Verify.DB.frameFloatVars db fr ∧
-    w ∈ Verify.DB.frameFloatVars db fr)
-
-/-- A database is well-scoped if all assertion frames are well-scoped
-    and all assertion formulas respect their frames. -/
-def WellScopedDB (db : Verify.DB) : Prop :=
-  WellScopedFrame db db.frame ∧
-  (∀ lbl obj, db.find? lbl = some obj →
-    match obj with
-    | .assert f fr _ =>
-        WellScopedFrame db fr ∧
-        Verify.DB.formulaSymsRespectFrame db f fr = true ∧
-        Verify.DB.formulaSymsRespectFrame db f db.frame = true
-    | .hyp _ f _ =>
-        Verify.DB.formulaSymsRespectFrame db f db.frame = true
-    | _ => True)
 
 /-! ## Proven Spec Lemmas (KEEP THESE - already proven) -/
 
@@ -2255,6 +2245,46 @@ def toDatabase (db : Verify.DB) : Option Spec.Database :=
         | _, _ => none
     | _ => none)
 
+/-- Extract the global constant set from the implementation DB. -/
+def toConsts (db : Verify.DB) : Spec.ConstSet :=
+  fun s => db.isConst s = true
+
+/-- Lookup correspondence for `toDatabase`. -/
+theorem toDatabase_lookup
+    (db : Verify.DB) (Γ : Spec.Database) (l : String) (fr : Spec.Frame) (e : Spec.Expr)
+    (h_db : toDatabase db = some Γ)
+    (h_lookup : Γ l = some (fr, e)) :
+    ∃ f fr_impl n, db.find? l = some (.assert f fr_impl n) ∧
+      toFrame db fr_impl = some fr ∧
+      toExpr f = e := by
+  -- Unfold toDatabase and reduce the lookup
+  unfold toDatabase at h_db
+  injection h_db with h_Γ
+  rw [← h_Γ] at h_lookup
+  simp only at h_lookup
+  cases h_find : db.find? l with
+  | none =>
+      simp [h_find] at h_lookup
+  | some entry =>
+      cases entry with
+      | assert f_impl fr_impl name =>
+          simp [h_find] at h_lookup
+          cases h_fr : toFrame db fr_impl with
+          | none => simp [h_fr] at h_lookup
+          | some fr_spec =>
+              cases h_e : toExprOpt f_impl with
+              | none => simp [h_fr, h_e] at h_lookup
+              | some e_spec =>
+                  simp [h_fr, h_e] at h_lookup
+                  rcases h_lookup with ⟨h_fr_eq, h_e_eq⟩
+                  have h_toExpr : toExpr f_impl = e_spec :=
+                    (toExprOpt_some_iff_toExpr f_impl e_spec).1 h_e |>.2
+                  refine ⟨f_impl, fr_impl, name, rfl, ?_, ?_⟩
+                  · simpa [h_fr_eq] using h_fr
+                  · simpa [h_e_eq] using h_toExpr
+      | _ =>
+          simp [h_find] at h_lookup
+
 /-! ## Float Extractor Functions (for axiom removal) -/
 
 /-- Extract the float from a spec hypothesis, if any.
@@ -3138,7 +3168,7 @@ theorem flatMap_toSym_correspondence
           have h_v_in : Spec.Variable.mk v ∈ vars := by
             apply h_vars_match
             simp [List.mem_cons]
-          have h_v_in' : Spec.Variable.mk (Sym.var v).value ∈ vars := by
+          have h_v_in' : Spec.Variable.mk (Verify.Sym.var v).value ∈ vars := by
             simpa using h_v_in
 
           -- From h_match, we get the binding
@@ -3181,7 +3211,7 @@ theorem flatMap_toSym_correspondence
           have ih_tail := ih h_tail_vars_match h_tail_const_not_in_vars
           simp [List.drop_one] at ih_tail
           rw [h_syms_tail, ih_tail]
-          simp [Sym.value]
+          simp [Verify.Sym.value]
 
 -- =============================================================================
 -- SECTION 1: SUBSTITUTION CORRESPONDENCE (PROVEN ✅)
@@ -3780,11 +3810,11 @@ theorem checkHyp_operational_general
                               simp [h_val_sz]
                               -- Goal: val[0].value = c
                               -- h_beq : (f[0]! == val[0]!) = true (where val = stack[off.1 + i]!)
-                              -- h0 : f[0]! = Sym.const c
+                              -- h0 : f[0]! = Verify.Sym.const c
                               -- BEq for Sym is structural, so beq = true implies equality
-                              have h_val0 : val[0]! = Sym.const c := by
-                                have h_eq : Sym.const c = val[0]! :=
-                                  LawfulBEq.eq_of_beq (a := Sym.const c) (b := val[0]!)
+                              have h_val0 : val[0]! = Verify.Sym.const c := by
+                                have h_eq : Verify.Sym.const c = val[0]! :=
+                                  LawfulBEq.eq_of_beq (a := Verify.Sym.const c) (b := val[0]!)
                                     (by simpa [h0] using h_beq)
                                 exact h_eq.symm
                               -- Need to show: val[0].value = c
@@ -3792,7 +3822,7 @@ theorem checkHyp_operational_general
                               -- So their .value fields are equal
                               calc val[0].value
                                 _ = val[0]!.value := by congr; simp [Nat.zero_lt_of_lt h_val_sz]
-                                _ = c := by simp [Sym.value, h_val0]
+                                _ = c := by simp [Verify.Sym.value, h_val0]
   
                             -- Prove noClash: earlier floats don't bind v
                             have h_noClash : ∀ j, j < i →
@@ -5643,6 +5673,55 @@ theorem formula_eq_of_toExpr_eq_of_respects
       _ = g.toList := List.cons_head_tail h_ne_g
   exact (Array.toList_inj).1 h_list
 
+/-
+    Key insight: formulaSymsRespectFrame ensures const/var tagging is determined by
+    the string content and the frame's variable set:
+    - Strings in `frameFloatVars db fr` must be tagged `.var`
+    - Strings NOT in `frameFloatVars db fr` must be tagged `.const`
+
+    So two formulas with equal `toExpr` (same string content) and respecting the
+    same frame must have identical const/var tagging, hence must be equal.
+
+    Proof strategy:
+    1. From `toExpr f = toExpr f'`: same typecode (head value) and same symbol strings (tail values)
+    2. Both heads are `.const` (from WellFormedFormula), same value → heads equal
+    3. Each tail element: same string value, both respect same frame → same const/var tag → equal
+    4. Same length arrays with equal elements → arrays equal
+
+    This is a strengthening lemma for `verify_impl_complete`. The main theorem
+    already proves `toExpr f' = toExpr f`, which is mathematically sufficient for
+    verification correctness. This lemma would allow us to conclude `f' = f`.
+-/
+theorem toExpr_injective_of_wf_respects_frame
+    (db : Verify.DB) (fr : Verify.Frame) (f f' : Verify.Formula)
+    (_h_wf_f : WF.WellFormedFormula f)
+    (_h_wf_f' : WF.WellFormedFormula f')
+    (_h_resp_f : Verify.DB.formulaSymsRespectFrame db f fr = true)
+    (_h_resp_f' : Verify.DB.formulaSymsRespectFrame db f' fr = true)
+    (_h_eq : toExpr f = toExpr f') :
+    f = f' := by
+  -- Reduce to the existing injectivity lemma via hasConstHead from well-formedness.
+  have h_head_f : f.hasConstHead = true := by
+    rcases _h_wf_f with ⟨h_pos, c, h_head⟩
+    have h_head' : f[0] = Verify.Sym.const c := by
+      have h_bang : f[0]! = f[0]'h_pos := getElem!_pos f 0 h_pos
+      have h' : f[0]'h_pos = Verify.Sym.const c := by
+        simpa [h_bang] using h_head
+      simpa using h'
+    unfold Verify.Formula.hasConstHead
+    simp [h_pos, h_head']
+  have h_head_f' : f'.hasConstHead = true := by
+    rcases _h_wf_f' with ⟨h_pos, c, h_head⟩
+    have h_head' : f'[0] = Verify.Sym.const c := by
+      have h_bang : f'[0]! = f'[0]'h_pos := getElem!_pos f' 0 h_pos
+      have h' : f'[0]'h_pos = Verify.Sym.const c := by
+        simpa [h_bang] using h_head
+      simpa using h'
+    unfold Verify.Formula.hasConstHead
+    simp [h_pos, h_head']
+  exact formula_eq_of_toExpr_eq_of_respects db fr f f'
+    h_head_f h_head_f' _h_resp_f _h_resp_f' _h_eq
+
 theorem head_eq_of_typecode_eq
     (f g : Verify.Formula)
     (h_f : f.hasConstHead = true) (h_g : g.hasConstHead = true)
@@ -5708,6 +5787,46 @@ theorem formulaSymsRespectFrame_subst
           have h_res_e := h_res_sigma v e h_lookup
           have h_prop := formulaSymsRespectFrame_mem db e fr h_res_e
           -- h_in : s ∈ e.toList.drop 1 = e.toList.tail
+          have h_in' : s ∈ e.toList.tail := by
+            simpa [substTailMap, h_lookup, List.drop] using h_in
+          have h_prop' := h_prop s h_in'
+          cases s with
+          | var v' =>
+              simpa using h_prop'
+          | const c' =>
+              simpa using h_prop'
+
+theorem formulaSymsRespectFrame_subst_const_ok
+    (db : Verify.DB) (fr : Verify.Frame) (f g : Verify.Formula)
+    (σ : Std.HashMap String Verify.Formula)
+    (h_const_ok : ∀ c, Verify.Sym.const c ∈ f.toList.tail →
+      c ∉ Verify.DB.frameFloatVars db fr)
+    (h_res_sigma : ∀ (v : String) (f_v : Verify.Formula), σ[v]? = some f_v →
+      Verify.DB.formulaSymsRespectFrame db f_v fr = true)
+    (h_wf : WellFormedFormula f)
+    (h_sub : f.subst σ = Except.ok g) :
+    Verify.DB.formulaSymsRespectFrame db g fr = true := by
+  -- Use tail correspondence from substitution
+  have h_tail := subst_ok_flatMap_tail (σ := σ) h_wf h_sub
+  unfold Verify.DB.formulaSymsRespectFrame
+  apply (List.all_eq_true).2
+  intro s h_mem
+  have h_mem' : s ∈ (f.toList.tail).flatMap (substTailMap σ) := by
+    simpa [h_tail, substTailMap] using h_mem
+  rcases List.mem_flatMap.mp h_mem' with ⟨t, h_t_mem, h_in⟩
+  cases t with
+  | const c =>
+      have h_not_in : c ∉ Verify.DB.frameFloatVars db fr := h_const_ok c h_t_mem
+      simp [substTailMap] at h_in
+      subst h_in
+      simp [h_not_in]
+  | var v =>
+      cases h_lookup : σ[v]? with
+      | none =>
+          simp [substTailMap, h_lookup] at h_in
+      | some e =>
+          have h_res_e := h_res_sigma v e h_lookup
+          have h_prop := formulaSymsRespectFrame_mem db e fr h_res_e
           have h_in' : s ∈ e.toList.tail := by
             simpa [substTailMap, h_lookup, List.drop] using h_in
           have h_prop' := h_prop s h_in'
@@ -5943,6 +6062,58 @@ theorem frameFloatVars_mem_iff_vars
       exact ⟨fr_impl.hyps[i]!, f, lbl, h_lbl_mem, h_find, h_shape, h1⟩
     simpa using h_mem'
 
+/-- If a formula respects the frame and all its symbols are declared, then
+    its spec expression has variables in scope (or declared constants). -/
+theorem exprVarsInScope_of_formula
+    (db : Verify.DB) (fr_impl : Verify.Frame) (fr_spec : Spec.Frame)
+    (f : Verify.Formula) (e : Spec.Expr)
+    (h_fr : toFrame db fr_impl = some fr_spec)
+    (h_wf : WellFormedFrame db fr_impl)
+    (h_wff : WellFormedFormula f)
+    (h_res : Verify.DB.formulaSymsRespectFrame db f fr_impl = true)
+    (h_decl : FormulaSymbolsDeclared db f)
+    (h_toExpr : toExpr f = e) :
+    Spec.ExprVarsInScope (toConsts db) fr_spec e := by
+  intro s h_s_in
+  have h_pos : 0 < f.size := h_wff.1
+  have h_syms_eq : e.syms = f.toList.tail.map toSym := by
+    rw [← h_toExpr]
+    simp [toExpr, h_pos]
+  have h_s_in' : s ∈ f.toList.tail.map toSym := by
+    simpa [h_syms_eq] using h_s_in
+  rcases List.mem_map.mp h_s_in' with ⟨sym, h_sym_mem, h_sym_eq⟩
+  have h_sym_val : sym.value = s := by
+    simpa [toSym] using h_sym_eq
+  cases sym with
+  | var v =>
+      have h_mem_frame :
+          v ∈ Verify.DB.frameFloatVars db fr_impl := by
+        have h_mem := formulaSymsRespectFrame_mem db f fr_impl h_res (Verify.Sym.var v) h_sym_mem
+        simpa using h_mem
+      have h_vars :
+          v ∈ varNames fr_spec.vars :=
+        (frameFloatVars_mem_iff_vars db fr_impl fr_spec h_fr h_wf v).1 h_mem_frame
+      have h_vars' : Spec.Variable.mk v ∈ fr_spec.vars :=
+        (varNames_mem_iff fr_spec.vars v).1 h_vars
+      left
+      have h_v_eq : v = s := by
+        simpa using h_sym_val
+      simpa [h_v_eq] using h_vars'
+  | const c =>
+      have h_mem_full : Verify.Sym.const c ∈ f.toList := by
+        cases h_list : f.toList with
+        | nil =>
+            simp [h_list] at h_sym_mem
+        | cons hd tl =>
+            simpa [h_list, List.tail] using (List.mem_cons_of_mem hd h_sym_mem)
+      have h_decl_c := h_decl (Verify.Sym.const c) h_mem_full
+      have h_isConst : db.isConst c = true := by
+        simpa using h_decl_c
+      right
+      have h_c_eq : c = s := by
+        simpa using h_sym_val
+      simpa [h_c_eq, toConsts] using h_isConst
+
 theorem formulaSymsRespectFrame_sound_hypsOnly
     (db : Verify.DB) (hyps : Array String) (fr_spec : Spec.Frame) (f : Verify.Formula)
     (h_fr : toFrame db (Verify.Frame.mk #[] hyps) = some fr_spec)
@@ -5999,6 +6170,484 @@ theorem formulaSymsRespectFrame_sound_hypsOnly
         exact ⟨hyps[i]!, f_hyp, lbl', h_lbl_mem, h_find', h_shape, h_var⟩
       exact (frameFloatVars_mem_iff db hyps (toSym (Verify.Sym.const c))).2 h_ex
     exact (h_not_in_vars h_mem_vars)
+
+theorem frameFloatVars_mem_isVar
+    (db : Verify.DB) (fr : Verify.Frame) (h_scoped_db : WellScopedDB db)
+    (v : String) (h_in : v ∈ Verify.DB.frameFloatVars db fr) :
+    db.isVar v = true := by
+  obtain ⟨lbl, f_hyp, lbl', _h_lbl_mem, h_find, h_shape, h_f1⟩ :=
+    (frameFloatVars_mem_iff db fr.hyps v).1 h_in
+  have h_decl_hyp : FormulaSymbolsDeclared db f_hyp :=
+    (h_scoped_db.2 lbl (.hyp false f_hyp lbl') h_find).2
+  have h_wff : WellFormedFloat f_hyp := floatShape_wff f_hyp h_shape
+  have h_pos1 : 1 < f_hyp.size := by
+    have h_size : f_hyp.size = 2 := h_wff.1
+    omega
+  have h_mem_var : Verify.Sym.var v ∈ f_hyp.toList := by
+    have h_mem' := getElem!_mem_toList f_hyp 1 h_pos1
+    simpa [h_f1] using h_mem'
+  have h_decl_var := h_decl_hyp (Verify.Sym.var v) h_mem_var
+  simpa using h_decl_var
+
+theorem const_not_in_frameFloatVars_of_declared
+    (db : Verify.DB) (fr : Verify.Frame) (f : Verify.Formula)
+    (h_scoped_db : WellScopedDB db)
+    (h_decl : FormulaSymbolsDeclared db f)
+    (c : String)
+    (h_mem : Verify.Sym.const c ∈ f.toList.tail) :
+    c ∉ Verify.DB.frameFloatVars db fr := by
+  intro h_in
+  -- From declaration: c is a constant symbol
+  have h_mem_full : Verify.Sym.const c ∈ f.toList := by
+    cases h_list : f.toList with
+    | nil =>
+        simp [h_list] at h_mem
+    | cons hd tl =>
+        -- tail = tl
+        simpa [h_list, List.tail] using (List.mem_cons_of_mem hd h_mem)
+  have h_isConst : db.isConst c = true := by
+    have h_decl_c := h_decl (Verify.Sym.const c) h_mem_full
+    simpa using h_decl_c
+  have h_isVar_false : db.isVar c = false := isConst_not_isVar db c h_isConst
+  -- From frameFloatVars membership, derive db.isVar c = true (contradiction)
+  have h_isVar : db.isVar c = true :=
+    frameFloatVars_mem_isVar db fr h_scoped_db c h_in
+  -- Contradiction
+  have : False := by
+    simpa [h_isVar] using h_isVar_false
+  exact this.elim
+
+theorem frameVarsDisjointConsts_of_toFrame
+    (db : Verify.DB) (fr_impl : Verify.Frame) (fr_spec : Spec.Frame)
+    (h_fr : toFrame db fr_impl = some fr_spec)
+    (h_wf : WellFormedFrame db fr_impl)
+    (h_scoped_db : WellScopedDB db) :
+    Spec.FrameVarsDisjointConsts (toConsts db) fr_spec := by
+  intro v h_in
+  have h_in_names : v.v ∈ varNames fr_spec.vars :=
+    (varNames_mem_iff fr_spec.vars v.v).2 h_in
+  have h_in_float : v.v ∈ Verify.DB.frameFloatVars db fr_impl :=
+    (frameFloatVars_mem_iff_vars db fr_impl fr_spec h_fr h_wf v.v).2 h_in_names
+  have h_isVar : db.isVar v.v = true :=
+    frameFloatVars_mem_isVar db fr_impl h_scoped_db v.v h_in_float
+  intro h_const
+  have h_isVar_false : db.isVar v.v = false :=
+    isConst_not_isVar db v.v h_const
+  have : False := by
+    simpa [h_isVar] using h_isVar_false
+  exact this.elim
+
+theorem toDatabase_spec_wellFormed
+    (db : Verify.DB)
+    (h_wf : WellFormedDB db)
+    (h_scoped : WellScopedDB db)
+    (Γ : Spec.Database)
+    (h_db : toDatabase db = some Γ) :
+    Spec.WellFormedDatabase Γ (toConsts db) := by
+  constructor
+  · intro l fr e h_lookup
+    rcases toDatabase_lookup db Γ l fr e h_db h_lookup with
+      ⟨f, fr_impl, n, h_find, h_fr, h_toExpr⟩
+    have h_frame_wf : WellFormedFrame db fr_impl :=
+      assert_frame_wf_of_db h_wf h_find
+    have h_formula_wf : WellFormedFormula f :=
+      assert_formula_wf_of_db h_wf h_find
+    have h_scoped_assert :
+        WellScopedFrame db fr_impl ∧
+        Verify.DB.formulaSymsRespectFrame db f fr_impl = true ∧
+        FormulaSymbolsDeclared db f := by
+      have h := h_scoped.2 l (.assert f fr_impl n) h_find
+      simpa using h
+    constructor
+    · exact exprVarsInScope_of_formula db fr_impl fr f e
+        h_fr h_frame_wf h_formula_wf h_scoped_assert.2.1 h_scoped_assert.2.2 h_toExpr
+    · intro h h_mem
+      cases h with
+      | floating c v =>
+          simp
+      | essential e_hyp =>
+          obtain ⟨label, h_lbl_mem, h_conv⟩ :=
+            mand_mem_has_label db fr_impl fr (Spec.Hyp.essential e_hyp) h_fr h_mem
+          obtain ⟨i, hi, h_lbl_eq⟩ := toList_mem_implies_index fr_impl.hyps label h_lbl_mem
+          have h_find_hyp :
+              ∃ f_hyp lbl', db.find? label = some (.hyp true f_hyp lbl') ∧
+                toExpr f_hyp = e_hyp := by
+            unfold convertHyp at h_conv
+            cases h_find' : db.find? label with
+            | none =>
+                simp [h_find'] at h_conv
+            | some obj =>
+                cases obj with
+                | const _ =>
+                    simp [h_find'] at h_conv
+                | var _ =>
+                    simp [h_find'] at h_conv
+                | assert _ _ _ =>
+                    simp [h_find'] at h_conv
+                | hyp ess f_hyp lbl' =>
+                    cases ess with
+                    | false =>
+                        cases h_e : toExprOpt f_hyp with
+                        | none =>
+                            have : False := by
+                              simp [h_find', h_e] at h_conv
+                            exact this.elim
+                        | some e' =>
+                            simp [h_find', h_e] at h_conv
+                            cases e' with
+                            | mk tc syms =>
+                                cases syms with
+                                | nil =>
+                                    cases h_conv
+                                | cons s rest =>
+                                    cases rest with
+                                    | nil =>
+                                        cases h_conv
+                                    | cons s' rest' =>
+                                        cases h_conv
+                    | true =>
+                        cases h_e : toExprOpt f_hyp with
+                        | none =>
+                            simp [h_find', h_e] at h_conv
+                        | some e' =>
+                            simp [h_find', h_e] at h_conv
+                            have h_e_eq : e' = e_hyp := by
+                              simpa using h_conv
+                            have h_toExpr' := (toExprOpt_some_iff_toExpr f_hyp e').1 h_e |>.2
+                            have h_toExpr : toExpr f_hyp = e_hyp := by
+                              simpa [h_e_eq] using h_toExpr'
+                            refine ⟨f_hyp, lbl', ?_, h_toExpr⟩
+                            simpa using h_find'
+          rcases h_find_hyp with ⟨f_hyp, lbl', h_find_hyp, h_toExpr_hyp⟩
+          have h_find_i : db.find? fr_impl.hyps[i]! = some (.hyp true f_hyp lbl') := by
+            have h_lbl_eq' : fr_impl.hyps[i]! = label := by
+              simpa using h_lbl_eq
+            simpa [h_lbl_eq'] using h_find_hyp
+          have h_scoped_i := h_scoped_assert.1.1 i hi
+          have h_res_hypsOnly :
+              Verify.DB.formulaSymsRespectFrame db f_hyp (Verify.Frame.mk #[] fr_impl.hyps) = true := by
+            have h_scoped_i' :
+                Verify.DB.formulaSymsRespectFrame db f_hyp (Verify.Frame.mk #[] fr_impl.hyps) = true ∧
+                (∀ v, Verify.Sym.var v ∈ f_hyp.toList.tail → FloatDeclaredBefore db fr_impl i v) := by
+              simpa [h_find_i] using h_scoped_i
+            exact h_scoped_i'.1
+          have h_res :
+              Verify.DB.formulaSymsRespectFrame db f_hyp fr_impl = true := by
+            simpa [formulaSymsRespectFrame_hyps_only] using h_res_hypsOnly
+          have h_wff_hyp : WellFormedFormula f_hyp :=
+            essential_in_db_wellformed db label f_hyp lbl' h_wf h_find_hyp
+          have h_decl_hyp : FormulaSymbolsDeclared db f_hyp := by
+            have h_scoped_hyp := h_scoped.2 label (.hyp true f_hyp lbl') h_find_hyp
+            exact h_scoped_hyp.2
+          exact exprVarsInScope_of_formula db fr_impl fr f_hyp e_hyp
+            h_fr h_frame_wf h_wff_hyp h_res h_decl_hyp h_toExpr_hyp
+  · intro l fr e h_lookup
+    rcases toDatabase_lookup db Γ l fr e h_db h_lookup with
+      ⟨f, fr_impl, n, h_find, h_fr, _h_toExpr⟩
+    have h_frame_wf : WellFormedFrame db fr_impl :=
+      assert_frame_wf_of_db h_wf h_find
+    exact frameVarsDisjointConsts_of_toFrame db fr_impl fr h_fr h_frame_wf h_scoped
+
+theorem mand_length_eq_of_toFrame
+    (db : Verify.DB) (fr_impl : Verify.Frame) (fr_spec : Spec.Frame)
+    (h_fr : toFrame db fr_impl = some fr_spec) :
+    fr_spec.mand.length = fr_impl.hyps.size := by
+  have h_map : fr_impl.hyps.toList.mapM (convertHyp db) = some fr_spec.mand := by
+    unfold toFrame at h_fr
+    cases h_m : fr_impl.hyps.toList.mapM (convertHyp db) with
+    | none =>
+        simp [h_m] at h_fr
+    | some hyps_spec =>
+        simp [h_m] at h_fr
+        have h_eq : (Spec.Frame.mk hyps_spec (fr_impl.dj.toList.map convertDV)) = fr_spec := by
+          simpa using h_fr
+        have h_mand : fr_spec.mand = hyps_spec := by
+          cases h_eq
+          rfl
+        cases h_mand
+        rfl
+  have h_len : fr_spec.mand.length = fr_impl.hyps.toList.length :=
+    List.mapM_length_option (convertHyp db) h_map
+  simpa [Array.toList_length] using h_len
+
+theorem float_var_distinct_of_indices
+    (db : Verify.DB) (fr_impl : Verify.Frame) (fr_spec : Spec.Frame)
+    (h_fr : toFrame db fr_impl = some fr_spec)
+    (h_wf : WellFormedFrame db fr_impl)
+    (h_unique : UniqueFloatVars db fr_impl)
+    {i j : Nat} (hi : i < fr_spec.mand.length) (hj : j < fr_spec.mand.length) (hij : i ≠ j)
+    {c v c' v'}
+    (h_i : fr_spec.mand.get ⟨i, hi⟩ = Spec.Hyp.floating c v)
+    (h_j : fr_spec.mand.get ⟨j, hj⟩ = Spec.Hyp.floating c' v') :
+    v ≠ v' := by
+  have h_len := mand_length_eq_of_toFrame db fr_impl fr_spec h_fr
+  have hi' : i < fr_impl.hyps.size := by
+    simpa [h_len] using hi
+  have hj' : j < fr_impl.hyps.size := by
+    simpa [h_len] using hj
+  obtain ⟨h_spec_i, h_conv_i, h_get_i⟩ :=
+    convertHyp_at_index db fr_impl fr_spec h_fr i hi'
+  obtain ⟨h_len_i, h_get_i'⟩ := h_get_i
+  have h_get_i'' : fr_spec.mand.get ⟨i, hi⟩ = h_spec_i := by
+    simpa using h_get_i'
+  have h_spec_i_eq : h_spec_i = Spec.Hyp.floating c v := by
+    exact h_get_i''.symm.trans h_i
+  have h_conv_i' : convertHyp db fr_impl.hyps[i]! = some (Spec.Hyp.floating c v) := by
+    simpa [h_spec_i_eq] using h_conv_i
+
+  obtain ⟨h_spec_j, h_conv_j, h_get_j⟩ :=
+    convertHyp_at_index db fr_impl fr_spec h_fr j hj'
+  obtain ⟨h_len_j, h_get_j'⟩ := h_get_j
+  have h_get_j'' : fr_spec.mand.get ⟨j, hj⟩ = h_spec_j := by
+    simpa using h_get_j'
+  have h_spec_j_eq : h_spec_j = Spec.Hyp.floating c' v' := by
+    exact h_get_j''.symm.trans h_j
+  have h_conv_j' : convertHyp db fr_impl.hyps[j]! = some (Spec.Hyp.floating c' v') := by
+    simpa [h_spec_j_eq] using h_conv_j
+
+  have h_hypOK_i := h_wf.1 i hi'
+  rcases h_hypOK_i with ⟨ess_i, f_i, lbl_i, h_find_i, h_float_wf_i, _h_wf_ess_i⟩
+  have h_find_i' : db.find? fr_impl.hyps[i]! = some (.hyp ess_i f_i lbl_i) := by
+    have h_bang : fr_impl.hyps[i]! = fr_impl.hyps[i] := by
+      simp [getElem!_pos _ _ hi']
+    simpa [h_bang] using h_find_i
+  have h_ess_false_i : ess_i = false := by
+    cases ess_i with
+    | true =>
+        unfold convertHyp at h_conv_i'
+        rw [h_find_i'] at h_conv_i'
+        cases h_e : toExprOpt f_i <;> simp [h_e] at h_conv_i'
+    | false => rfl
+  have h_wff_i : WellFormedFloat f_i := h_float_wf_i h_ess_false_i
+  have h_find_i_false : db.find? fr_impl.hyps[i]! = some (.hyp false f_i lbl_i) := by
+    simpa [h_ess_false_i] using h_find_i'
+  have h_find_i_false' : db.find? fr_impl.hyps[i] = some (.hyp false f_i lbl_i) := by
+    simpa [getElem!_pos _ _ hi'] using h_find_i_false
+  obtain ⟨v_str_i, h_f1_i, h_v_eq_i⟩ :=
+    convertHyp_float_from_var db fr_impl.hyps[i]! f_i lbl_i c v h_wff_i h_find_i_false h_conv_i'
+
+  have h_hypOK_j := h_wf.1 j hj'
+  rcases h_hypOK_j with ⟨ess_j, f_j, lbl_j, h_find_j, h_float_wf_j, _h_wf_ess_j⟩
+  have h_find_j' : db.find? fr_impl.hyps[j]! = some (.hyp ess_j f_j lbl_j) := by
+    have h_bang : fr_impl.hyps[j]! = fr_impl.hyps[j] := by
+      simp [getElem!_pos _ _ hj']
+    simpa [h_bang] using h_find_j
+  have h_ess_false_j : ess_j = false := by
+    cases ess_j with
+    | true =>
+        unfold convertHyp at h_conv_j'
+        rw [h_find_j'] at h_conv_j'
+        cases h_e : toExprOpt f_j <;> simp [h_e] at h_conv_j'
+    | false => rfl
+  have h_wff_j : WellFormedFloat f_j := h_float_wf_j h_ess_false_j
+  have h_find_j_false : db.find? fr_impl.hyps[j]! = some (.hyp false f_j lbl_j) := by
+    simpa [h_ess_false_j] using h_find_j'
+  have h_find_j_false' : db.find? fr_impl.hyps[j] = some (.hyp false f_j lbl_j) := by
+    simpa [getElem!_pos _ _ hj'] using h_find_j_false
+  obtain ⟨v_str_j, h_f1_j, h_v_eq_j⟩ :=
+    convertHyp_float_from_var db fr_impl.hyps[j]! f_j lbl_j c' v' h_wff_j h_find_j_false h_conv_j'
+
+  have h_size_i : f_i.size ≥ 2 := by
+    have h_sz : f_i.size = 2 := h_wff_i.1
+    simp [h_sz]
+  have h_size_j : f_j.size ≥ 2 := by
+    have h_sz : f_j.size = 2 := h_wff_j.1
+    simp [h_sz]
+  have h_unique_neq := h_unique i j hi' hj' hij f_i f_j lbl_i lbl_j h_find_i_false' h_find_j_false' h_size_i h_size_j
+  have h_vstr_neq : v_str_i ≠ v_str_j := by
+    simpa [h_f1_i, h_f1_j] using h_unique_neq
+  intro h_eq
+  have h_eq' :
+      Spec.Variable.mk (toSym (Verify.Sym.var v_str_i)) =
+        Spec.Variable.mk (toSym (Verify.Sym.var v_str_j)) := by
+    calc
+      Spec.Variable.mk (toSym (Verify.Sym.var v_str_i)) = v := by
+        simpa using h_v_eq_i.symm
+      _ = v' := h_eq
+      _ = Spec.Variable.mk (toSym (Verify.Sym.var v_str_j)) := by
+        simpa using h_v_eq_j
+  have h_sym_eq := congrArg Spec.Variable.v h_eq'
+  have h_str_eq : v_str_i = v_str_j := by
+    exact toSym_var_injective (by simpa using h_sym_eq)
+  exact (h_vstr_neq h_str_eq)
+
+theorem floatUnique_of_uniqueFloatVars
+    (db : Verify.DB) (fr_impl : Verify.Frame) (fr_spec : Spec.Frame)
+    (h_fr : toFrame db fr_impl = some fr_spec)
+    (h_wf : WellFormedFrame db fr_impl)
+    (h_unique : UniqueFloatVars db fr_impl) :
+    FloatUnique fr_spec := by
+  intro c c' v h_mem h_mem'
+  obtain ⟨⟨i, hi⟩, h_i⟩ := List.mem_iff_get.mp h_mem
+  obtain ⟨⟨j, hj⟩, h_j⟩ := List.mem_iff_get.mp h_mem'
+  by_cases hij : i = j
+  · subst hij
+    -- same index: equal hypotheses, so typecodes equal
+    have h_fin : (⟨i, hi⟩ : Fin fr_spec.mand.length) = ⟨i, hj⟩ := by
+      apply Fin.ext
+      rfl
+    have h_j' : fr_spec.mand.get ⟨i, hi⟩ = Spec.Hyp.floating c' v := by
+      simpa [h_fin] using h_j
+    have h_eq : Spec.Hyp.floating c v = Spec.Hyp.floating c' v := by
+      exact h_i.symm.trans h_j'
+    cases h_eq
+    rfl
+  · have h_neq : v ≠ v := float_var_distinct_of_indices db fr_impl fr_spec h_fr h_wf h_unique hi hj hij h_i h_j
+    exact (False.elim (h_neq rfl))
+
+theorem pairwise_of_index
+    {α : Type} {R : α → α → Prop} (l : List α)
+    (h :
+      ∀ i j (hij : i < j) (hj : j < l.length),
+        R (l.get ⟨i, Nat.lt_trans hij hj⟩)
+          (l.get ⟨j, hj⟩)) :
+    List.Pairwise R l := by
+  induction l with
+  | nil =>
+      simp
+  | cons a tl ih =>
+      -- Show head related to all tail elements, and tail is pairwise
+      apply (List.pairwise_cons).2
+      constructor
+      · intro b hb
+        obtain ⟨⟨j, hj⟩, h_get⟩ := List.mem_iff_get.mp hb
+        have hj' : j.succ < (a :: tl).length := by
+          simpa using Nat.succ_lt_succ hj
+        have hR := h 0 j.succ (Nat.succ_pos _) hj'
+        -- Rewrite list.get for cons and use the tail get equality
+        cases h_get
+        simpa [List.get_cons_zero, List.get_cons_succ] using hR
+      · -- Tail case: shift indices by 1
+        apply ih
+        intro i j hij hj
+        have hi : i < tl.length := Nat.lt_trans hij hj
+        have hj' : j.succ < (a :: tl).length := by
+          simpa using Nat.succ_lt_succ hj
+        have hR := h i.succ j.succ (Nat.succ_lt_succ hij) hj'
+        simpa [List.get_cons_succ] using hR
+
+theorem floatVarNoDup_of_uniqueFloatVars
+    (db : Verify.DB) (fr_impl : Verify.Frame) (fr_spec : Spec.Frame)
+    (h_fr : toFrame db fr_impl = some fr_spec)
+    (h_wf : WellFormedFrame db fr_impl)
+    (h_unique : UniqueFloatVars db fr_impl) :
+    FloatVarNoDup fr_spec := by
+  -- Variables extracted from floating hypotheses are pairwise distinct
+  let hypVar? : Spec.Hyp → Option Spec.Variable
+    | Spec.Hyp.floating _ v => some v
+    | Spec.Hyp.essential _ => none
+  have h_pairwise :
+      List.Pairwise
+        (fun h h' =>
+          ∀ v, hypVar? h = some v → ∀ v', hypVar? h' = some v' → v ≠ v')
+        fr_spec.mand := by
+    -- Use index-based distinctness for floating hypotheses
+    apply (pairwise_of_index (l := fr_spec.mand))
+    intro i j hij hj
+    have hi : i < fr_spec.mand.length := Nat.lt_trans hij hj
+    -- Split on floating/essential cases
+    cases h_i : fr_spec.mand.get ⟨i, hi⟩ <;>
+    cases h_j : fr_spec.mand.get ⟨j, hj⟩ <;> intro v h_v v' h_v'
+    · -- floating / floating
+      cases h_v
+      cases h_v'
+      exact float_var_distinct_of_indices db fr_impl fr_spec h_fr h_wf h_unique hi hj (Nat.ne_of_lt hij) h_i h_j
+    · -- floating / essential
+      cases h_v'
+    · -- essential / floating
+      cases h_v
+    · -- essential / essential
+      cases h_v
+  have h_pairwise_vars :
+      List.Pairwise (· ≠ ·) (fr_spec.mand.filterMap hypVar?) := by
+    have := (List.pairwise_filterMap (l := fr_spec.mand) (f := hypVar?) (R := fun v v' => v ≠ v'))
+    exact (this.2 h_pairwise)
+  have h_nodup : List.Nodup (fr_spec.mand.filterMap hypVar?) :=
+    (List.nodup_iff_pairwise_ne).2 h_pairwise_vars
+  -- Rewrite to FloatVarNoDup definition
+  have h_eq :
+      (floatList fr_spec).map Prod.snd = fr_spec.mand.filterMap hypVar? := by
+    -- Unfold and simplify
+    unfold floatList
+    induction fr_spec.mand with
+    | nil =>
+        simp [hypVar?]
+    | cons h tl ih =>
+        cases h <;> simp [hypVar?, ih]
+  unfold FloatVarNoDup
+  simpa [h_eq] using h_nodup
+
+theorem dvWellFormed_of_scoped
+    (db : Verify.DB) (fr_impl : Verify.Frame) (fr_spec : Spec.Frame)
+    (h_fr : toFrame db fr_impl = some fr_spec)
+    (h_wf : WellFormedFrame db fr_impl)
+    (h_scoped : WellScopedFrame db fr_impl) :
+    DVWellFormed fr_spec := by
+  have h_dv_eq : fr_spec.dv = fr_impl.dj.toList.map convertDV :=
+    toFrame_dv_eq db fr_impl fr_spec h_fr
+  constructor
+  · intro v w h_mem
+    -- Pull back to implementation DV list
+    have h_mem' : (v, w) ∈ fr_impl.dj.toList.map convertDV := by
+      simpa [h_dv_eq] using h_mem
+    rcases (List.mem_map.1 h_mem') with ⟨⟨v_str, w_str⟩, h_in, h_eq⟩
+    -- convertDV injective on strings
+    have h_v : v = Spec.Variable.mk v_str := by
+      cases h_eq
+      rfl
+    have h_w : w = Spec.Variable.mk w_str := by
+      cases h_eq
+      rfl
+    have h_scoped_dv := h_scoped.2 v_str w_str h_in
+    have h_in_v : v_str ∈ Verify.DB.frameFloatVars db fr_impl := h_scoped_dv.2.1
+    have h_in_w : w_str ∈ Verify.DB.frameFloatVars db fr_impl := h_scoped_dv.2.2
+    have h_vars_v :
+        v_str ∈ varNames fr_spec.vars :=
+      (frameFloatVars_mem_iff_vars db fr_impl fr_spec h_fr h_wf v_str).1 h_in_v
+    have h_vars_w :
+        w_str ∈ varNames fr_spec.vars :=
+      (frameFloatVars_mem_iff_vars db fr_impl fr_spec h_fr h_wf w_str).1 h_in_w
+    have h_v_in : Spec.Variable.mk v_str ∈ fr_spec.vars :=
+      (varNames_mem_iff fr_spec.vars v_str).1 h_vars_v
+    have h_w_in : Spec.Variable.mk w_str ∈ fr_spec.vars :=
+      (varNames_mem_iff fr_spec.vars w_str).1 h_vars_w
+    simpa [h_v, h_w] using And.intro h_v_in h_w_in
+  · intro v h_mem
+    -- If (v,v) is in dv, it contradicts ordering v < v
+    have h_mem' : (v, v) ∈ fr_impl.dj.toList.map convertDV := by
+      simpa [h_dv_eq] using h_mem
+    rcases (List.mem_map.1 h_mem') with ⟨⟨v_str, w_str⟩, h_in, h_eq⟩
+    have h_scoped_dv := h_scoped.2 v_str w_str h_in
+    have h_lt : v_str < w_str := h_scoped_dv.1
+    have h_eq' : v_str = w_str := by
+      cases h_eq
+      rfl
+    have h_false : ¬ v_str < v_str := by
+      simpa using String.lt_irrefl v_str
+    exact h_false (by simpa [h_eq'] using h_lt)
+
+theorem toDatabase_wellFormed_strong
+    (db : Verify.DB)
+    (h_wf : WellFormedDB db)
+    (h_scoped : WellScopedDB db)
+    (Γ : Spec.Database)
+    (h_db : toDatabase db = some Γ) :
+    WellFormedDatabaseStrong Γ (toConsts db) := by
+  constructor
+  · exact toDatabase_spec_wellFormed db h_wf h_scoped Γ h_db
+  · intro l fr e h_lookup
+    rcases toDatabase_lookup db Γ l fr e h_db h_lookup with
+      ⟨f, fr_impl, n, h_find, h_fr, _h_toExpr⟩
+    have h_frame_wf : WellFormedFrame db fr_impl :=
+      assert_frame_wf_of_db h_wf h_find
+    have h_unique : UniqueFloatVars db fr_impl := h_frame_wf.2
+    have h_scoped_fr : WellScopedFrame db fr_impl := by
+      have h_scoped_assert := h_scoped.2 l (.assert f fr_impl n) h_find
+      exact h_scoped_assert.1
+    refine ⟨?_, ?_⟩
+    · exact ⟨floatUnique_of_uniqueFloatVars db fr_impl fr h_fr h_frame_wf h_unique,
+             floatVarNoDup_of_uniqueFloatVars db fr_impl fr h_fr h_frame_wf h_unique⟩
+    · exact dvWellFormed_of_scoped db fr_impl fr h_fr h_frame_wf h_scoped_fr
 
 /-- Phase 5.2: Matching hypothesis correspondence.
 
@@ -8489,9 +9138,14 @@ theorem checkHypOK_of_stack_window_aux
                 have h_toExpr_g' :
                     toExpr g = Spec.applySubst fr_spec.vars σ_spec e := by
                   simpa [vars_local, applySubst_varsIn_eq] using h_toExpr_g
-                have h_res_f_db : Verify.DB.formulaSymsRespectFrame db f db.frame = true := by
+                have h_const_ok :
+                    ∀ c, Verify.Sym.const c ∈ f.toList.tail →
+                      c ∉ Verify.DB.frameFloatVars db db.frame := by
                   have h_scoped_db' := h_scoped_db.2 (fr_impl.hyps[i]!) (.hyp true f lbl) h_find'
-                  simpa [h_find'] using h_scoped_db'
+                  have h_decl_f : FormulaSymbolsDeclared db f := h_scoped_db'.2
+                  intro c h_mem
+                  exact const_not_in_frameFloatVars_of_declared
+                    db db.frame f h_scoped_db h_decl_f c h_mem
                 have h_res_sigma_db :
                     ∀ (v : String) (f_v : Verify.Formula),
                       (sigmaFromHypsPrefix db fr_impl.hyps stack off i)[v]? = some f_v →
@@ -8505,9 +9159,9 @@ theorem checkHypOK_of_stack_window_aux
                   have h_res := h_stack_respects (off.1 + j) h_idx_j
                   simpa [h_val] using h_res
                 have h_res_g_db : Verify.DB.formulaSymsRespectFrame db g db.frame = true :=
-                  formulaSymsRespectFrame_subst db db.frame f g
+                  formulaSymsRespectFrame_subst_const_ok db db.frame f g
                     (sigmaFromHypsPrefix db fr_impl.hyps stack off i)
-                    h_res_f_db h_res_sigma_db h_wf_formula h_subst_g
+                    h_const_ok h_res_sigma_db h_wf_formula h_subst_g
                 have h_res_stack_db :
                     Verify.DB.formulaSymsRespectFrame db (stack[off.1 + i]!) db.frame = true :=
                   h_stack_respects (off.1 + i) h_idx
@@ -8748,7 +9402,7 @@ theorem stepNormal_assert_success
     assert_frame_wf_of_db h_db_wf h_find
   have h_scoped_assert : WellScopedFrame db fr_impl ∧
       Verify.DB.formulaSymsRespectFrame db f_impl fr_impl = true ∧
-      Verify.DB.formulaSymsRespectFrame db f_impl db.frame = true := by
+      FormulaSymbolsDeclared db f_impl := by
     -- Use WellScopedDB on this assertion object
     have h_scoped := h_db_scoped.2 label (Verify.Object.assert f_impl fr_impl name) h_find
     simpa using h_scoped
@@ -8875,7 +9529,7 @@ theorem stepNormal_assert_success_eq
   have h_frame_wf : WellFormedFrame db fr_impl := assert_frame_wf_of_db h_db_wf h_find
   have h_scoped_assert : WellScopedFrame db fr_impl ∧
       Verify.DB.formulaSymsRespectFrame db f_impl fr_impl = true ∧
-      Verify.DB.formulaSymsRespectFrame db f_impl db.frame = true := by
+      FormulaSymbolsDeclared db f_impl := by
     have h_scoped := h_db_scoped.2 label (Verify.Object.assert f_impl fr_impl name) h_find
     simpa using h_scoped
   have h_syms_ok : Verify.DB.formulaSymsRespectFrame db f_impl fr_impl = true := h_scoped_assert.2.1
@@ -9109,7 +9763,7 @@ theorem foldlM_proofSteps_complete
 
       -- f respects the frame (from WellScopedDB: hypotheses respect db.frame)
       have h_f_respects : Verify.DB.formulaSymsRespectFrame db f db.frame = true := by
-        exact h_db_scoped.2 label (.hyp true f lbl) h_find_f
+        exact (h_db_scoped.2 label (.hyp true f lbl) h_find_f).1 h_mem_impl
 
       -- Show stack correspondence and frame preservation
       refine ⟨pr_final, rfl, ?_, ?_, ?_, ?_⟩
@@ -9263,7 +9917,7 @@ theorem foldlM_proofSteps_complete
 
       -- f respects the frame (from WellScopedDB: hypotheses respect db.frame)
       have h_f_respects : Verify.DB.formulaSymsRespectFrame db f db.frame = true := by
-        exact h_db_scoped.2 label (.hyp false f lbl) h_find_f
+        exact (h_db_scoped.2 label (.hyp false f lbl) h_find_f).1 h_mem_impl
 
       -- Show stack correspondence and frame preservation
       refine ⟨pr_final, rfl, ?_, ?_, ?_, ?_⟩
@@ -9951,8 +10605,13 @@ theorem foldlM_proofSteps_complete
         by_cases h_eq : i = stack_extract.size
         · -- Case: i is the pushed element (concl)
           have h_scoped_assert := h_db_scoped.2 l (Verify.Object.assert f_impl fr_impl name) h_find_impl
-          have h_f_respects : Verify.DB.formulaSymsRespectFrame db f_impl db.frame = true :=
-            h_scoped_assert.2.2
+          have h_decl_impl : FormulaSymbolsDeclared db f_impl := h_scoped_assert.2.2
+          have h_const_ok :
+              ∀ c, Verify.Sym.const c ∈ f_impl.toList.tail →
+                c ∉ Verify.DB.frameFloatVars db db.frame := by
+            intro c h_mem
+            exact const_not_in_frameFloatVars_of_declared
+              db db.frame f_impl h_db_scoped h_decl_impl c h_mem
           rw [h_eq]
           have h_push_eq : (stack_extract.push concl)[stack_extract.size]! = concl :=
             Array.getElem!_push_eq stack_extract concl
@@ -9980,8 +10639,8 @@ theorem foldlM_proofSteps_complete
               omega
             rw [h_val]
             exact h_respects_mid (off.1 + j) h_idx
-          exact subst_preserves_respects' db db.frame σ_impl f_impl concl h_f_respects
-            h_wf_f_impl h_res_sigma h_subst_ok
+          exact formulaSymsRespectFrame_subst_const_ok db db.frame f_impl concl σ_impl
+            h_const_ok h_res_sigma h_wf_f_impl h_subst_ok
         · -- Case: i < size of extract, so comes from pr_mid.stack
           have h_i_lt' : i < stack_extract.size := by omega
           have h_push_lt : (stack_extract.push concl)[i]! = stack_extract[i]! :=
