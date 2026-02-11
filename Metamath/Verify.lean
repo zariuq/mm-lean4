@@ -1400,16 +1400,6 @@ def AllCodeSemanticViolation (s : DB) (code : ParseErrorCode) : Prop :=
 def AllCodeClauseSemanticViolation (s : DB) (clause : SpecClause) : Prop :=
   ∃ code, ParseErrorCode.specClause code = clause ∧ s.AllCodeSemanticViolation code
 
-/-- Canonical per-code rule-semantic predicate.
-This is the stable theorem-facing API for code-indexed parser semantics.
-Specific constructors can be strengthened over time without changing callers. -/
-def RuleSemanticViolation (s : DB) (code : ParseErrorCode) : Prop :=
-  match code with
-  | .invalidLabel => s.InvalidLabelViolation
-  | .duplicateDisjointVariable => s.DuplicateDisjointVariableViolation
-  | .tokenNotInScope => s.TokenNotInScopeViolation
-  | _ => s.AllCodeSemanticViolation code
-
 /-- Concrete parser violations emitted by `done`-mode closure checks at EOF. -/
 def DoneModeViolation (s : DB) (code : ParseErrorCode) : Prop :=
   match code with
@@ -1425,6 +1415,129 @@ def DoneModeViolation (s : DB) (code : ParseErrorCode) : Prop :=
   | .unclosedThm => s.AllCodeSemanticViolation code
   | .unclosedProof => s.AllCodeSemanticViolation code
   | _ => False
+
+/-- Concrete parser violations for token/statement form errors. -/
+def TokenFormViolation (s : DB) (code : ParseErrorCode) : Prop :=
+  match code with
+  | .notACommand => s.AllCodeSemanticViolation code
+  | .invalidMathString => s.AllCodeSemanticViolation code
+  | .unknownStatementType => s.AllCodeSemanticViolation code
+  | .nestedCommentDelimiter => s.AllCodeSemanticViolation code
+  | _ => False
+
+/-- Concrete parser violations for scope/declaration/symbol-activity errors. -/
+def ScopeDeclViolation (s : DB) (code : ParseErrorCode) : Prop :=
+  match code with
+  | .cantPopGlobalScope => s.AllCodeSemanticViolation code
+  | .constMustBeOutermost => s.AllCodeSemanticViolation code
+  | .duplicateSymbolOrAssert => s.AllCodeSemanticViolation code
+  | .firstSymbolNotConstant => s.AllCodeSemanticViolation code
+  | .hypothesisSymbolsNotInFrame => s.AllCodeSemanticViolation code
+  | .expectedConstantAndVariable => s.AllCodeSemanticViolation code
+  | .variableAlreadyHasFloatHyp => s.AllCodeSemanticViolation code
+  | .tokenNotVariable => s.AllCodeSemanticViolation code
+  | .tokenNotConstantOrVariable => s.AllCodeSemanticViolation code
+  | .topLevelEssentialNotAllowed => s.AllCodeSemanticViolation code
+  | _ => False
+
+/-- Concrete parser violations for include directive semantics (non-IO). -/
+def IncludeViolation (s : DB) (code : ParseErrorCode) : Prop :=
+  match code with
+  | .includeCycleDetected => s.AllCodeSemanticViolation code
+  | .includeInInnerScope => s.AllCodeSemanticViolation code
+  | .includeInsideStatement => s.AllCodeSemanticViolation code
+  | .includeExtractedEmptyPath => s.AllCodeSemanticViolation code
+  | .includeEmptyPathBeforeNormalization => s.AllCodeSemanticViolation code
+  | .includePathEmptyAfterNormalization => s.AllCodeSemanticViolation code
+  | _ => False
+
+/-- Concrete parser violations for include IO failures. -/
+def IncludeReadFailureViolation (s : DB) : Prop :=
+  s.AllCodeSemanticViolation .includeReadFailure
+
+/-- Concrete parser violations for proof checking and substitution failures. -/
+def ProofCheckViolation (s : DB) (code : ParseErrorCode) : Prop :=
+  match code with
+  | .stackFormulaNoConstantHead => s.AllCodeSemanticViolation code
+  | .hypothesisNoConstantHead => s.AllCodeSemanticViolation code
+  | .typeErrorInSubstitution => s.AllCodeSemanticViolation code
+  | .badTypecodeInSubstitution => s.AllCodeSemanticViolation code
+  | .duplicateFloatVariable => s.AllCodeSemanticViolation code
+  | .disjointVariableViolation => s.AllCodeSemanticViolation code
+  | .assertionNoConstantHead => s.AllCodeSemanticViolation code
+  | .assertionVarsNotInFrame => s.AllCodeSemanticViolation code
+  | .stackUnderflow => s.AllCodeSemanticViolation code
+  | .proofBackrefIndexOutOfRange => s.AllCodeSemanticViolation code
+  | .proofParseError => s.AllCodeSemanticViolation code
+  | .unknownStepQuestionRejected => s.AllCodeSemanticViolation code
+  | _ => False
+
+/-- Concrete parser violations for theorem end/finality errors. -/
+def TheoremFinalityViolation (s : DB) (code : ParseErrorCode) : Prop :=
+  match code with
+  | .theoremMoreThanOneStackElement => s.AllCodeSemanticViolation code
+  | .theoremClaimMismatch => s.AllCodeSemanticViolation code
+  | _ => False
+
+/-- Concrete parser violation for internal consistency gate failures. -/
+def InternalConsistencyViolation (s : DB) : Prop :=
+  s.AllCodeSemanticViolation .internalIllFormedDatabaseAfterParse
+
+/-- Canonical per-code rule-semantic predicate.
+This is the stable theorem-facing API for code-indexed parser semantics.
+Specific constructors can be strengthened over time without changing callers. -/
+def RuleSemanticViolation (s : DB) (code : ParseErrorCode) : Prop :=
+  match code with
+  | .invalidLabel => s.InvalidLabelViolation
+  | .duplicateDisjointVariable => s.DuplicateDisjointVariableViolation
+  | .tokenNotInScope => s.TokenNotInScopeViolation
+  | .cantSaveEmptyStack => s.DoneModeViolation .cantSaveEmptyStack
+  | .unclosedBlock => s.DoneModeViolation .unclosedBlock
+  | .unclosedComment => s.DoneModeViolation .unclosedComment
+  | .unclosedConst => s.DoneModeViolation .unclosedConst
+  | .unclosedVar => s.DoneModeViolation .unclosedVar
+  | .unclosedDjvars => s.DoneModeViolation .unclosedDjvars
+  | .unclosedFloat => s.DoneModeViolation .unclosedFloat
+  | .unclosedEss => s.DoneModeViolation .unclosedEss
+  | .unclosedAx => s.DoneModeViolation .unclosedAx
+  | .unclosedThm => s.DoneModeViolation .unclosedThm
+  | .unclosedProof => s.DoneModeViolation .unclosedProof
+  | .notACommand => s.TokenFormViolation .notACommand
+  | .invalidMathString => s.TokenFormViolation .invalidMathString
+  | .unknownStatementType => s.TokenFormViolation .unknownStatementType
+  | .nestedCommentDelimiter => s.TokenFormViolation .nestedCommentDelimiter
+  | .cantPopGlobalScope => s.ScopeDeclViolation .cantPopGlobalScope
+  | .constMustBeOutermost => s.ScopeDeclViolation .constMustBeOutermost
+  | .duplicateSymbolOrAssert => s.ScopeDeclViolation .duplicateSymbolOrAssert
+  | .firstSymbolNotConstant => s.ScopeDeclViolation .firstSymbolNotConstant
+  | .hypothesisSymbolsNotInFrame => s.ScopeDeclViolation .hypothesisSymbolsNotInFrame
+  | .expectedConstantAndVariable => s.ScopeDeclViolation .expectedConstantAndVariable
+  | .variableAlreadyHasFloatHyp => s.ScopeDeclViolation .variableAlreadyHasFloatHyp
+  | .tokenNotVariable => s.ScopeDeclViolation .tokenNotVariable
+  | .tokenNotConstantOrVariable => s.ScopeDeclViolation .tokenNotConstantOrVariable
+  | .topLevelEssentialNotAllowed => s.ScopeDeclViolation .topLevelEssentialNotAllowed
+  | .includeCycleDetected => s.IncludeViolation .includeCycleDetected
+  | .includeInInnerScope => s.IncludeViolation .includeInInnerScope
+  | .includeInsideStatement => s.IncludeViolation .includeInsideStatement
+  | .includeExtractedEmptyPath => s.IncludeViolation .includeExtractedEmptyPath
+  | .includeEmptyPathBeforeNormalization => s.IncludeViolation .includeEmptyPathBeforeNormalization
+  | .includePathEmptyAfterNormalization => s.IncludeViolation .includePathEmptyAfterNormalization
+  | .includeReadFailure => s.IncludeReadFailureViolation
+  | .stackFormulaNoConstantHead => s.ProofCheckViolation .stackFormulaNoConstantHead
+  | .hypothesisNoConstantHead => s.ProofCheckViolation .hypothesisNoConstantHead
+  | .typeErrorInSubstitution => s.ProofCheckViolation .typeErrorInSubstitution
+  | .badTypecodeInSubstitution => s.ProofCheckViolation .badTypecodeInSubstitution
+  | .duplicateFloatVariable => s.ProofCheckViolation .duplicateFloatVariable
+  | .disjointVariableViolation => s.ProofCheckViolation .disjointVariableViolation
+  | .assertionNoConstantHead => s.ProofCheckViolation .assertionNoConstantHead
+  | .assertionVarsNotInFrame => s.ProofCheckViolation .assertionVarsNotInFrame
+  | .stackUnderflow => s.ProofCheckViolation .stackUnderflow
+  | .proofBackrefIndexOutOfRange => s.ProofCheckViolation .proofBackrefIndexOutOfRange
+  | .proofParseError => s.ProofCheckViolation .proofParseError
+  | .unknownStepQuestionRejected => s.ProofCheckViolation .unknownStepQuestionRejected
+  | .theoremMoreThanOneStackElement => s.TheoremFinalityViolation .theoremMoreThanOneStackElement
+  | .theoremClaimMismatch => s.TheoremFinalityViolation .theoremClaimMismatch
+  | .internalIllFormedDatabaseAfterParse => s.InternalConsistencyViolation
 
 /-- Rule semantic predicate paired with the code's mapped spec clause. -/
 def RuleClauseSemanticViolation (s : DB) (code : ParseErrorCode) : Prop :=
@@ -1609,18 +1722,17 @@ theorem parseErrorCode?_ruleSemantic_sound
     s.parseErrorCode? = some code →
     s.RuleSemanticViolation code := by
   intro h_code
-  by_cases h_invalid : code = .invalidLabel
-  · subst h_invalid
-    exact parseErrorCode?_invalidLabel_violation s h_code
-  by_cases h_dup : code = .duplicateDisjointVariable
-  · subst h_dup
-    exact parseErrorCode?_duplicateDisjointVariable_violation s h_code
-  by_cases h_scope : code = .tokenNotInScope
-  · subst h_scope
-    exact parseErrorCode?_tokenNotInScope_violation s h_code
   have h_sem : s.AllCodeSemanticViolation code :=
     parseErrorCode?_allCodeSemantic_sound s code h_code
-  simpa [DB.RuleSemanticViolation, h_invalid, h_dup, h_scope] using h_sem
+  cases code <;>
+    first
+    | exact parseErrorCode?_invalidLabel_violation s h_code
+    | exact parseErrorCode?_duplicateDisjointVariable_violation s h_code
+    | exact parseErrorCode?_tokenNotInScope_violation s h_code
+    | (simp [DB.RuleSemanticViolation, DB.DoneModeViolation, DB.TokenFormViolation,
+        DB.ScopeDeclViolation, DB.IncludeViolation, DB.IncludeReadFailureViolation,
+        DB.ProofCheckViolation, DB.TheoremFinalityViolation, DB.InternalConsistencyViolation] at *;
+        exact h_sem)
 
 /-- Canonical parser rule+clause semantic soundness for any decoded code. -/
 theorem parseErrorCode?_ruleClauseSemantic_sound
@@ -3458,6 +3570,360 @@ theorem checkBytes_parseErrorCode?_unclosedProof_violation
   intro h_code
   have h_rule := checkBytes_parseErrorCode?_ruleSemantic_sound arr config .unclosedProof h_code
   simpa [DB.RuleSemanticViolation, DB.DoneModeViolation] using h_rule
+
+section AllCodeRuleClauseTheorems
+
+theorem checkBytes_parseErrorCode?_cantSaveEmptyStack_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .cantSaveEmptyStack →
+    (checkBytes arr config).RuleClauseSemanticViolation .cantSaveEmptyStack := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .cantSaveEmptyStack h_code
+
+theorem checkBytes_parseErrorCode?_unclosedBlock_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .unclosedBlock →
+    (checkBytes arr config).RuleClauseSemanticViolation .unclosedBlock := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .unclosedBlock h_code
+
+theorem checkBytes_parseErrorCode?_unclosedComment_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .unclosedComment →
+    (checkBytes arr config).RuleClauseSemanticViolation .unclosedComment := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .unclosedComment h_code
+
+theorem checkBytes_parseErrorCode?_unclosedConst_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .unclosedConst →
+    (checkBytes arr config).RuleClauseSemanticViolation .unclosedConst := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .unclosedConst h_code
+
+theorem checkBytes_parseErrorCode?_unclosedVar_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .unclosedVar →
+    (checkBytes arr config).RuleClauseSemanticViolation .unclosedVar := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .unclosedVar h_code
+
+theorem checkBytes_parseErrorCode?_unclosedDjvars_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .unclosedDjvars →
+    (checkBytes arr config).RuleClauseSemanticViolation .unclosedDjvars := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .unclosedDjvars h_code
+
+theorem checkBytes_parseErrorCode?_unclosedFloat_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .unclosedFloat →
+    (checkBytes arr config).RuleClauseSemanticViolation .unclosedFloat := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .unclosedFloat h_code
+
+theorem checkBytes_parseErrorCode?_unclosedEss_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .unclosedEss →
+    (checkBytes arr config).RuleClauseSemanticViolation .unclosedEss := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .unclosedEss h_code
+
+theorem checkBytes_parseErrorCode?_unclosedAx_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .unclosedAx →
+    (checkBytes arr config).RuleClauseSemanticViolation .unclosedAx := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .unclosedAx h_code
+
+theorem checkBytes_parseErrorCode?_unclosedThm_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .unclosedThm →
+    (checkBytes arr config).RuleClauseSemanticViolation .unclosedThm := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .unclosedThm h_code
+
+theorem checkBytes_parseErrorCode?_notACommand_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .notACommand →
+    (checkBytes arr config).RuleClauseSemanticViolation .notACommand := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .notACommand h_code
+
+theorem checkBytes_parseErrorCode?_unclosedProof_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .unclosedProof →
+    (checkBytes arr config).RuleClauseSemanticViolation .unclosedProof := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .unclosedProof h_code
+
+theorem checkBytes_parseErrorCode?_cantPopGlobalScope_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .cantPopGlobalScope →
+    (checkBytes arr config).RuleClauseSemanticViolation .cantPopGlobalScope := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .cantPopGlobalScope h_code
+
+theorem checkBytes_parseErrorCode?_constMustBeOutermost_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .constMustBeOutermost →
+    (checkBytes arr config).RuleClauseSemanticViolation .constMustBeOutermost := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .constMustBeOutermost h_code
+
+theorem checkBytes_parseErrorCode?_duplicateSymbolOrAssert_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .duplicateSymbolOrAssert →
+    (checkBytes arr config).RuleClauseSemanticViolation .duplicateSymbolOrAssert := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .duplicateSymbolOrAssert h_code
+
+theorem checkBytes_parseErrorCode?_firstSymbolNotConstant_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .firstSymbolNotConstant →
+    (checkBytes arr config).RuleClauseSemanticViolation .firstSymbolNotConstant := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .firstSymbolNotConstant h_code
+
+theorem checkBytes_parseErrorCode?_hypothesisSymbolsNotInFrame_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .hypothesisSymbolsNotInFrame →
+    (checkBytes arr config).RuleClauseSemanticViolation .hypothesisSymbolsNotInFrame := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .hypothesisSymbolsNotInFrame h_code
+
+theorem checkBytes_parseErrorCode?_expectedConstantAndVariable_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .expectedConstantAndVariable →
+    (checkBytes arr config).RuleClauseSemanticViolation .expectedConstantAndVariable := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .expectedConstantAndVariable h_code
+
+theorem checkBytes_parseErrorCode?_variableAlreadyHasFloatHyp_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .variableAlreadyHasFloatHyp →
+    (checkBytes arr config).RuleClauseSemanticViolation .variableAlreadyHasFloatHyp := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .variableAlreadyHasFloatHyp h_code
+
+theorem checkBytes_parseErrorCode?_stackFormulaNoConstantHead_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .stackFormulaNoConstantHead →
+    (checkBytes arr config).RuleClauseSemanticViolation .stackFormulaNoConstantHead := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .stackFormulaNoConstantHead h_code
+
+theorem checkBytes_parseErrorCode?_hypothesisNoConstantHead_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .hypothesisNoConstantHead →
+    (checkBytes arr config).RuleClauseSemanticViolation .hypothesisNoConstantHead := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .hypothesisNoConstantHead h_code
+
+theorem checkBytes_parseErrorCode?_typeErrorInSubstitution_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .typeErrorInSubstitution →
+    (checkBytes arr config).RuleClauseSemanticViolation .typeErrorInSubstitution := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .typeErrorInSubstitution h_code
+
+theorem checkBytes_parseErrorCode?_badTypecodeInSubstitution_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .badTypecodeInSubstitution →
+    (checkBytes arr config).RuleClauseSemanticViolation .badTypecodeInSubstitution := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .badTypecodeInSubstitution h_code
+
+theorem checkBytes_parseErrorCode?_duplicateFloatVariable_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .duplicateFloatVariable →
+    (checkBytes arr config).RuleClauseSemanticViolation .duplicateFloatVariable := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .duplicateFloatVariable h_code
+
+theorem checkBytes_parseErrorCode?_disjointVariableViolation_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .disjointVariableViolation →
+    (checkBytes arr config).RuleClauseSemanticViolation .disjointVariableViolation := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .disjointVariableViolation h_code
+
+theorem checkBytes_parseErrorCode?_assertionNoConstantHead_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .assertionNoConstantHead →
+    (checkBytes arr config).RuleClauseSemanticViolation .assertionNoConstantHead := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .assertionNoConstantHead h_code
+
+theorem checkBytes_parseErrorCode?_assertionVarsNotInFrame_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .assertionVarsNotInFrame →
+    (checkBytes arr config).RuleClauseSemanticViolation .assertionVarsNotInFrame := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .assertionVarsNotInFrame h_code
+
+theorem checkBytes_parseErrorCode?_stackUnderflow_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .stackUnderflow →
+    (checkBytes arr config).RuleClauseSemanticViolation .stackUnderflow := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .stackUnderflow h_code
+
+theorem checkBytes_parseErrorCode?_proofBackrefIndexOutOfRange_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .proofBackrefIndexOutOfRange →
+    (checkBytes arr config).RuleClauseSemanticViolation .proofBackrefIndexOutOfRange := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .proofBackrefIndexOutOfRange h_code
+
+theorem checkBytes_parseErrorCode?_invalidLabel_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .invalidLabel →
+    (checkBytes arr config).RuleClauseSemanticViolation .invalidLabel := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .invalidLabel h_code
+
+theorem checkBytes_parseErrorCode?_invalidMathString_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .invalidMathString →
+    (checkBytes arr config).RuleClauseSemanticViolation .invalidMathString := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .invalidMathString h_code
+
+theorem checkBytes_parseErrorCode?_duplicateDisjointVariable_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .duplicateDisjointVariable →
+    (checkBytes arr config).RuleClauseSemanticViolation .duplicateDisjointVariable := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .duplicateDisjointVariable h_code
+
+theorem checkBytes_parseErrorCode?_tokenNotInScope_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .tokenNotInScope →
+    (checkBytes arr config).RuleClauseSemanticViolation .tokenNotInScope := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .tokenNotInScope h_code
+
+theorem checkBytes_parseErrorCode?_tokenNotVariable_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .tokenNotVariable →
+    (checkBytes arr config).RuleClauseSemanticViolation .tokenNotVariable := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .tokenNotVariable h_code
+
+theorem checkBytes_parseErrorCode?_unknownStepQuestionRejected_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .unknownStepQuestionRejected →
+    (checkBytes arr config).RuleClauseSemanticViolation .unknownStepQuestionRejected := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .unknownStepQuestionRejected h_code
+
+theorem checkBytes_parseErrorCode?_topLevelEssentialNotAllowed_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .topLevelEssentialNotAllowed →
+    (checkBytes arr config).RuleClauseSemanticViolation .topLevelEssentialNotAllowed := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .topLevelEssentialNotAllowed h_code
+
+theorem checkBytes_parseErrorCode?_proofParseError_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .proofParseError →
+    (checkBytes arr config).RuleClauseSemanticViolation .proofParseError := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .proofParseError h_code
+
+theorem checkBytes_parseErrorCode?_theoremMoreThanOneStackElement_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .theoremMoreThanOneStackElement →
+    (checkBytes arr config).RuleClauseSemanticViolation .theoremMoreThanOneStackElement := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .theoremMoreThanOneStackElement h_code
+
+theorem checkBytes_parseErrorCode?_theoremClaimMismatch_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .theoremClaimMismatch →
+    (checkBytes arr config).RuleClauseSemanticViolation .theoremClaimMismatch := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .theoremClaimMismatch h_code
+
+theorem checkBytes_parseErrorCode?_nestedCommentDelimiter_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .nestedCommentDelimiter →
+    (checkBytes arr config).RuleClauseSemanticViolation .nestedCommentDelimiter := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .nestedCommentDelimiter h_code
+
+theorem checkBytes_parseErrorCode?_tokenNotConstantOrVariable_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .tokenNotConstantOrVariable →
+    (checkBytes arr config).RuleClauseSemanticViolation .tokenNotConstantOrVariable := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .tokenNotConstantOrVariable h_code
+
+theorem checkBytes_parseErrorCode?_unknownStatementType_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .unknownStatementType →
+    (checkBytes arr config).RuleClauseSemanticViolation .unknownStatementType := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .unknownStatementType h_code
+
+theorem checkBytes_parseErrorCode?_internalIllFormedDatabaseAfterParse_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .internalIllFormedDatabaseAfterParse →
+    (checkBytes arr config).RuleClauseSemanticViolation .internalIllFormedDatabaseAfterParse := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .internalIllFormedDatabaseAfterParse h_code
+
+theorem checkBytes_parseErrorCode?_includeCycleDetected_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .includeCycleDetected →
+    (checkBytes arr config).RuleClauseSemanticViolation .includeCycleDetected := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .includeCycleDetected h_code
+
+theorem checkBytes_parseErrorCode?_includeInInnerScope_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .includeInInnerScope →
+    (checkBytes arr config).RuleClauseSemanticViolation .includeInInnerScope := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .includeInInnerScope h_code
+
+theorem checkBytes_parseErrorCode?_includeInsideStatement_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .includeInsideStatement →
+    (checkBytes arr config).RuleClauseSemanticViolation .includeInsideStatement := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .includeInsideStatement h_code
+
+theorem checkBytes_parseErrorCode?_includeExtractedEmptyPath_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .includeExtractedEmptyPath →
+    (checkBytes arr config).RuleClauseSemanticViolation .includeExtractedEmptyPath := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .includeExtractedEmptyPath h_code
+
+theorem checkBytes_parseErrorCode?_includeEmptyPathBeforeNormalization_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .includeEmptyPathBeforeNormalization →
+    (checkBytes arr config).RuleClauseSemanticViolation .includeEmptyPathBeforeNormalization := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .includeEmptyPathBeforeNormalization h_code
+
+theorem checkBytes_parseErrorCode?_includePathEmptyAfterNormalization_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .includePathEmptyAfterNormalization →
+    (checkBytes arr config).RuleClauseSemanticViolation .includePathEmptyAfterNormalization := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .includePathEmptyAfterNormalization h_code
+
+theorem checkBytes_parseErrorCode?_includeReadFailure_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .includeReadFailure →
+    (checkBytes arr config).RuleClauseSemanticViolation .includeReadFailure := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .includeReadFailure h_code
+
+end AllCodeRuleClauseTheorems
 
 section HighValueParseErrorClauseLinks
 
