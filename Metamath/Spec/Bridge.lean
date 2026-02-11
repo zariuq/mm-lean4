@@ -1341,3 +1341,4 @@ theorem dvOK_implies_DJ_subst
             rw [h_x_roundtrip, h_y_roundtrip]
 
 end Metamath.Spec.Bridge
+

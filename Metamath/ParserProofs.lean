@@ -1769,3 +1769,4 @@ theorem prove_parser_validates_float_uniqueness :
   exact ParserInvariants.parser_validates_float_uniqueness db label fmla fr proof h_wf h_find
 
 end Metamath.ParserProofs
+

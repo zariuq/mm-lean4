@@ -22,3 +22,4 @@ example (P : Prop) : P → P := by
 example (P Q : Prop) (h1 : P) (h2 : P → Q) : Q := by
   -- direct application, no ATP dependency
   exact h2 h1
+

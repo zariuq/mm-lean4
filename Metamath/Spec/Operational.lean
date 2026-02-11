@@ -268,3 +268,4 @@ We will prove ProofValid ↔ Mario.Provable in Equivalence.lean.
 -/
 
 end Metamath.Spec
+

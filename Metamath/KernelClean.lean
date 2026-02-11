@@ -21,6 +21,8 @@ import Metamath.AllM
 import Metamath.WellFormedness
 import Metamath.DBLemmas
 import Metamath.ArrayListExt
+import Metamath.ParserCorrectness
+import Metamath.ParserOperations
 import Batteries.Data.List.Basic
 import Std.Data.HashMap.Lemmas
 set_option linter.unnecessarySimpa false
@@ -2759,7 +2761,7 @@ the lambda forms that appear when using allM with checkFloat.
   (σ : Std.HashMap String Verify.Formula) :
   xs.allM (fun (c, v) => checkFloat σ c v) =
   xs.allM (fun x => checkFloat σ x.fst x.snd) := by
-  refine List.allM_congr (by intro x; cases x <;> rfl) xs
+  refine List.allM_congr (by intro x; cases x; rfl) xs
 
 /-- ✅ If checkFloat succeeds, we can extract typing facts (PROVEN). -/
 theorem checkFloat_success (σ_impl : Std.HashMap String Verify.Formula)
@@ -6217,6 +6219,108 @@ theorem const_not_in_frameFloatVars_of_declared
     simpa [h_isVar] using h_isVar_false
   exact this.elim
 
+/-- Narrow scoped facts needed by completeness lemmas (strictly less than `WellScopedDB`). -/
+structure CompletenessScopedFacts (db : Verify.DB) : Prop where
+  frame_scoped : WellScopedFrame db db.frame
+  hyp_respects_active :
+    ∀ lbl ess f name,
+      db.find? lbl = some (.hyp ess f name) →
+      lbl ∈ db.frame.hyps.toList →
+      Verify.DB.formulaSymsRespectFrame db f db.frame = true
+  hyp_declared :
+    ∀ lbl ess f name,
+      db.find? lbl = some (.hyp ess f name) →
+      FormulaSymbolsDeclared db f
+  assert_scoped :
+    ∀ lbl f fr name,
+      db.find? lbl = some (.assert f fr name) →
+      WellScopedFrame db fr ∧
+      Verify.DB.formulaSymsRespectFrame db f fr = true ∧
+      FormulaSymbolsDeclared db f
+
+theorem completenessScopedFacts_of_wellScopedDB
+    (db : Verify.DB) (h_scoped_db : WellScopedDB db) :
+    CompletenessScopedFacts db := by
+  refine ⟨h_scoped_db.1, ?_, ?_, ?_⟩
+  · intro lbl ess f name h_find h_mem
+    simpa [h_find] using ((h_scoped_db.2 lbl (.hyp ess f name) h_find).1 h_mem)
+  · intro lbl ess f name h_find
+    simpa [h_find] using (h_scoped_db.2 lbl (.hyp ess f name) h_find).2
+  · intro lbl f fr name h_find
+    simpa [h_find] using (h_scoped_db.2 lbl (.assert f fr name) h_find)
+
+/-- Single-point expansion of scoped-facts assumptions used by Phase 9 lemmas. -/
+theorem completenessScopedFacts_phase9_assumptions
+    (db : Verify.DB) (h_scoped_facts : CompletenessScopedFacts db) :
+    WellScopedFrame db db.frame ∧
+    (∀ lbl ess f name,
+      db.find? lbl = some (.hyp ess f name) →
+      lbl ∈ db.frame.hyps.toList →
+      Verify.DB.formulaSymsRespectFrame db f db.frame = true) ∧
+    (∀ lbl ess f name,
+      db.find? lbl = some (.hyp ess f name) →
+      FormulaSymbolsDeclared db f) ∧
+    (∀ lbl f fr name,
+      db.find? lbl = some (.assert f fr name) →
+      WellScopedFrame db fr ∧
+      Verify.DB.formulaSymsRespectFrame db f fr = true ∧
+      FormulaSymbolsDeclared db f) := by
+  exact ⟨
+    h_scoped_facts.frame_scoped,
+    h_scoped_facts.hyp_respects_active,
+    h_scoped_facts.hyp_declared,
+    h_scoped_facts.assert_scoped
+  ⟩
+
+theorem frameFloatVars_mem_isVar_of_hyp_declared
+    (db : Verify.DB) (fr : Verify.Frame)
+    (h_hyp_declared :
+      ∀ lbl ess f name,
+        db.find? lbl = some (.hyp ess f name) →
+        FormulaSymbolsDeclared db f)
+    (v : String) (h_in : v ∈ Verify.DB.frameFloatVars db fr) :
+    db.isVar v = true := by
+  obtain ⟨lbl, f_hyp, lbl', _h_lbl_mem, h_find, h_shape, h_f1⟩ :=
+    (frameFloatVars_mem_iff db fr.hyps v).1 h_in
+  have h_decl_hyp : FormulaSymbolsDeclared db f_hyp :=
+    h_hyp_declared lbl false f_hyp lbl' h_find
+  have h_wff : WellFormedFloat f_hyp := floatShape_wff f_hyp h_shape
+  have h_pos1 : 1 < f_hyp.size := by
+    have h_size : f_hyp.size = 2 := h_wff.1
+    omega
+  have h_mem_var : Verify.Sym.var v ∈ f_hyp.toList := by
+    have h_mem' := getElem!_mem_toList f_hyp 1 h_pos1
+    simpa [h_f1] using h_mem'
+  have h_decl_var := h_decl_hyp (Verify.Sym.var v) h_mem_var
+  simpa using h_decl_var
+
+theorem const_not_in_frameFloatVars_of_declared_of_hyp_declared
+    (db : Verify.DB) (fr : Verify.Frame) (f : Verify.Formula)
+    (h_hyp_declared :
+      ∀ lbl ess f name,
+        db.find? lbl = some (.hyp ess f name) →
+        FormulaSymbolsDeclared db f)
+    (h_decl : FormulaSymbolsDeclared db f)
+    (c : String)
+    (h_mem : Verify.Sym.const c ∈ f.toList.tail) :
+    c ∉ Verify.DB.frameFloatVars db fr := by
+  intro h_in
+  have h_mem_full : Verify.Sym.const c ∈ f.toList := by
+    cases h_list : f.toList with
+    | nil =>
+        simp [h_list] at h_mem
+    | cons hd tl =>
+        simpa [h_list, List.tail] using (List.mem_cons_of_mem hd h_mem)
+  have h_isConst : db.isConst c = true := by
+    have h_decl_c := h_decl (Verify.Sym.const c) h_mem_full
+    simpa using h_decl_c
+  have h_isVar_false : db.isVar c = false := isConst_not_isVar db c h_isConst
+  have h_isVar : db.isVar c = true :=
+    frameFloatVars_mem_isVar_of_hyp_declared db fr h_hyp_declared c h_in
+  have : False := by
+    simpa [h_isVar] using h_isVar_false
+  exact this.elim
+
 theorem frameVarsDisjointConsts_of_toFrame
     (db : Verify.DB) (fr_impl : Verify.Frame) (fr_spec : Spec.Frame)
     (h_fr : toFrame db fr_impl = some fr_spec)
@@ -6581,7 +6685,11 @@ theorem dvWellFormed_of_scoped
     (db : Verify.DB) (fr_impl : Verify.Frame) (fr_spec : Spec.Frame)
     (h_fr : toFrame db fr_impl = some fr_spec)
     (h_wf : WellFormedFrame db fr_impl)
-    (h_scoped : WellScopedFrame db fr_impl) :
+    (h_scoped : WellScopedFrame db fr_impl)
+    (h_dv_vars_impl :
+      ∀ v w, (v, w) ∈ fr_impl.dj.toList →
+        v ∈ Verify.DB.frameFloatVars db fr_impl ∧
+        w ∈ Verify.DB.frameFloatVars db fr_impl) :
     DVWellFormed fr_spec := by
   have h_dv_eq : fr_spec.dv = fr_impl.dj.toList.map convertDV :=
     toFrame_dv_eq db fr_impl fr_spec h_fr
@@ -6599,8 +6707,10 @@ theorem dvWellFormed_of_scoped
       cases h_eq
       rfl
     have h_scoped_dv := h_scoped.2 v_str w_str h_in
-    have h_in_v : v_str ∈ Verify.DB.frameFloatVars db fr_impl := h_scoped_dv.2.1
-    have h_in_w : w_str ∈ Verify.DB.frameFloatVars db fr_impl := h_scoped_dv.2.2
+    have h_in_v : v_str ∈ Verify.DB.frameFloatVars db fr_impl :=
+      (h_dv_vars_impl v_str w_str h_in).1
+    have h_in_w : w_str ∈ Verify.DB.frameFloatVars db fr_impl :=
+      (h_dv_vars_impl v_str w_str h_in).2
     have h_vars_v :
         v_str ∈ varNames fr_spec.vars :=
       (frameFloatVars_mem_iff_vars db fr_impl fr_spec h_fr h_wf v_str).1 h_in_v
@@ -6630,6 +6740,12 @@ theorem toDatabase_wellFormed_strong
     (db : Verify.DB)
     (h_wf : WellFormedDB db)
     (h_scoped : WellScopedDB db)
+    (h_assert_dv_vars :
+      ∀ lbl f fr name,
+        db.find? lbl = some (.assert f fr name) →
+        ∀ v w, (v, w) ∈ fr.dj.toList →
+          v ∈ Verify.DB.frameFloatVars db fr ∧
+          w ∈ Verify.DB.frameFloatVars db fr)
     (Γ : Spec.Database)
     (h_db : toDatabase db = some Γ) :
     WellFormedDatabaseStrong Γ (toConsts db) := by
@@ -6648,6 +6764,123 @@ theorem toDatabase_wellFormed_strong
     · exact ⟨floatUnique_of_uniqueFloatVars db fr_impl fr h_fr h_frame_wf h_unique,
              floatVarNoDup_of_uniqueFloatVars db fr_impl fr h_fr h_frame_wf h_unique⟩
     · exact dvWellFormed_of_scoped db fr_impl fr h_fr h_frame_wf h_scoped_fr
+        (h_assert_dv_vars l f fr_impl n h_find)
+
+/-- Parser bridge: successful `checkBytes` implies `toDatabase` is spec well-formed. -/
+theorem parser_toDatabase_spec_wellFormed
+    (bytes : ByteArray)
+    (h_success : (Verify.checkBytes bytes).error? = none) :
+    ∃ Γ : Spec.Database,
+      toDatabase (Verify.checkBytes bytes) = some Γ ∧
+      Spec.WellFormedDatabase Γ (toConsts (Verify.checkBytes bytes)) := by
+  let db := Verify.checkBytes bytes
+  have h_wf : WellFormedDB db := by
+    simpa [db] using Metamath.ParserCorrectness.parser_construction_wellformed bytes h_success
+  have h_scoped : WellScopedDB db := by
+    simpa [db] using Metamath.ParserOps.parser_construction_wellscoped bytes h_success
+  have h_db_ex : ∃ Γ, toDatabase db = some Γ := by
+    unfold toDatabase
+    exact ⟨_, rfl⟩
+  rcases h_db_ex with ⟨Γ, h_db⟩
+  refine ⟨Γ, ?_, ?_⟩
+  · simpa [db] using h_db
+  · simpa [db] using toDatabase_spec_wellFormed db h_wf h_scoped Γ h_db
+
+/-- Parser success implies both implementation well-formedness and scopedness. -/
+theorem parser_construction_wf_scoped
+    (bytes : ByteArray)
+    (h_success : (Verify.checkBytes bytes).error? = none) :
+    WellFormedDB (Verify.checkBytes bytes) ∧ WellScopedDB (Verify.checkBytes bytes) := by
+  refine ⟨?_, ?_⟩
+  · exact Metamath.ParserCorrectness.parser_construction_wellformed bytes h_success
+  · exact Metamath.ParserOps.parser_construction_wellscoped bytes h_success
+
+/-- Parser-origin corollary: successful `checkBytes` yields scoped facts for Phase 9. -/
+theorem parser_construction_completenessScopedFacts
+    (bytes : ByteArray)
+    (h_success : (Verify.checkBytes bytes).error? = none) :
+    CompletenessScopedFacts (Verify.checkBytes bytes) := by
+  let db := Verify.checkBytes bytes
+  have h_scoped : WellScopedDB db := by
+    simpa [db] using (parser_construction_wf_scoped bytes h_success).2
+  simpa [db] using completenessScopedFacts_of_wellScopedDB db h_scoped
+
+/-- Parser-origin corollary: successful `checkBytes` yields the exact pair used by completeness. -/
+theorem parser_construction_wf_scopedFacts
+    (bytes : ByteArray)
+    (h_success : (Verify.checkBytes bytes).error? = none) :
+    WellFormedDB (Verify.checkBytes bytes) ∧
+      CompletenessScopedFacts (Verify.checkBytes bytes) := by
+  refine ⟨?_, ?_⟩
+  · exact (parser_construction_wf_scoped bytes h_success).1
+  · exact parser_construction_completenessScopedFacts bytes h_success
+
+/-- Parser-origin corollary: successful `checkBytes` guarantees assertion-frame DV
+variables are backed by floating hypotheses in that assertion frame. -/
+theorem parser_construction_assert_dv_vars
+    (bytes : ByteArray)
+    (h_success : (Verify.checkBytes bytes).error? = none) :
+    ∀ lbl f fr name,
+      (Verify.checkBytes bytes).find? lbl = some (.assert f fr name) →
+      ∀ v w, (v, w) ∈ fr.dj.toList →
+        v ∈ Verify.DB.frameFloatVars (Verify.checkBytes bytes) fr ∧
+        w ∈ Verify.DB.frameFloatVars (Verify.checkBytes bytes) fr := by
+  have h_check :
+      (Verify.checkBytes bytes).assertDvVarsInFrame? = true := by
+    simpa using
+      (Verify.checkBytes_no_error_assertDvVarsInFrame?
+        (arr := bytes) (config := {}) h_success)
+  exact WF.assertDvVarsInFrame_of_assertDvVarsInFrame? h_check
+
+/-- Parser bridge: successful `checkBytes` implies strong spec well-formedness. -/
+theorem parser_toDatabase_wellFormed_strong
+    (bytes : ByteArray)
+    (h_success : (Verify.checkBytes bytes).error? = none) :
+    ∃ Γ : Spec.Database,
+      toDatabase (Verify.checkBytes bytes) = some Γ ∧
+      WellFormedDatabaseStrong Γ (toConsts (Verify.checkBytes bytes)) := by
+  let db := Verify.checkBytes bytes
+  have h_wf_scoped : WellFormedDB db ∧ WellScopedDB db := by
+    simpa [db] using parser_construction_wf_scoped bytes h_success
+  have h_wf : WellFormedDB db := h_wf_scoped.1
+  have h_scoped : WellScopedDB db := h_wf_scoped.2
+  have h_db_ex : ∃ Γ, toDatabase db = some Γ := by
+    unfold toDatabase
+    exact ⟨_, rfl⟩
+  rcases h_db_ex with ⟨Γ, h_db⟩
+  have h_assert_dv_vars :
+      ∀ lbl f fr name,
+        db.find? lbl = some (.assert f fr name) →
+        ∀ v w, (v, w) ∈ fr.dj.toList →
+          v ∈ Verify.DB.frameFloatVars db fr ∧
+          w ∈ Verify.DB.frameFloatVars db fr := by
+    intro lbl f fr name h_find v w h_mem
+    simpa [db] using
+      (parser_construction_assert_dv_vars bytes h_success lbl f fr name
+        (by simpa [db] using h_find) v w h_mem)
+  refine ⟨Γ, ?_, ?_⟩
+  · simpa [db] using h_db
+  · simpa [db] using toDatabase_wellFormed_strong db h_wf h_scoped
+      h_assert_dv_vars
+      Γ h_db
+
+/-- Parser bridge: successful `checkBytes` yields DV well-formedness for any
+`toDatabase` witness. -/
+theorem parser_toDatabase_dvWellFormed
+    (bytes : ByteArray)
+    (h_success : (Verify.checkBytes bytes).error? = none)
+    (Γ : Spec.Database)
+    (h_db : toDatabase (Verify.checkBytes bytes) = some Γ) :
+    ∀ l fr e, Γ l = some (fr, e) → DVWellFormed fr := by
+  rcases parser_toDatabase_wellFormed_strong bytes h_success with
+    ⟨Γ', h_db', h_strong⟩
+  have h_eq : Γ' = Γ := by
+    apply Option.some.inj
+    exact h_db'.symm.trans h_db
+  intro l fr e h_lookup
+  have h_lookup' : Γ' l = some (fr, e) := by
+    simpa [h_eq] using h_lookup
+  exact (h_strong.2 l fr e h_lookup').2
 
 /-- Phase 5.2: Matching hypothesis correspondence.
 
@@ -7848,6 +8081,46 @@ theorem verify_impl_sound
   -- Step 4: Package the result
   exact ⟨Γ, fr, h_db, h_frame, h_provable⟩
 
+/-- Semantic soundness variant.
+
+Like `verify_impl_sound`, but allows the final singleton formula to differ from
+the initial `f_init`; it proves soundness for that actual final formula. -/
+theorem verify_impl_sound_semantic
+    (db : Verify.DB)
+    (label : String)
+    (f_init : Verify.Formula)
+    (pr_final : Verify.ProofState)
+    (f_final : Verify.Formula)
+    (proof : Array String)
+    (h_success : db.error? = none)
+    (h_db_wf : WellFormedDB db)
+    (h_fold :
+      proof.foldlM (fun pr step => Verify.DB.stepNormal db pr step)
+        ⟨⟨0, 0⟩, label, f_init, db.frame, #[], #[], Verify.ProofTokenParser.normal⟩ =
+          Except.ok pr_final)
+    (h_size : pr_final.stack.size = 1)
+    (h_stack : pr_final.stack[0]? = some f_final) :
+  ∃ (Γ : Spec.Database) (fr : Spec.Frame),
+    toDatabase db = some Γ ∧
+    toFrame db db.frame = some fr ∧
+    Spec.Provable Γ fr (toExpr f_final) := by
+
+  have h_db_ex : ∃ Γ, toDatabase db = some Γ := by
+    unfold toDatabase
+    exact ⟨_, rfl⟩
+  rcases h_db_ex with ⟨Γ, h_db⟩
+
+  have h_frame_ex : ∃ fr, toFrame db db.frame = some fr := by
+    exact toFrame_some_of_wfFrame db h_db_wf.1
+  rcases h_frame_ex with ⟨fr, h_frame⟩
+
+  have h_provable : Spec.Provable Γ fr (toExpr f_final) :=
+    fold_maintains_provable db proof
+      ⟨⟨0, 0⟩, label, f_init, db.frame, #[], #[], Verify.ProofTokenParser.normal⟩
+      pr_final Γ fr f_final
+      h_success h_db_wf h_db h_frame h_db_wf.1 rfl h_fold rfl h_size h_stack
+  exact ⟨Γ, fr, h_db, h_frame, h_provable⟩
+
 /-! ## PHASE 8: Compressed Proof Support
 
 Compressed proofs use heap indices instead of label names for space efficiency.
@@ -8902,7 +9175,7 @@ theorem checkHypOK_of_stack_window_aux
     (h_fr : toFrame db fr_impl = some fr_spec)
     (h_wf : WellFormedFrame db fr_impl)
     (h_scoped : WellScopedFrame db fr_impl)
-    (h_scoped_db : WellScopedDB db)
+    (h_scoped_facts : CompletenessScopedFacts db)
     (h_typed : ∀ c v, Spec.Hyp.floating c v ∈ fr_spec.mand → (σ_spec v).typecode = c)
     (h_window :
       viewStack (stack.extract off (off + fr_impl.hyps.size)) =
@@ -9141,11 +9414,11 @@ theorem checkHypOK_of_stack_window_aux
                 have h_const_ok :
                     ∀ c, Verify.Sym.const c ∈ f.toList.tail →
                       c ∉ Verify.DB.frameFloatVars db db.frame := by
-                  have h_scoped_db' := h_scoped_db.2 (fr_impl.hyps[i]!) (.hyp true f lbl) h_find'
-                  have h_decl_f : FormulaSymbolsDeclared db f := h_scoped_db'.2
+                  have h_decl_f : FormulaSymbolsDeclared db f :=
+                    h_scoped_facts.hyp_declared (fr_impl.hyps[i]!) true f lbl h_find'
                   intro c h_mem
-                  exact const_not_in_frameFloatVars_of_declared
-                    db db.frame f h_scoped_db h_decl_f c h_mem
+                  exact const_not_in_frameFloatVars_of_declared_of_hyp_declared
+                    db db.frame f h_scoped_facts.hyp_declared h_decl_f c h_mem
                 have h_res_sigma_db :
                     ∀ (v : String) (f_v : Verify.Formula),
                       (sigmaFromHypsPrefix db fr_impl.hyps stack off i)[v]? = some f_v →
@@ -9355,7 +9628,7 @@ theorem checkHypOK_of_stack_window
     (h_fr : toFrame db fr_impl = some fr_spec)
     (h_wf : WellFormedFrame db fr_impl)
     (h_scoped : WellScopedFrame db fr_impl)
-    (h_scoped_db : WellScopedDB db)
+    (h_scoped_facts : CompletenessScopedFacts db)
     (h_typed : ∀ c v, Spec.Hyp.floating c v ∈ fr_spec.mand → (σ_spec v).typecode = c)
     (h_window :
       viewStack (stack.extract off (off + fr_impl.hyps.size)) =
@@ -9365,8 +9638,39 @@ theorem checkHypOK_of_stack_window
     CheckHypOK db fr_impl.hyps stack off 0 ∅
       (sigmaFromHypsPrefix db fr_impl.hyps stack off fr_impl.hyps.size) := by
   have h_ok := checkHypOK_of_stack_window_aux db fr_impl fr_spec stack off σ_spec
-    h_fr h_wf h_scoped h_scoped_db h_typed h_window h_stack_head h_stack_respects 0 (by omega)
+    h_fr h_wf h_scoped h_scoped_facts h_typed h_window h_stack_head h_stack_respects 0 (by omega)
   simpa [sigmaFromHypsPrefix] using h_ok
+
+/-- Parser-origin wrapper: derive global scopedness from `checkBytes` success. -/
+theorem checkHypOK_of_stack_window_of_checkBytes
+    (bytes : ByteArray)
+    (fr_impl : Verify.Frame) (fr_spec : Spec.Frame)
+    (stack : Array Verify.Formula)
+    (off : {off : Nat // off + fr_impl.hyps.size = stack.size})
+    (σ_spec : Spec.Subst)
+    (h_success : (Verify.checkBytes bytes).error? = none)
+    (h_fr : toFrame (Verify.checkBytes bytes) fr_impl = some fr_spec)
+    (h_wf : WellFormedFrame (Verify.checkBytes bytes) fr_impl)
+    (h_scoped : WellScopedFrame (Verify.checkBytes bytes) fr_impl)
+    (h_typed : ∀ c v, Spec.Hyp.floating c v ∈ fr_spec.mand → (σ_spec v).typecode = c)
+    (h_window :
+      viewStack (stack.extract off (off + fr_impl.hyps.size)) =
+        Bridge.needed fr_spec.vars fr_spec σ_spec)
+    (h_stack_head : StackHasConstHead stack)
+    (h_stack_respects :
+      StackRespectsFrame (Verify.checkBytes bytes) (Verify.checkBytes bytes).frame stack) :
+    CheckHypOK (Verify.checkBytes bytes) fr_impl.hyps stack off 0 ∅
+      (sigmaFromHypsPrefix (Verify.checkBytes bytes) fr_impl.hyps stack off fr_impl.hyps.size) := by
+  let db := Verify.checkBytes bytes
+  have h_scoped_facts : CompletenessScopedFacts db := by
+    exact completenessScopedFacts_of_wellScopedDB db
+      (by simpa [db] using (parser_construction_wf_scoped bytes h_success).2)
+  exact checkHypOK_of_stack_window db fr_impl fr_spec stack off σ_spec
+    (by simpa [db] using h_fr)
+    (by simpa [db] using h_wf)
+    (by simpa [db] using h_scoped)
+    h_scoped_facts h_typed h_window h_stack_head
+    (by simpa [db] using h_stack_respects)
 
 /-! ### Phase 9.2b: Assertion-step success (completeness direction)
 
@@ -9383,12 +9687,14 @@ theorem stepNormal_assert_success
     (h_frame_eq : pr.frame = db.frame)
     (h_fr_assert : toFrame db fr_impl = some fr_assert)
     (h_db_wf : WellFormedDB db)
-    (h_db_scoped : WellScopedDB db)
+    (h_scoped_facts : CompletenessScopedFacts db)
     (h_hyp_size : fr_impl.hyps.size ≤ pr.stack.size)
     (h_chk : CheckHypOK db fr_impl.hyps pr.stack
       ⟨pr.stack.size - fr_impl.hyps.size, Nat.sub_add_cancel h_hyp_size⟩ 0 ∅ σ_impl)
     (h_typed : toSubstTyped fr_assert σ_impl = some σ_typed)
     (h_dvOK : Spec.dvOK fr_spec.vars fr_assert.dv fr_spec.dv σ_typed.σ)
+    (h_dv_vars_assert :
+      ∀ v w, (v, w) ∈ fr_assert.dv → v ∈ fr_assert.vars ∧ w ∈ fr_assert.vars)
     (h_subst : f_impl.subst σ_impl = Except.ok concl) :
     ∃ pr', Verify.DB.stepNormal db pr label = Except.ok pr' := by
   -- Unfold stepNormal to stepAssert
@@ -9404,7 +9710,7 @@ theorem stepNormal_assert_success
       Verify.DB.formulaSymsRespectFrame db f_impl fr_impl = true ∧
       FormulaSymbolsDeclared db f_impl := by
     -- Use WellScopedDB on this assertion object
-    have h_scoped := h_db_scoped.2 label (Verify.Object.assert f_impl fr_impl name) h_find
+    have h_scoped := h_scoped_facts.assert_scoped label f_impl fr_impl name h_find
     simpa using h_scoped
   have h_syms_ok : Verify.DB.formulaSymsRespectFrame db f_impl fr_impl = true :=
     h_scoped_assert.2.1
@@ -9437,31 +9743,9 @@ theorem stepNormal_assert_success
 
   -- DV vars + ordering from WellScopedFrame
   have h_scoped_frame : WellScopedFrame db pr.frame := by
-    simpa [h_frame_eq] using h_db_scoped.1
-  have h_dv_vars : ∀ v w, (v, w) ∈ fr_assert.dv → v ∈ fr_assert.vars ∧ w ∈ fr_assert.vars := by
-    intro v w h_mem
-    -- map back to implementation DV pairs
-    have h_mem' : (v, w) ∈ fr_impl.dj.toList.map convertDV := by
-      simpa [h_dv_source] using h_mem
-    rcases List.mem_map.mp h_mem' with ⟨pair, h_pair_mem, h_pair_eq⟩
-    cases pair with
-    | mk s1 s2 =>
-        -- Use WellScopedFrame on implementation frame
-        have h_scoped_pair := (h_scoped_assert.1).2 s1 s2 h_pair_mem
-        rcases h_scoped_pair with ⟨_h_lt, h_in1, h_in2⟩
-        -- Convert frameFloatVars membership to spec vars
-        have h_vars_fr_assert :
-            ∀ s, s ∈ Verify.DB.frameFloatVars db fr_impl ↔ s ∈ varNames fr_assert.vars :=
-          frameFloatVars_mem_iff_vars db fr_impl fr_assert h_fr_assert h_frame_wf
-        have h_var1 : s1 ∈ varNames fr_assert.vars := (h_vars_fr_assert s1).1 h_in1
-        have h_var2 : s2 ∈ varNames fr_assert.vars := (h_vars_fr_assert s2).1 h_in2
-        -- Identify v,w with s1,s2
-        have h_pair_eq' : Spec.Variable.mk s1 = v ∧ Spec.Variable.mk s2 = w := by
-          cases h_pair_eq
-          exact ⟨rfl, rfl⟩
-        rcases h_pair_eq' with ⟨rfl, rfl⟩
-        exact ⟨(varNames_mem_iff fr_assert.vars s1).1 h_var1,
-               (varNames_mem_iff fr_assert.vars s2).1 h_var2⟩
+    simpa [h_frame_eq] using h_scoped_facts.frame_scoped
+  have h_dv_vars : ∀ v w, (v, w) ∈ fr_assert.dv → v ∈ fr_assert.vars ∧ w ∈ fr_assert.vars :=
+    h_dv_vars_assert
   have h_dv_ordered : ∀ v w, (v, w) ∈ fr_spec.dv → v.v < w.v := by
     intro v w h_mem
     have h_mem' : (v, w) ∈ pr.frame.dj.toList.map convertDV := by
@@ -9492,6 +9776,44 @@ theorem stepNormal_assert_success
   simp [off, h_hyp_size, h_head, h_syms_ok, h_chk_ok, h_dv_ok, h_subst, Bind.bind, Except.bind]
   rfl
 
+/-- Parser-origin wrapper for assertion-step completeness. -/
+theorem stepNormal_assert_success_of_checkBytes
+    (bytes : ByteArray)
+    (pr : Verify.ProofState) (label : String)
+    (f_impl : Verify.Formula) (fr_impl : Verify.Frame) (name : String)
+    (fr_spec fr_assert : Spec.Frame)
+    (σ_impl : Std.HashMap String Verify.Formula) (σ_typed : Bridge.TypedSubst fr_assert)
+    (concl : Verify.Formula)
+    (h_success : (Verify.checkBytes bytes).error? = none)
+    (h_find : (Verify.checkBytes bytes).find? label = some (.assert f_impl fr_impl name))
+    (h_frame : toFrame (Verify.checkBytes bytes) pr.frame = some fr_spec)
+    (h_frame_eq : pr.frame = (Verify.checkBytes bytes).frame)
+    (h_fr_assert : toFrame (Verify.checkBytes bytes) fr_impl = some fr_assert)
+    (h_hyp_size : fr_impl.hyps.size ≤ pr.stack.size)
+    (h_chk : CheckHypOK (Verify.checkBytes bytes) fr_impl.hyps pr.stack
+      ⟨pr.stack.size - fr_impl.hyps.size, Nat.sub_add_cancel h_hyp_size⟩ 0 ∅ σ_impl)
+    (h_typed : toSubstTyped fr_assert σ_impl = some σ_typed)
+    (h_dvOK : Spec.dvOK fr_spec.vars fr_assert.dv fr_spec.dv σ_typed.σ)
+    (h_dv_vars_assert :
+      ∀ v w, (v, w) ∈ fr_assert.dv → v ∈ fr_assert.vars ∧ w ∈ fr_assert.vars)
+    (h_subst : f_impl.subst σ_impl = Except.ok concl) :
+    ∃ pr', Verify.DB.stepNormal (Verify.checkBytes bytes) pr label = Except.ok pr' := by
+  let db := Verify.checkBytes bytes
+  have h_wf_scoped : WellFormedDB db ∧ WellScopedDB db := by
+    simpa [db] using parser_construction_wf_scoped bytes h_success
+  have h_scoped_facts : CompletenessScopedFacts db :=
+    completenessScopedFacts_of_wellScopedDB db h_wf_scoped.2
+  exact stepNormal_assert_success db pr label f_impl fr_impl name fr_spec fr_assert
+    σ_impl σ_typed concl
+    (by simpa [db] using h_find)
+    (by simpa [db] using h_frame)
+    (by simpa [db] using h_frame_eq)
+    (by simpa [db] using h_fr_assert)
+    h_wf_scoped.1 h_scoped_facts
+    h_hyp_size
+    (by simpa [db] using h_chk)
+    h_typed h_dvOK h_dv_vars_assert h_subst
+
 set_option maxHeartbeats 400000 in
 /-- Like stepNormal_assert_success but also exports the exact structure of pr'.
 
@@ -9507,19 +9829,21 @@ theorem stepNormal_assert_success_eq
     (h_frame_eq : pr.frame = db.frame)
     (h_fr_assert : toFrame db fr_impl = some fr_assert)
     (h_db_wf : WellFormedDB db)
-    (h_db_scoped : WellScopedDB db)
+    (h_scoped_facts : CompletenessScopedFacts db)
     (h_hyp_size : fr_impl.hyps.size ≤ pr.stack.size)
     (h_chk : CheckHypOK db fr_impl.hyps pr.stack
       ⟨pr.stack.size - fr_impl.hyps.size, Nat.sub_add_cancel h_hyp_size⟩ 0 ∅ σ_impl)
     (h_typed : toSubstTyped fr_assert σ_impl = some σ_typed)
     (h_dvOK : Spec.dvOK fr_spec.vars fr_assert.dv fr_spec.dv σ_typed.σ)
+    (h_dv_vars_assert :
+      ∀ v w, (v, w) ∈ fr_assert.dv → v ∈ fr_assert.vars ∧ w ∈ fr_assert.vars)
     (h_subst : f_impl.subst σ_impl = Except.ok concl) :
     let pr' := { pr with stack := (pr.stack.extract 0 (pr.stack.size - fr_impl.hyps.size)).push concl }
     Verify.DB.stepNormal db pr label = Except.ok pr' := by
   -- This is essentially the same as stepNormal_assert_success but exports the exact form
   obtain ⟨pr', h_ok⟩ := stepNormal_assert_success db pr label f_impl fr_impl name fr_spec fr_assert
-    σ_impl σ_typed concl h_find h_frame h_frame_eq h_fr_assert h_db_wf h_db_scoped
-    h_hyp_size h_chk h_typed h_dvOK h_subst
+    σ_impl σ_typed concl h_find h_frame h_frame_eq h_fr_assert h_db_wf h_scoped_facts
+    h_hyp_size h_chk h_typed h_dvOK h_dv_vars_assert h_subst
   -- The proof of stepNormal_assert_success constructs pr' as shown
   -- We need to show the stepNormal result matches our expected form
   unfold Verify.DB.stepNormal
@@ -9530,7 +9854,7 @@ theorem stepNormal_assert_success_eq
   have h_scoped_assert : WellScopedFrame db fr_impl ∧
       Verify.DB.formulaSymsRespectFrame db f_impl fr_impl = true ∧
       FormulaSymbolsDeclared db f_impl := by
-    have h_scoped := h_db_scoped.2 label (Verify.Object.assert f_impl fr_impl name) h_find
+    have h_scoped := h_scoped_facts.assert_scoped label f_impl fr_impl name h_find
     simpa using h_scoped
   have h_syms_ok : Verify.DB.formulaSymsRespectFrame db f_impl fr_impl = true := h_scoped_assert.2.1
   have h_head : f_impl.hasConstHead = true := by
@@ -9549,22 +9873,10 @@ theorem stepNormal_assert_success_eq
     frameFloatVars_mem_iff_vars db pr.frame fr_spec h_frame h_wf_pr
   have h_dv_target : fr_spec.dv = pr.frame.dj.toList.map convertDV := toFrame_dv_eq db pr.frame fr_spec h_frame
   have h_dv_source : fr_assert.dv = fr_impl.dj.toList.map convertDV := toFrame_dv_eq db fr_impl fr_assert h_fr_assert
-  have h_scoped_frame : WellScopedFrame db pr.frame := by simpa [h_frame_eq] using h_db_scoped.1
-  have h_dv_vars : ∀ v w, (v, w) ∈ fr_assert.dv → v ∈ fr_assert.vars ∧ w ∈ fr_assert.vars := by
-    intro v w h_mem
-    have h_mem' : (v, w) ∈ fr_impl.dj.toList.map convertDV := by simpa [h_dv_source] using h_mem
-    rcases List.mem_map.mp h_mem' with ⟨pair, h_pair_mem, h_pair_eq⟩
-    cases pair with
-    | mk s1 s2 =>
-        have h_scoped_pair := (h_scoped_assert.1).2 s1 s2 h_pair_mem
-        rcases h_scoped_pair with ⟨_h_lt, h_in1, h_in2⟩
-        have h_vars_fr_assert : ∀ s, s ∈ Verify.DB.frameFloatVars db fr_impl ↔ s ∈ varNames fr_assert.vars :=
-          frameFloatVars_mem_iff_vars db fr_impl fr_assert h_fr_assert h_frame_wf
-        have h_var1 : s1 ∈ varNames fr_assert.vars := (h_vars_fr_assert s1).1 h_in1
-        have h_var2 : s2 ∈ varNames fr_assert.vars := (h_vars_fr_assert s2).1 h_in2
-        have h_pair_eq' : Spec.Variable.mk s1 = v ∧ Spec.Variable.mk s2 = w := by cases h_pair_eq; exact ⟨rfl, rfl⟩
-        rcases h_pair_eq' with ⟨rfl, rfl⟩
-        exact ⟨(varNames_mem_iff fr_assert.vars s1).1 h_var1, (varNames_mem_iff fr_assert.vars s2).1 h_var2⟩
+  have h_scoped_frame : WellScopedFrame db pr.frame := by
+    simpa [h_frame_eq] using h_scoped_facts.frame_scoped
+  have h_dv_vars : ∀ v w, (v, w) ∈ fr_assert.dv → v ∈ fr_assert.vars ∧ w ∈ fr_assert.vars :=
+    h_dv_vars_assert
   have h_dv_ordered : ∀ v w, (v, w) ∈ fr_spec.dv → v.v < w.v := by
     intro v w h_mem
     have h_mem' : (v, w) ∈ pr.frame.dj.toList.map convertDV := by simpa [h_dv_target] using h_mem
@@ -9584,6 +9896,45 @@ theorem stepNormal_assert_success_eq
   unfold Verify.DB.stepAssert
   simp [off, h_hyp_size, h_head, h_syms_ok, h_chk_ok, h_dv_ok, h_subst, Bind.bind, Except.bind]
   rfl
+
+/-- Parser-origin wrapper for exact assertion-step completeness shape. -/
+theorem stepNormal_assert_success_eq_of_checkBytes
+    (bytes : ByteArray)
+    (pr : Verify.ProofState) (label : String)
+    (f_impl : Verify.Formula) (fr_impl : Verify.Frame) (name : String)
+    (fr_spec fr_assert : Spec.Frame)
+    (σ_impl : Std.HashMap String Verify.Formula) (σ_typed : Bridge.TypedSubst fr_assert)
+    (concl : Verify.Formula)
+    (h_success : (Verify.checkBytes bytes).error? = none)
+    (h_find : (Verify.checkBytes bytes).find? label = some (.assert f_impl fr_impl name))
+    (h_frame : toFrame (Verify.checkBytes bytes) pr.frame = some fr_spec)
+    (h_frame_eq : pr.frame = (Verify.checkBytes bytes).frame)
+    (h_fr_assert : toFrame (Verify.checkBytes bytes) fr_impl = some fr_assert)
+    (h_hyp_size : fr_impl.hyps.size ≤ pr.stack.size)
+    (h_chk : CheckHypOK (Verify.checkBytes bytes) fr_impl.hyps pr.stack
+      ⟨pr.stack.size - fr_impl.hyps.size, Nat.sub_add_cancel h_hyp_size⟩ 0 ∅ σ_impl)
+    (h_typed : toSubstTyped fr_assert σ_impl = some σ_typed)
+    (h_dvOK : Spec.dvOK fr_spec.vars fr_assert.dv fr_spec.dv σ_typed.σ)
+    (h_dv_vars_assert :
+      ∀ v w, (v, w) ∈ fr_assert.dv → v ∈ fr_assert.vars ∧ w ∈ fr_assert.vars)
+    (h_subst : f_impl.subst σ_impl = Except.ok concl) :
+    let pr' := { pr with stack := (pr.stack.extract 0 (pr.stack.size - fr_impl.hyps.size)).push concl }
+    Verify.DB.stepNormal (Verify.checkBytes bytes) pr label = Except.ok pr' := by
+  let db := Verify.checkBytes bytes
+  have h_wf_scoped : WellFormedDB db ∧ WellScopedDB db := by
+    simpa [db] using parser_construction_wf_scoped bytes h_success
+  have h_scoped_facts : CompletenessScopedFacts db :=
+    completenessScopedFacts_of_wellScopedDB db h_wf_scoped.2
+  exact stepNormal_assert_success_eq db pr label f_impl fr_impl name fr_spec fr_assert
+    σ_impl σ_typed concl
+    (by simpa [db] using h_find)
+    (by simpa [db] using h_frame)
+    (by simpa [db] using h_frame_eq)
+    (by simpa [db] using h_fr_assert)
+    h_wf_scoped.1 h_scoped_facts
+    h_hyp_size
+    (by simpa [db] using h_chk)
+    h_typed h_dvOK h_dv_vars_assert h_subst
 
 /-- Core lemma: Each step in ProofValid has a corresponding impl label.
 
@@ -9658,7 +10009,8 @@ theorem foldlM_proofSteps_complete
     (h_db : toDatabase db = some Γ)
     (h_frame : toFrame db db.frame = some fr_spec)
     (h_db_wf : WellFormedDB db)
-    (h_db_scoped : WellScopedDB db)
+    (h_scoped_facts : CompletenessScopedFacts db)
+    (h_dv_wf : ∀ l fr e, Γ l = some (fr, e) → DVWellFormed fr)
     (stack_spec : List Spec.Expr) (steps : List Spec.ProofStep)
     (h_valid : Spec.ProofValid Γ fr_spec stack_spec steps)
     (pr_init : Verify.ProofState)
@@ -9701,7 +10053,7 @@ theorem foldlM_proofSteps_complete
 
       -- Recursively process the tail steps
       have ⟨pr_mid, h_fold_tail, h_view_mid, h_frame_mid, h_head_mid, h_respects_mid⟩ :=
-        foldlM_proofSteps_complete db Γ fr_spec h_db h_frame h_db_wf h_db_scoped
+        foldlM_proofSteps_complete db Γ fr_spec h_db h_frame h_db_wf h_scoped_facts h_dv_wf
           stack steps h_valid' pr_init impl_stack h_stack h_frame_eq h_stack_head h_stack_respects
       -- h_view_mid : viewStack pr_mid.stack = impl_stack ++ stack.reverse
       -- h_frame_mid : pr_mid.frame = db.frame
@@ -9763,7 +10115,7 @@ theorem foldlM_proofSteps_complete
 
       -- f respects the frame (from WellScopedDB: hypotheses respect db.frame)
       have h_f_respects : Verify.DB.formulaSymsRespectFrame db f db.frame = true := by
-        exact (h_db_scoped.2 label (.hyp true f lbl) h_find_f).1 h_mem_impl
+        exact h_scoped_facts.hyp_respects_active label true f lbl h_find_f h_mem_impl
 
       -- Show stack correspondence and frame preservation
       refine ⟨pr_final, rfl, ?_, ?_, ?_, ?_⟩
@@ -9804,7 +10156,7 @@ theorem foldlM_proofSteps_complete
 
       -- Recursively process the tail steps
       have ⟨pr_mid, h_fold_tail, h_view_mid, h_frame_mid, h_head_mid, h_respects_mid⟩ :=
-        foldlM_proofSteps_complete db Γ fr_spec h_db h_frame h_db_wf h_db_scoped
+        foldlM_proofSteps_complete db Γ fr_spec h_db h_frame h_db_wf h_scoped_facts h_dv_wf
           stack steps h_valid' pr_init impl_stack h_stack h_frame_eq h_stack_head h_stack_respects
       -- h_view_mid : viewStack pr_mid.stack = impl_stack ++ stack.reverse
       -- h_frame_mid : pr_mid.frame = db.frame
@@ -9917,7 +10269,7 @@ theorem foldlM_proofSteps_complete
 
       -- f respects the frame (from WellScopedDB: hypotheses respect db.frame)
       have h_f_respects : Verify.DB.formulaSymsRespectFrame db f db.frame = true := by
-        exact (h_db_scoped.2 label (.hyp false f lbl) h_find_f).1 h_mem_impl
+        exact h_scoped_facts.hyp_respects_active label false f lbl h_find_f h_mem_impl
 
       -- Show stack correspondence and frame preservation
       refine ⟨pr_final, rfl, ?_, ?_, ?_, ?_⟩
@@ -10002,7 +10354,7 @@ theorem foldlM_proofSteps_complete
 
       -- Recursively process the tail steps (which built the stack with needed hyps)
       have ⟨pr_mid, h_fold_tail, h_view_mid, h_frame_mid, h_head_mid, h_respects_mid⟩ :=
-        foldlM_proofSteps_complete db Γ fr_spec h_db h_frame h_db_wf h_db_scoped
+        foldlM_proofSteps_complete db Γ fr_spec h_db h_frame h_db_wf h_scoped_facts h_dv_wf
           stack steps h_valid' pr_init impl_stack h_stack h_frame_eq h_stack_head h_stack_respects
       -- h_view_mid : viewStack pr_mid.stack = impl_stack ++ stack.reverse
       -- h_frame_mid : pr_mid.frame = db.frame
@@ -10116,11 +10468,11 @@ theorem foldlM_proofSteps_complete
       have h_wf_fr_impl : WellFormedFrame db fr_impl :=
         (h_db_wf.2 l (.assert f_impl fr_impl name) h_find_impl).2
       have h_scoped_fr_impl : WellScopedFrame db fr_impl :=
-        (h_db_scoped.2 l (.assert f_impl fr_impl name) h_find_impl).1
+        (h_scoped_facts.assert_scoped l f_impl fr_impl name h_find_impl).1
 
       have h_chk : CheckHypOK db fr_impl.hyps pr_mid.stack off 0 ∅ σ_impl :=
         checkHypOK_of_stack_window db fr_impl fr' pr_mid.stack off σ
-          h_fr_impl h_wf_fr_impl h_scoped_fr_impl h_db_scoped h_typed h_window
+          h_fr_impl h_wf_fr_impl h_scoped_fr_impl h_scoped_facts h_typed h_window
           h_head_mid h_respects_mid
 
       -- Step 7: Use checkHyp_complete to show checkHyp succeeds
@@ -10149,37 +10501,8 @@ theorem foldlM_proofSteps_complete
       -- Therefore: σ_typed.σ v = σ v for all floating hyp variables
 
       -- First establish h_dv_vars: DV pair variables are in fr'.vars
-      have h_dv_vars : ∀ v w, (v, w) ∈ fr'.dv → v ∈ fr'.vars ∧ w ∈ fr'.vars := by
-        intro v w h_mem
-        -- Map back to implementation DV pairs
-        have h_dv_source : fr'.dv = fr_impl.dj.toList.map convertDV := by
-          unfold toFrame at h_fr_impl
-          cases h_m : fr_impl.hyps.toList.mapM (convertHyp db) with
-          | none => simp [h_m] at h_fr_impl
-          | some hyps_spec =>
-              simp [h_m] at h_fr_impl
-              cases h_fr_impl; rfl
-        have h_mem' : (v, w) ∈ fr_impl.dj.toList.map convertDV := by
-          simpa [h_dv_source] using h_mem
-        rcases List.mem_map.mp h_mem' with ⟨pair, h_pair_mem, h_pair_eq⟩
-        cases pair with
-        | mk s1 s2 =>
-            -- Use WellScopedFrame on implementation frame
-            have h_scoped_pair := h_scoped_fr_impl.2 s1 s2 h_pair_mem
-            rcases h_scoped_pair with ⟨_h_lt, h_in1, h_in2⟩
-            -- Convert frameFloatVars membership to spec vars
-            have h_vars_fr' :
-                ∀ s, s ∈ Verify.DB.frameFloatVars db fr_impl ↔ s ∈ varNames fr'.vars :=
-              frameFloatVars_mem_iff_vars db fr_impl fr' h_fr_impl h_wf_fr_impl
-            have h_var1 : s1 ∈ varNames fr'.vars := (h_vars_fr' s1).1 h_in1
-            have h_var2 : s2 ∈ varNames fr'.vars := (h_vars_fr' s2).1 h_in2
-            -- Identify v,w with s1,s2
-            have h_pair_eq' : Spec.Variable.mk s1 = v ∧ Spec.Variable.mk s2 = w := by
-              cases h_pair_eq
-              exact ⟨rfl, rfl⟩
-            rcases h_pair_eq' with ⟨rfl, rfl⟩
-            exact ⟨(varNames_mem_iff fr'.vars s1).1 h_var1,
-                   (varNames_mem_iff fr'.vars s2).1 h_var2⟩
+      have h_dv_wf_fr' : DVWellFormed fr' := h_dv_wf l fr' e h_lookup
+      have h_dv_vars : ∀ v w, (v, w) ∈ fr'.dv → v ∈ fr'.vars ∧ w ∈ fr'.vars := h_dv_wf_fr'.1
 
       -- Helper: for any v ∈ fr'.vars, σ v = σ_typed.σ v
       -- Key insight: both σ and σ_typed are derived from the stack via the window correspondence
@@ -10308,8 +10631,8 @@ theorem foldlM_proofSteps_complete
 
       -- Step 10: Use subst_success_of_lookup for substitution
       have h_vars_lookup : ∀ v, Verify.Sym.var v ∈ f_impl.toList → ∃ e, σ_impl[v]? = some e := by
-        -- Get that f_impl respects fr_impl from WellScopedDB
-        have h_scoped_assert := h_db_scoped.2 l (Verify.Object.assert f_impl fr_impl name) h_find_impl
+        -- Get that f_impl respects fr_impl from scoped facts
+        have h_scoped_assert := h_scoped_facts.assert_scoped l f_impl fr_impl name h_find_impl
         have h_f_respects : Verify.DB.formulaSymsRespectFrame db f_impl fr_impl = true :=
           h_scoped_assert.2.1
         -- Get coverage from sigmaFromHypsPrefix_covers
@@ -10382,7 +10705,7 @@ theorem foldlM_proofSteps_complete
           db pr_mid l f_impl fr_impl name fr_spec fr'
           σ_impl σ_typed concl
           h_find_impl h_frame_mid' h_frame_eq_mid h_fr_impl
-          h_db_wf h_db_scoped h_hyp_size h_chk h_toSubstTyped h_dvOK_typed h_subst_ok
+          h_db_wf h_scoped_facts h_hyp_size h_chk h_toSubstTyped h_dvOK_typed h_dv_vars h_subst_ok
 
       -- Step 12: Compose the fold steps
       -- Current step is useAssertion l σ, so (useAssertion l σ :: steps).reverse = steps.reverse ++ [useAssertion l σ]
@@ -10462,7 +10785,7 @@ theorem foldlM_proofSteps_complete
 
         -- Step 4: Get formula symbol constraints from WellScopedDB
         have h_syms_ok_impl : Verify.DB.formulaSymsRespectFrame db f_impl fr_impl = true :=
-          (h_db_scoped.2 l (.assert f_impl fr_impl name) h_find_impl).2.1
+          (h_scoped_facts.assert_scoped l f_impl fr_impl name h_find_impl).2.1
         have h_syms_ok' :
             Verify.DB.formulaSymsRespectFrame db f_impl (Verify.Frame.mk #[] fr_impl.hyps) = true := by
           simpa [formulaSymsRespectFrame_hyps_only] using h_syms_ok_impl
@@ -10604,14 +10927,14 @@ theorem foldlM_proofSteps_complete
         have h_i_lt_rewrite : i < stack_extract.size + 1 := h_i_lt
         by_cases h_eq : i = stack_extract.size
         · -- Case: i is the pushed element (concl)
-          have h_scoped_assert := h_db_scoped.2 l (Verify.Object.assert f_impl fr_impl name) h_find_impl
+          have h_scoped_assert := h_scoped_facts.assert_scoped l f_impl fr_impl name h_find_impl
           have h_decl_impl : FormulaSymbolsDeclared db f_impl := h_scoped_assert.2.2
           have h_const_ok :
               ∀ c, Verify.Sym.const c ∈ f_impl.toList.tail →
                 c ∉ Verify.DB.frameFloatVars db db.frame := by
             intro c h_mem
-            exact const_not_in_frameFloatVars_of_declared
-              db db.frame f_impl h_db_scoped h_decl_impl c h_mem
+            exact const_not_in_frameFloatVars_of_declared_of_hyp_declared
+              db db.frame f_impl h_scoped_facts.hyp_declared h_decl_impl c h_mem
           rw [h_eq]
           have h_push_eq : (stack_extract.push concl)[stack_extract.size]! = concl :=
             Array.getElem!_push_eq stack_extract concl
@@ -10654,6 +10977,45 @@ theorem foldlM_proofSteps_complete
           rw [h_extract_eq]
           exact h_respects_mid i (by omega)
 
+/-- Parser-origin wrapper for the core completeness fold induction. -/
+theorem foldlM_proofSteps_complete_of_checkBytes
+    (bytes : ByteArray)
+    (Γ : Spec.Database) (fr_spec : Spec.Frame)
+    (h_success : (Verify.checkBytes bytes).error? = none)
+    (h_db : toDatabase (Verify.checkBytes bytes) = some Γ)
+    (h_frame : toFrame (Verify.checkBytes bytes) (Verify.checkBytes bytes).frame = some fr_spec)
+    (h_dv_wf : ∀ l fr e, Γ l = some (fr, e) → DVWellFormed fr)
+    (stack_spec : List Spec.Expr) (steps : List Spec.ProofStep)
+    (h_valid : Spec.ProofValid Γ fr_spec stack_spec steps)
+    (pr_init : Verify.ProofState)
+    (impl_stack : List Spec.Expr)
+    (h_stack : viewStack pr_init.stack = impl_stack)
+    (h_frame_eq : pr_init.frame = (Verify.checkBytes bytes).frame)
+    (h_stack_head : StackHasConstHead pr_init.stack)
+    (h_stack_respects :
+      StackRespectsFrame (Verify.checkBytes bytes) (Verify.checkBytes bytes).frame pr_init.stack) :
+    ∃ pr_final : Verify.ProofState,
+      (proofStepsToLabels (Verify.checkBytes bytes) (Verify.checkBytes bytes).frame steps.reverse).foldlM
+        (fun pr step => Verify.DB.stepNormal (Verify.checkBytes bytes) pr step) pr_init =
+          Except.ok pr_final ∧
+      viewStack pr_final.stack = impl_stack ++ stack_spec.reverse ∧
+      pr_final.frame = (Verify.checkBytes bytes).frame ∧
+      StackHasConstHead pr_final.stack ∧
+      StackRespectsFrame (Verify.checkBytes bytes) (Verify.checkBytes bytes).frame pr_final.stack := by
+  let db := Verify.checkBytes bytes
+  have h_wf_scoped : WellFormedDB db ∧ WellScopedDB db := by
+    simpa [db] using parser_construction_wf_scoped bytes h_success
+  have h_scoped_facts : CompletenessScopedFacts db :=
+    completenessScopedFacts_of_wellScopedDB db h_wf_scoped.2
+  exact foldlM_proofSteps_complete db Γ fr_spec
+    (by simpa [db] using h_db)
+    (by simpa [db] using h_frame)
+    h_wf_scoped.1 h_scoped_facts h_dv_wf
+    stack_spec steps h_valid pr_init impl_stack h_stack
+    (by simpa [db] using h_frame_eq)
+    h_stack_head
+    (by simpa [db] using h_stack_respects)
+
 set_option maxHeartbeats 400000 in
 /-- **MAIN COMPLETENESS THEOREM**: Semantically valid proofs can be verified.
 
@@ -10674,10 +11036,11 @@ theorem verify_impl_complete
     (f : Verify.Formula)
     (_h_success : db.error? = none)  -- TODO: May be needed for parser well-formedness
     (h_db_wf : WellFormedDB db)
-    (h_db_scoped : WellScopedDB db)
+    (h_scoped_facts : CompletenessScopedFacts db)
     (Γ : Spec.Database) (fr : Spec.Frame)
     (h_db : toDatabase db = some Γ)
     (h_frame : toFrame db db.frame = some fr)
+    (h_dv_wf : ∀ l fr' e, Γ l = some (fr', e) → DVWellFormed fr')
     (h_provable : Spec.Provable Γ fr (toExpr f)) :
   ∃ (proof : Array String) (pr_final : Verify.ProofState) (f' : Verify.Formula),
     proof.foldlM (fun pr step => Verify.DB.stepNormal db pr step)
@@ -10717,7 +11080,7 @@ theorem verify_impl_complete
       stackRespectsFrame_empty db db.frame
     obtain ⟨pr_final, h_fold, h_view, _h_frame_final, _h_head_final, _h_respects_final⟩ :=
       foldlM_proofSteps_complete db Γ fr
-        h_db h_frame h_db_wf h_db_scoped
+        h_db h_frame h_db_wf h_scoped_facts h_dv_wf
         [toExpr f] steps h_valid
         ⟨⟨0, 0⟩, label, f, db.frame, #[], #[], Verify.ProofTokenParser.normal⟩
         [] h_stack_init h_frame_init h_head_init h_respects_init
@@ -10782,40 +11145,176 @@ theorem verify_impl_complete
     rw [h_get, h_stack_list]
     rfl
 
-/-! ## Phase 9 Status Summary
+/-- Canonical parser-to-acceptance completeness theorem.
 
-**Proven theorems (implementation completeness helpers):**
-- mand_mem_has_label: ✅ proven - Spec hyps have impl labels
-- hypToLabel_some_of_mand_mem: ✅ proven - hypToLabel succeeds for mand hyps
-- proofStepsToLabels_length: ✅ proven - Length preservation under proofStepToLabel
-- stepNormal_of_hyp_in_frame: ✅ proven - stepNormal accepts frame hypotheses
-- proofValid_steps_have_labels: ✅ proven - Every valid step maps to an impl label
-- stepNormal_assert_success: ✅ proven - stepNormal accepts assertion labels
-- checkHypOK_of_stack_window_aux: ✅ proven - checkHyp completeness
+If parsing succeeds and the extracted spec database/frame can prove `toExpr f`,
+the implementation accepts a proof ending in an equivalent formula on the stack. -/
+theorem verify_parser_accepts_of_spec_provable
+    (bytes : ByteArray)
+    (label : String)
+    (f : Verify.Formula)
+    (h_success : (Verify.checkBytes bytes).error? = none)
+    (h_spec :
+      ∃ (Γ : Spec.Database) (fr : Spec.Frame),
+        toDatabase (Verify.checkBytes bytes) = some Γ ∧
+        toFrame (Verify.checkBytes bytes) (Verify.checkBytes bytes).frame = some fr ∧
+        Spec.Provable Γ fr (toExpr f)) :
+  ∃ (proof : Array String) (pr_final : Verify.ProofState) (f' : Verify.Formula),
+    proof.foldlM (fun pr step => Verify.DB.stepNormal (Verify.checkBytes bytes) pr step)
+      ⟨⟨0, 0⟩, label, f, (Verify.checkBytes bytes).frame, #[], #[], Verify.ProofTokenParser.normal⟩ =
+        Except.ok pr_final ∧
+    pr_final.stack.size = 1 ∧
+    pr_final.stack[0]? = some f' ∧
+    toExpr f' = toExpr f := by
+  rcases h_spec with ⟨Γ, fr, h_db, h_frame, h_provable⟩
+  let db := Verify.checkBytes bytes
+  have h_wf_scoped : WellFormedDB db ∧ WellScopedDB db := by
+    simpa [db] using parser_construction_wf_scoped bytes h_success
+  have h_scoped_facts : CompletenessScopedFacts db :=
+    completenessScopedFacts_of_wellScopedDB db h_wf_scoped.2
+  have h_dv_wf : ∀ l fr' e, Γ l = some (fr', e) → DVWellFormed fr' := by
+    exact parser_toDatabase_dvWellFormed bytes h_success Γ h_db
+  have h_complete := verify_impl_complete
+    (db := db)
+    (label := label)
+    (f := f)
+    (h_db_wf := h_wf_scoped.1)
+    (h_scoped_facts := h_scoped_facts)
+    (Γ := Γ)
+    (fr := fr)
+    (h_db := by simpa [db] using h_db)
+    (h_frame := by simpa [db] using h_frame)
+    (h_dv_wf := h_dv_wf)
+    (h_provable := by simpa using h_provable)
+    (by simpa [db] using h_success)
+  simpa [db] using h_complete
 
-**Main theorem:**
-- verify_impl_complete: ⚠️ proof structure complete, 3 sorries remain
+/-- Parser-specialized compatibility wrapper.
 
-**Completed cases in foldlM_proofSteps_complete** ✅:
-- nil case: fully proven
-- useEssential case: fully proven (uses hypToLabel_some_of_mand_mem, stepNormal_of_hyp_in_frame)
+For parser-origin completeness usage, prefer `verify_parser_accepts_of_spec_provable`.
+Use this theorem when you already have explicit `Γ`/`fr` witnesses in scope. -/
+theorem verify_impl_complete_of_checkBytes
+    (bytes : ByteArray)
+    (label : String)
+    (f : Verify.Formula)
+    (Γ : Spec.Database) (fr : Spec.Frame)
+    (h_success : (Verify.checkBytes bytes).error? = none)
+    (h_db : toDatabase (Verify.checkBytes bytes) = some Γ)
+    (h_frame : toFrame (Verify.checkBytes bytes) (Verify.checkBytes bytes).frame = some fr)
+    (h_provable : Spec.Provable Γ fr (toExpr f)) :
+  ∃ (proof : Array String) (pr_final : Verify.ProofState) (f' : Verify.Formula),
+    proof.foldlM (fun pr step => Verify.DB.stepNormal (Verify.checkBytes bytes) pr step)
+      ⟨⟨0, 0⟩, label, f, (Verify.checkBytes bytes).frame, #[], #[], Verify.ProofTokenParser.normal⟩ =
+        Except.ok pr_final ∧
+    pr_final.stack.size = 1 ∧
+    pr_final.stack[0]? = some f' ∧
+    toExpr f' = toExpr f := by
+  exact verify_parser_accepts_of_spec_provable bytes label f h_success
+    ⟨Γ, fr, h_db, h_frame, h_provable⟩
 
-**Remaining sorries in foldlM_proofSteps_complete**:
-1. Line ~8987 - useFloating case: Extract toExprOpt from convertHyp pattern match
-2. Line ~9035 - useAxiom case: Bridge from spec assertion to impl (requires CheckHypOK, DV, subst)
+/-- Canonical parser-origin soundness wrapper.
 
-**Remaining sorry in verify_impl_complete**:
-3. Line ~9130 - stack[0]? = some f: Requires toExpr injectivity or scoped formula tracking
+If parsing succeeds and the implementation accepts a proof, then the extracted
+spec database/frame proves the target expression. -/
+theorem verify_parser_sound_of_impl_acceptance
+    (bytes : ByteArray)
+    (label : String)
+    (f : Verify.Formula)
+    (proof : Array String)
+    (h_success : (Verify.checkBytes bytes).error? = none)
+    (h_accept :
+      ∃ pr_final : Verify.ProofState,
+        proof.foldlM (fun pr step => Verify.DB.stepNormal (Verify.checkBytes bytes) pr step)
+          ⟨⟨0, 0⟩, label, f, (Verify.checkBytes bytes).frame, #[], #[], Verify.ProofTokenParser.normal⟩ =
+            Except.ok pr_final ∧
+        pr_final.stack.size = 1 ∧
+        pr_final.stack[0]? = some f) :
+    ∃ (Γ : Spec.Database) (fr : Spec.Frame),
+      toDatabase (Verify.checkBytes bytes) = some Γ ∧
+      toFrame (Verify.checkBytes bytes) (Verify.checkBytes bytes).frame = some fr ∧
+      Spec.Provable Γ fr (toExpr f) := by
+  let db := Verify.checkBytes bytes
+  have h_db_wf : WellFormedDB db := by
+    simpa [db] using (parser_construction_wf_scoped bytes h_success).1
+  have h_sound := verify_impl_sound db label f proof (by simpa [db] using h_success) h_db_wf
+  have h_accept' :
+      ∃ pr_final : Verify.ProofState,
+        proof.foldlM (fun pr step => Verify.DB.stepNormal db pr step)
+          ⟨⟨0, 0⟩, label, f, db.frame, #[], #[], Verify.ProofTokenParser.normal⟩ =
+            Except.ok pr_final ∧
+        pr_final.stack.size = 1 ∧
+        pr_final.stack[0]? = some f := by
+    simpa [db] using h_accept
+  simpa [db] using h_sound h_accept'
 
-**Technical notes**:
-- Switched from `induction` to `cases` to avoid inaccessible variable issues
-- Stack ordering: ProofValid uses cons (reverse of viewStack append convention)
-- Fixed by using `stack_spec.reverse` in theorem conclusion
-variable names that don't match expected patterns. Strategy: use `rename_i` to
-bind variables, but the exact order needs investigation via Lean's goal output.
+/-- Canonical parser-origin semantic soundness wrapper.
 
-**Impact**: Combined with verify_impl_sound, establishes full equivalence:
-  implementation accepts ↔ spec valid
+If parsing succeeds and the implementation accepts a proof ending in some
+formula expression-equivalent to `f`, then `toExpr f` is spec-provable. -/
+theorem verify_parser_sound_of_impl_acceptance_equiv
+    (bytes : ByteArray)
+    (label : String)
+    (f : Verify.Formula)
+    (h_success : (Verify.checkBytes bytes).error? = none)
+    (h_accept :
+      ∃ (proof : Array String) (pr_final : Verify.ProofState) (f' : Verify.Formula),
+        proof.foldlM (fun pr step => Verify.DB.stepNormal (Verify.checkBytes bytes) pr step)
+          ⟨⟨0, 0⟩, label, f, (Verify.checkBytes bytes).frame, #[], #[], Verify.ProofTokenParser.normal⟩ =
+            Except.ok pr_final ∧
+        pr_final.stack.size = 1 ∧
+        pr_final.stack[0]? = some f' ∧
+        toExpr f' = toExpr f) :
+    ∃ (Γ : Spec.Database) (fr : Spec.Frame),
+      toDatabase (Verify.checkBytes bytes) = some Γ ∧
+      toFrame (Verify.checkBytes bytes) (Verify.checkBytes bytes).frame = some fr ∧
+      Spec.Provable Γ fr (toExpr f) := by
+  let db := Verify.checkBytes bytes
+  have h_db_wf : WellFormedDB db := by
+    simpa [db] using (parser_construction_wf_scoped bytes h_success).1
+  rcases h_accept with ⟨proof, pr_final, f', h_fold, h_size, h_stack, h_eqExpr⟩
+  rcases verify_impl_sound_semantic db label f pr_final f' proof
+      (by simpa [db] using h_success)
+      h_db_wf
+      (by simpa [db] using h_fold)
+      h_size
+      h_stack with ⟨Γ, fr, h_db, h_frame, h_provable_final⟩
+  have h_provable : Spec.Provable Γ fr (toExpr f) := by
+    simpa [h_eqExpr] using h_provable_final
+  have h_db' : toDatabase (Verify.checkBytes bytes) = some Γ := by
+    simpa [db] using h_db
+  exact ⟨Γ, fr, h_db', by simpa [db] using h_frame, h_provable⟩
+
+/-- Canonical parser-origin equivalence theorem.
+
+Under parse success, implementation acceptance (up to final formula expression
+equivalence) is equivalent to spec provability. -/
+theorem verify_parser_acceptance_iff_spec_provable
+    (bytes : ByteArray)
+    (label : String)
+    (f : Verify.Formula)
+    (h_success : (Verify.checkBytes bytes).error? = none) :
+    (∃ (proof : Array String) (pr_final : Verify.ProofState) (f' : Verify.Formula),
+      proof.foldlM (fun pr step => Verify.DB.stepNormal (Verify.checkBytes bytes) pr step)
+        ⟨⟨0, 0⟩, label, f, (Verify.checkBytes bytes).frame, #[], #[], Verify.ProofTokenParser.normal⟩ =
+          Except.ok pr_final ∧
+      pr_final.stack.size = 1 ∧
+      pr_final.stack[0]? = some f' ∧
+      toExpr f' = toExpr f) ↔
+    (∃ (Γ : Spec.Database) (fr : Spec.Frame),
+      toDatabase (Verify.checkBytes bytes) = some Γ ∧
+      toFrame (Verify.checkBytes bytes) (Verify.checkBytes bytes).frame = some fr ∧
+      Spec.Provable Γ fr (toExpr f)) := by
+  constructor
+  · intro h_accept
+    exact verify_parser_sound_of_impl_acceptance_equiv bytes label f h_success h_accept
+  · intro h_spec
+    exact verify_parser_accepts_of_spec_provable bytes label f h_success h_spec
+
+/-! ## Historical note
+
+This section previously contained an in-progress Phase 9 status snapshot.
+Those notes are intentionally removed to avoid stale proof-state guidance.
 -/
 
 end Metamath.Kernel
+

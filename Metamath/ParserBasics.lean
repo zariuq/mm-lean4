@@ -95,7 +95,8 @@ theorem isPrintable_def (c : UInt8) :
 /-- isWhitespace unfolds to character check -/
 theorem isWhitespace_unfold (c : UInt8) :
   isWhitespace c =
-    (c == ' '.toUInt8 || c == '\n'.toUInt8 || c == '\r'.toUInt8 || c == '\t'.toUInt8) := by
+    (c == ' '.toUInt8 || c == '\n'.toUInt8 || c == '\r'.toUInt8 ||
+      c == '\t'.toUInt8 || c == (0x0c : UInt8)) := by
   rfl
 
 /-- isMathChar excludes dollar sign -/
@@ -154,3 +155,4 @@ theorem find?_some_iff {db : DB} {label : String} :
     · exact ⟨_, rfl⟩
 
 end Metamath.ParserBasics
+

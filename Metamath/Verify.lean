@@ -143,7 +143,21 @@ def isLabelChar (c : UInt8) : Bool :=
   c.isAlphanum || c == '-'.toUInt8 || c == '_'.toUInt8 || c == '.'.toUInt8
 
 def isWhitespace (c : UInt8) : Bool :=
-  c == ' '.toUInt8 || c == '\n'.toUInt8 || c == '\r'.toUInt8 || c == '\t'.toUInt8
+  c == ' '.toUInt8 || c == '\n'.toUInt8 || c == '\r'.toUInt8 || c == '\t'.toUInt8 ||
+  c == (0x0c : UInt8)
+
+/-- Metamath spec whitespace set (§4.1.1): space, tab, CR, LF, form feed. -/
+def isSpecWhitespace (c : UInt8) : Bool :=
+  c == ' '.toUInt8 || c == '\n'.toUInt8 || c == '\r'.toUInt8 || c == '\t'.toUInt8 ||
+  c == (0x0c : UInt8)
+
+@[simp] theorem isSpecWhitespace_formFeed : isSpecWhitespace (0x0c : UInt8) = true := by
+  native_decide
+
+/-- Parser tokenization whitespace now matches the Metamath spec set (§4.1.1). -/
+theorem checkBytes_tokenization_whitespace_matches_spec (c : UInt8) :
+    isWhitespace c = isSpecWhitespace c := by
+  rfl
 
 def isPrintable (c : UInt8) : Bool := c >= 32 && c <= 126
 
@@ -374,6 +388,894 @@ inductive Error
   | ax (pos : Pos) (l : String) (f : Formula) (fr : Frame)
   | thm (pos : Pos) (l : String) (f : Formula) (fr : Frame)
 
+/-- Structured parser error codes for theorem-friendly diagnostics. -/
+inductive ParseErrorCode
+  | cantSaveEmptyStack
+  | unclosedBlock
+  | unclosedComment
+  | unclosedConst
+  | unclosedVar
+  | unclosedDjvars
+  | unclosedFloat
+  | unclosedEss
+  | unclosedAx
+  | unclosedThm
+  | notACommand
+  | unclosedProof
+  | cantPopGlobalScope
+  | constMustBeOutermost
+  | duplicateSymbolOrAssert
+  | firstSymbolNotConstant
+  | hypothesisSymbolsNotInFrame
+  | expectedConstantAndVariable
+  | variableAlreadyHasFloatHyp
+  | stackFormulaNoConstantHead
+  | hypothesisNoConstantHead
+  | typeErrorInSubstitution
+  | badTypecodeInSubstitution
+  | duplicateFloatVariable
+  | disjointVariableViolation
+  | assertionNoConstantHead
+  | assertionVarsNotInFrame
+  | stackUnderflow
+  | proofBackrefIndexOutOfRange
+  | invalidLabel
+  | invalidMathString
+  | duplicateDisjointVariable
+  | tokenNotInScope
+  | tokenNotVariable
+  | unknownStepQuestionRejected
+  | topLevelEssentialNotAllowed
+  | proofParseError
+  | theoremMoreThanOneStackElement
+  | theoremClaimMismatch
+  | nestedCommentDelimiter
+  | tokenNotConstantOrVariable
+  | unknownStatementType
+  | internalIllFormedDatabaseAfterParse
+  | includeCycleDetected
+  | includeInInnerScope
+  | includeInsideStatement
+  | includeExtractedEmptyPath
+  | includeEmptyPathBeforeNormalization
+  | includePathEmptyAfterNormalization
+  | includeReadFailure
+  deriving DecidableEq, Repr, Inhabited
+
+/-- Metamath-spec clause anchors used by parser diagnostics. -/
+inductive SpecClause
+  | sec4_1_1_whitespace
+  | sec4_1_2_comments
+  | sec4_1_2_includes
+  | sec4_2_1_labels
+  | sec4_2_4_djvars
+  | sec4_2_8_constOutermost
+  | sec4_3_statementTermination
+  deriving DecidableEq, Repr, Inhabited
+
+namespace ParseErrorCode
+
+@[simp] def message : ParseErrorCode → String
+  | .cantSaveEmptyStack => "can't save empty stack"
+  | .unclosedBlock => "unclosed block (missing $})"
+  | .unclosedComment => "unclosed comment"
+  | .unclosedConst => "unclosed $c"
+  | .unclosedVar => "unclosed $v"
+  | .unclosedDjvars => "unclosed $d"
+  | .unclosedFloat => "unclosed $f"
+  | .unclosedEss => "unclosed $e"
+  | .unclosedAx => "unclosed $a"
+  | .unclosedThm => "unclosed $p"
+  | .notACommand => "not a command"
+  | .unclosedProof => "unclosed $p proof"
+  | .cantPopGlobalScope => "can't pop global scope"
+  | .constMustBeOutermost => "$c must be in outermost block (spec Section 4.2.8)"
+  | .duplicateSymbolOrAssert => "duplicate symbol/assert <label>"
+  | .firstSymbolNotConstant => "first symbol is not a constant"
+  | .hypothesisSymbolsNotInFrame => "hypothesis symbols not in frame"
+  | .expectedConstantAndVariable => "expected a constant and a variable"
+  | .variableAlreadyHasFloatHyp => "variable <v> already has $f hypothesis"
+  | .stackFormulaNoConstantHead => "stack formula has no constant head"
+  | .hypothesisNoConstantHead => "hypothesis has no constant head"
+  | .typeErrorInSubstitution => "type error in substitution"
+  | .badTypecodeInSubstitution => "bad typecode in substitution <ctx>"
+  | .duplicateFloatVariable => "duplicate float variable"
+  | .disjointVariableViolation => "disjoint variable violation"
+  | .assertionNoConstantHead => "assertion has no constant head"
+  | .assertionVarsNotInFrame => "assertion variables not in frame"
+  | .stackUnderflow => "stack underflow"
+  | .proofBackrefIndexOutOfRange => "proof backref index out of range"
+  | .invalidLabel => "invalid label '<label>'"
+  | .invalidMathString => "invalid math string '<math>'"
+  | .duplicateDisjointVariable => "duplicate disjoint variable <sym>"
+  | .tokenNotInScope => "<sym> not in scope"
+  | .tokenNotVariable => "<sym> is not a variable"
+  | .unknownStepQuestionRejected => "unknown step '?' not allowed (config rejects incomplete proofs)"
+  | .topLevelEssentialNotAllowed => "top-level $e not allowed (config requires $e inside blocks)"
+  | .proofParseError => "proof parse error"
+  | .theoremMoreThanOneStackElement => "more than one element on stack"
+  | .theoremClaimMismatch => "theorem does not prove what it claims"
+  | .nestedCommentDelimiter => "nested comment delimiter '$(' inside comment"
+  | .tokenNotConstantOrVariable => "<sym> is not a constant or variable"
+  | .unknownStatementType => "unknown statement type <type>"
+  | .internalIllFormedDatabaseAfterParse => "internal error: ill-formed database after parse"
+  | .includeCycleDetected => "include cycle detected: '<path>' is already being processed"
+  | .includeInInnerScope => "include in inner scope (config requires outermost scope only, spec §4.1.2)"
+  | .includeInsideStatement => "include inside statement (config forbids token splicing, spec §4.1.2)"
+  | .includeExtractedEmptyPath => "extracted empty path from position <start> to <end> in <file>"
+  | .includeEmptyPathBeforeNormalization => "extracted empty include path before normalization in <file>"
+  | .includePathEmptyAfterNormalization => "include path became empty after normalizing './' prefix (original was '<path>') in <file>"
+  | .includeReadFailure => "failed to read include file '<name>' (resolved to '<path>'): <error>"
+
+def hasPattern : ParseErrorCode → Bool
+  | .duplicateSymbolOrAssert => true
+  | .variableAlreadyHasFloatHyp => true
+  | .badTypecodeInSubstitution => true
+  | .invalidLabel => true
+  | .invalidMathString => true
+  | .duplicateDisjointVariable => true
+  | .tokenNotInScope => true
+  | .tokenNotVariable => true
+  | .tokenNotConstantOrVariable => true
+  | .unknownStatementType => true
+  | .includeCycleDetected => true
+  | .includeExtractedEmptyPath => true
+  | .includeEmptyPathBeforeNormalization => true
+  | .includePathEmptyAfterNormalization => true
+  | .includeReadFailure => true
+  | _ => false
+
+private def decodePattern? (msg : String) : Option ParseErrorCode :=
+  if msg.startsWith "duplicate symbol/assert " then some .duplicateSymbolOrAssert
+  else if msg.startsWith "variable " && msg.endsWith " already has $f hypothesis" then some .variableAlreadyHasFloatHyp
+  else if msg.startsWith "bad typecode in substitution " then some .badTypecodeInSubstitution
+  else if msg.startsWith "invalid label '" then some .invalidLabel
+  else if msg.startsWith "invalid math string '" then some .invalidMathString
+  else if msg.startsWith "duplicate disjoint variable " then some .duplicateDisjointVariable
+  else if msg.endsWith " not in scope" then some .tokenNotInScope
+  else if msg.endsWith " is not a variable" then some .tokenNotVariable
+  else if msg.endsWith " is not a constant or variable" then some .tokenNotConstantOrVariable
+  else if msg.startsWith "unknown statement type " then some .unknownStatementType
+  else if msg.startsWith "include cycle detected: '" then some .includeCycleDetected
+  else if msg.startsWith "extracted empty path from position " then some .includeExtractedEmptyPath
+  else if msg.startsWith "extracted empty include path before normalization in " then some .includeEmptyPathBeforeNormalization
+  else if msg.startsWith "include path became empty after normalizing './' prefix " then some .includePathEmptyAfterNormalization
+  else if msg.startsWith "failed to read include file '" then some .includeReadFailure
+  else none
+
+private def decodeCore? (msg : String) : Option ParseErrorCode :=
+  match msg with
+  | "can't save empty stack" => some .cantSaveEmptyStack
+  | "unclosed block (missing $})" => some .unclosedBlock
+  | "unclosed comment" => some .unclosedComment
+  | "unclosed $c" => some .unclosedConst
+  | "unclosed $v" => some .unclosedVar
+  | "unclosed $d" => some .unclosedDjvars
+  | "unclosed $f" => some .unclosedFloat
+  | "unclosed $e" => some .unclosedEss
+  | "unclosed $a" => some .unclosedAx
+  | "unclosed $p" => some .unclosedThm
+  | "not a command" => some .notACommand
+  | "unclosed $p proof" => some .unclosedProof
+  | "can't pop global scope" => some .cantPopGlobalScope
+  | "$c must be in outermost block (spec Section 4.2.8)" => some .constMustBeOutermost
+  | "first symbol is not a constant" => some .firstSymbolNotConstant
+  | "hypothesis symbols not in frame" => some .hypothesisSymbolsNotInFrame
+  | "expected a constant and a variable" => some .expectedConstantAndVariable
+  | "stack formula has no constant head" => some .stackFormulaNoConstantHead
+  | "hypothesis has no constant head" => some .hypothesisNoConstantHead
+  | "type error in substitution" => some .typeErrorInSubstitution
+  | "duplicate float variable" => some .duplicateFloatVariable
+  | "disjoint variable violation" => some .disjointVariableViolation
+  | "assertion has no constant head" => some .assertionNoConstantHead
+  | "assertion variables not in frame" => some .assertionVarsNotInFrame
+  | "stack underflow" => some .stackUnderflow
+  | "proof backref index out of range" => some .proofBackrefIndexOutOfRange
+  | "unknown step '?' not allowed (config rejects incomplete proofs)" => some .unknownStepQuestionRejected
+  | "top-level $e not allowed (config requires $e inside blocks)" => some .topLevelEssentialNotAllowed
+  | "proof parse error" => some .proofParseError
+  | "more than one element on stack" => some .theoremMoreThanOneStackElement
+  | "theorem does not prove what it claims" => some .theoremClaimMismatch
+  | "nested comment delimiter '$(' inside comment" => some .nestedCommentDelimiter
+  | "include in inner scope (config requires outermost scope only, spec §4.1.2)" => some .includeInInnerScope
+  | "include inside statement (config forbids token splicing, spec §4.1.2)" => some .includeInsideStatement
+  | "internal error: ill-formed database after parse" => some .internalIllFormedDatabaseAfterParse
+  | _ => decodePattern? msg
+
+private theorem decodePattern?_hasPattern (msg : String) (code : ParseErrorCode) :
+    decodePattern? msg = some code → hasPattern code = true := by
+  intro h_code
+  unfold decodePattern? at h_code
+  by_cases h_dupSym : msg.startsWith "duplicate symbol/assert " = true
+  · simp [h_dupSym] at h_code
+    cases h_code
+    simp [hasPattern]
+  · simp [h_dupSym] at h_code
+    by_cases h_varFloat : (msg.startsWith "variable " = true ∧ msg.endsWith " already has $f hypothesis" = true)
+    · simp [h_varFloat] at h_code
+      cases h_code
+      simp [hasPattern]
+    · simp [h_varFloat] at h_code
+      by_cases h_badTy : msg.startsWith "bad typecode in substitution " = true
+      · simp [h_badTy] at h_code
+        cases h_code
+        simp [hasPattern]
+      · simp [h_badTy] at h_code
+        by_cases h_invLabel : msg.startsWith "invalid label '" = true
+        · simp [h_invLabel] at h_code
+          cases h_code
+          simp [hasPattern]
+        · simp [h_invLabel] at h_code
+          by_cases h_invMath : msg.startsWith "invalid math string '" = true
+          · simp [h_invMath] at h_code
+            cases h_code
+            simp [hasPattern]
+          · simp [h_invMath] at h_code
+            by_cases h_dupDj : msg.startsWith "duplicate disjoint variable " = true
+            · simp [h_dupDj] at h_code
+              cases h_code
+              simp [hasPattern]
+            · simp [h_dupDj] at h_code
+              by_cases h_notScope : msg.endsWith " not in scope" = true
+              · simp [h_notScope] at h_code
+                cases h_code
+                simp [hasPattern]
+              · simp [h_notScope] at h_code
+                by_cases h_notVar : msg.endsWith " is not a variable" = true
+                · simp [h_notVar] at h_code
+                  cases h_code
+                  simp [hasPattern]
+                · simp [h_notVar] at h_code
+                  by_cases h_notCv : msg.endsWith " is not a constant or variable" = true
+                  · simp [h_notCv] at h_code
+                    cases h_code
+                    simp [hasPattern]
+                  · simp [h_notCv] at h_code
+                    by_cases h_unkStmt : msg.startsWith "unknown statement type " = true
+                    · simp [h_unkStmt] at h_code
+                      cases h_code
+                      simp [hasPattern]
+                    · simp [h_unkStmt] at h_code
+                      by_cases h_incCycle : msg.startsWith "include cycle detected: '" = true
+                      · simp [h_incCycle] at h_code
+                        cases h_code
+                        simp [hasPattern]
+                      · simp [h_incCycle] at h_code
+                        by_cases h_emptyPath : msg.startsWith "extracted empty path from position " = true
+                        · simp [h_emptyPath] at h_code
+                          cases h_code
+                          simp [hasPattern]
+                        · simp [h_emptyPath] at h_code
+                          by_cases h_emptyNorm : msg.startsWith "extracted empty include path before normalization in " = true
+                          · simp [h_emptyNorm] at h_code
+                            cases h_code
+                            simp [hasPattern]
+                          · simp [h_emptyNorm] at h_code
+                            by_cases h_becameEmpty : msg.startsWith "include path became empty after normalizing './' prefix " = true
+                            · simp [h_becameEmpty] at h_code
+                              cases h_code
+                              simp [hasPattern]
+                            · simp [h_becameEmpty] at h_code
+                              by_cases h_readFail : msg.startsWith "failed to read include file '" = true
+                              · simp [h_readFail] at h_code
+                                cases h_code
+                                simp [hasPattern]
+                              · simp [h_readFail] at h_code
+
+/-- Normalized parser-message payload used for shape theorems.
+If the message is `at <ctx>: <payload>`, this returns `<payload>`;
+otherwise it returns the original message. -/
+def payload (msg : String) : String :=
+  match decodeCore? msg with
+  | some _ => msg
+  | none =>
+      if msg.startsWith "at " then
+        match msg.splitOn ": " with
+        | _prefix :: rest =>
+            if rest.isEmpty then msg else String.intercalate ": " rest
+        | [] => msg
+      else msg
+
+def ofMessage? (msg : String) : Option ParseErrorCode :=
+  match decodeCore? msg with
+  | some code => some code
+  | none => decodeCore? (payload msg)
+
+theorem ofMessage?_payload_decode (msg : String) (code : ParseErrorCode) :
+    ofMessage? msg = some code →
+    decodeCore? (payload msg) = some code := by
+  intro h_code
+  unfold ofMessage? at h_code
+  cases h_dec : decodeCore? msg with
+  | some code' =>
+      simp [h_dec] at h_code
+      subst h_code
+      unfold payload
+      simp [h_dec]
+  | none =>
+      simpa [h_dec] using h_code
+
+theorem decodeCore?_invalidLabel_implies_payload_startsWith
+    (msg : String) :
+    decodeCore? msg = some .invalidLabel →
+    msg.startsWith "invalid label '" = true := by
+  intro h_code
+  by_cases h_start : msg.startsWith "invalid label '" = true
+  · exact h_start
+  · exfalso
+    unfold decodeCore? decodePattern? at h_code
+    split at h_code <;> (try simp [h_start] at h_code)
+    case h_36 =>
+      try (by_cases h_dupSym : msg.startsWith "duplicate symbol/assert " = true <;> simp [h_dupSym] at h_code)
+      try (by_cases h_varFloat : (msg.startsWith "variable " = true ∧ msg.endsWith " already has $f hypothesis" = true) <;> simp [h_varFloat] at h_code)
+      try (by_cases h_badTy : msg.startsWith "bad typecode in substitution " = true <;> simp [h_badTy] at h_code)
+      try (by_cases h_invMath : msg.startsWith "invalid math string '" = true <;> simp [h_invMath] at h_code)
+      try (by_cases h_dupDj : msg.startsWith "duplicate disjoint variable " = true <;> simp [h_dupDj] at h_code)
+      try (by_cases h_notScope : msg.endsWith " not in scope" = true <;> simp [h_notScope] at h_code)
+      try (by_cases h_notVar : msg.endsWith " is not a variable" = true <;> simp [h_notVar] at h_code)
+      try (by_cases h_notCv : msg.endsWith " is not a constant or variable" = true <;> simp [h_notCv] at h_code)
+      try (by_cases h_unkStmt : msg.startsWith "unknown statement type " = true <;> simp [h_unkStmt] at h_code)
+      try (by_cases h_incCycle : msg.startsWith "include cycle detected: '" = true <;> simp [h_incCycle] at h_code)
+      try (by_cases h_emptyPath : msg.startsWith "extracted empty path from position " = true <;> simp [h_emptyPath] at h_code)
+      try (by_cases h_emptyNorm : msg.startsWith "extracted empty include path before normalization in " = true <;> simp [h_emptyNorm] at h_code)
+      try (by_cases h_becameEmpty : msg.startsWith "include path became empty after normalizing './' prefix " = true <;> simp [h_becameEmpty] at h_code)
+      try (by_cases h_readFail : msg.startsWith "failed to read include file '" = true <;> simp [h_readFail] at h_code)
+
+theorem decodeCore?_duplicateDisjointVariable_implies_payload_startsWith
+    (msg : String) :
+    decodeCore? msg = some .duplicateDisjointVariable →
+    msg.startsWith "duplicate disjoint variable " = true := by
+  intro h_code
+  by_cases h_start : msg.startsWith "duplicate disjoint variable " = true
+  · exact h_start
+  · exfalso
+    unfold decodeCore? decodePattern? at h_code
+    split at h_code <;> (try simp [h_start] at h_code)
+    case h_36 =>
+      try (by_cases h_dupSym : msg.startsWith "duplicate symbol/assert " = true <;> simp [h_dupSym] at h_code)
+      try (by_cases h_varFloat : (msg.startsWith "variable " = true ∧ msg.endsWith " already has $f hypothesis" = true) <;> simp [h_varFloat] at h_code)
+      try (by_cases h_badTy : msg.startsWith "bad typecode in substitution " = true <;> simp [h_badTy] at h_code)
+      try (by_cases h_invLabel : msg.startsWith "invalid label '" = true <;> simp [h_invLabel] at h_code)
+      try (by_cases h_invMath : msg.startsWith "invalid math string '" = true <;> simp [h_invMath] at h_code)
+      try (by_cases h_notScope : msg.endsWith " not in scope" = true <;> simp [h_notScope] at h_code)
+      try (by_cases h_notVar : msg.endsWith " is not a variable" = true <;> simp [h_notVar] at h_code)
+      try (by_cases h_notCv : msg.endsWith " is not a constant or variable" = true <;> simp [h_notCv] at h_code)
+      try (by_cases h_unkStmt : msg.startsWith "unknown statement type " = true <;> simp [h_unkStmt] at h_code)
+      try (by_cases h_incCycle : msg.startsWith "include cycle detected: '" = true <;> simp [h_incCycle] at h_code)
+      try (by_cases h_emptyPath : msg.startsWith "extracted empty path from position " = true <;> simp [h_emptyPath] at h_code)
+      try (by_cases h_emptyNorm : msg.startsWith "extracted empty include path before normalization in " = true <;> simp [h_emptyNorm] at h_code)
+      try (by_cases h_becameEmpty : msg.startsWith "include path became empty after normalizing './' prefix " = true <;> simp [h_becameEmpty] at h_code)
+      try (by_cases h_readFail : msg.startsWith "failed to read include file '" = true <;> simp [h_readFail] at h_code)
+
+theorem decodeCore?_tokenNotInScope_implies_payload_endsWith
+    (msg : String) :
+    decodeCore? msg = some .tokenNotInScope →
+    msg.endsWith " not in scope" = true := by
+  intro h_code
+  by_cases h_end : msg.endsWith " not in scope" = true
+  · exact h_end
+  · exfalso
+    unfold decodeCore? decodePattern? at h_code
+    split at h_code <;> (try simp [h_end] at h_code)
+    case h_36 =>
+      try (by_cases h_dupSym : msg.startsWith "duplicate symbol/assert " = true <;> simp [h_dupSym] at h_code)
+      try (by_cases h_varFloat : (msg.startsWith "variable " = true ∧ msg.endsWith " already has $f hypothesis" = true) <;> simp [h_varFloat] at h_code)
+      try (by_cases h_badTy : msg.startsWith "bad typecode in substitution " = true <;> simp [h_badTy] at h_code)
+      try (by_cases h_invLabel : msg.startsWith "invalid label '" = true <;> simp [h_invLabel] at h_code)
+      try (by_cases h_invMath : msg.startsWith "invalid math string '" = true <;> simp [h_invMath] at h_code)
+      try (by_cases h_dupDj : msg.startsWith "duplicate disjoint variable " = true <;> simp [h_dupDj] at h_code)
+      try (by_cases h_notVar : msg.endsWith " is not a variable" = true <;> simp [h_notVar] at h_code)
+      try (by_cases h_notCv : msg.endsWith " is not a constant or variable" = true <;> simp [h_notCv] at h_code)
+      try (by_cases h_unkStmt : msg.startsWith "unknown statement type " = true <;> simp [h_unkStmt] at h_code)
+      try (by_cases h_incCycle : msg.startsWith "include cycle detected: '" = true <;> simp [h_incCycle] at h_code)
+      try (by_cases h_emptyPath : msg.startsWith "extracted empty path from position " = true <;> simp [h_emptyPath] at h_code)
+      try (by_cases h_emptyNorm : msg.startsWith "extracted empty include path before normalization in " = true <;> simp [h_emptyNorm] at h_code)
+      try (by_cases h_becameEmpty : msg.startsWith "include path became empty after normalizing './' prefix " = true <;> simp [h_becameEmpty] at h_code)
+      try (by_cases h_readFail : msg.startsWith "failed to read include file '" = true <;> simp [h_readFail] at h_code)
+
+theorem decodeCore?_duplicateSymbolOrAssert_implies_payload_startsWith
+    (msg : String) :
+    decodeCore? msg = some .duplicateSymbolOrAssert →
+    msg.startsWith "duplicate symbol/assert " = true := by
+  intro h_code
+  by_cases h_start : msg.startsWith "duplicate symbol/assert " = true
+  · exact h_start
+  · exfalso
+    unfold decodeCore? decodePattern? at h_code
+    split at h_code <;> (try simp [h_start] at h_code)
+    case h_36 =>
+      try (by_cases h_varFloat : (msg.startsWith "variable " = true ∧ msg.endsWith " already has $f hypothesis" = true) <;> simp [h_varFloat] at h_code)
+      try (by_cases h_badTy : msg.startsWith "bad typecode in substitution " = true <;> simp [h_badTy] at h_code)
+      try (by_cases h_invLabel : msg.startsWith "invalid label '" = true <;> simp [h_invLabel] at h_code)
+      try (by_cases h_invMath : msg.startsWith "invalid math string '" = true <;> simp [h_invMath] at h_code)
+      try (by_cases h_dupDj : msg.startsWith "duplicate disjoint variable " = true <;> simp [h_dupDj] at h_code)
+      try (by_cases h_notScope : msg.endsWith " not in scope" = true <;> simp [h_notScope] at h_code)
+      try (by_cases h_notVar : msg.endsWith " is not a variable" = true <;> simp [h_notVar] at h_code)
+      try (by_cases h_notCv : msg.endsWith " is not a constant or variable" = true <;> simp [h_notCv] at h_code)
+      try (by_cases h_unkStmt : msg.startsWith "unknown statement type " = true <;> simp [h_unkStmt] at h_code)
+      try (by_cases h_incCycle : msg.startsWith "include cycle detected: '" = true <;> simp [h_incCycle] at h_code)
+      try (by_cases h_emptyPath : msg.startsWith "extracted empty path from position " = true <;> simp [h_emptyPath] at h_code)
+      try (by_cases h_emptyNorm : msg.startsWith "extracted empty include path before normalization in " = true <;> simp [h_emptyNorm] at h_code)
+      try (by_cases h_becameEmpty : msg.startsWith "include path became empty after normalizing './' prefix " = true <;> simp [h_becameEmpty] at h_code)
+      try (by_cases h_readFail : msg.startsWith "failed to read include file '" = true <;> simp [h_readFail] at h_code)
+
+theorem decodeCore?_variableAlreadyHasFloatHyp_implies_payload_shape
+    (msg : String) :
+    decodeCore? msg = some .variableAlreadyHasFloatHyp →
+    (msg.startsWith "variable " = true ∧ msg.endsWith " already has $f hypothesis" = true) := by
+  intro h_code
+  by_cases h_shape : (msg.startsWith "variable " = true ∧ msg.endsWith " already has $f hypothesis" = true)
+  · exact h_shape
+  · exfalso
+    unfold decodeCore? decodePattern? at h_code
+    split at h_code <;> (try simp [h_shape] at h_code)
+    case h_36 =>
+      try (by_cases h_dupSym : msg.startsWith "duplicate symbol/assert " = true <;> simp [h_dupSym] at h_code)
+      try (by_cases h_varFloat : (msg.startsWith "variable " = true ∧ msg.endsWith " already has $f hypothesis" = true) <;> simp [h_varFloat] at h_code)
+      try (by_cases h_badTy : msg.startsWith "bad typecode in substitution " = true <;> simp [h_badTy] at h_code)
+      try (by_cases h_invLabel : msg.startsWith "invalid label '" = true <;> simp [h_invLabel] at h_code)
+      try (by_cases h_invMath : msg.startsWith "invalid math string '" = true <;> simp [h_invMath] at h_code)
+      try (by_cases h_dupDj : msg.startsWith "duplicate disjoint variable " = true <;> simp [h_dupDj] at h_code)
+      try (by_cases h_notScope : msg.endsWith " not in scope" = true <;> simp [h_notScope] at h_code)
+      try (by_cases h_notVar : msg.endsWith " is not a variable" = true <;> simp [h_notVar] at h_code)
+      try (by_cases h_notCv : msg.endsWith " is not a constant or variable" = true <;> simp [h_notCv] at h_code)
+      try (by_cases h_unkStmt : msg.startsWith "unknown statement type " = true <;> simp [h_unkStmt] at h_code)
+      try (by_cases h_incCycle : msg.startsWith "include cycle detected: '" = true <;> simp [h_incCycle] at h_code)
+      try (by_cases h_emptyPath : msg.startsWith "extracted empty path from position " = true <;> simp [h_emptyPath] at h_code)
+      try (by_cases h_emptyNorm : msg.startsWith "extracted empty include path before normalization in " = true <;> simp [h_emptyNorm] at h_code)
+      try (by_cases h_becameEmpty : msg.startsWith "include path became empty after normalizing './' prefix " = true <;> simp [h_becameEmpty] at h_code)
+      try (by_cases h_readFail : msg.startsWith "failed to read include file '" = true <;> simp [h_readFail] at h_code)
+
+theorem decodeCore?_badTypecodeInSubstitution_implies_payload_startsWith
+    (msg : String) :
+    decodeCore? msg = some .badTypecodeInSubstitution →
+    msg.startsWith "bad typecode in substitution " = true := by
+  intro h_code
+  by_cases h_start : msg.startsWith "bad typecode in substitution " = true
+  · exact h_start
+  · exfalso
+    unfold decodeCore? decodePattern? at h_code
+    split at h_code <;> (try simp [h_start] at h_code)
+    case h_36 =>
+      try (by_cases h_dupSym : msg.startsWith "duplicate symbol/assert " = true <;> simp [h_dupSym] at h_code)
+      try (by_cases h_varFloat : (msg.startsWith "variable " = true ∧ msg.endsWith " already has $f hypothesis" = true) <;> simp [h_varFloat] at h_code)
+      try (by_cases h_badTy : msg.startsWith "bad typecode in substitution " = true <;> simp [h_badTy] at h_code)
+      try (by_cases h_invLabel : msg.startsWith "invalid label '" = true <;> simp [h_invLabel] at h_code)
+      try (by_cases h_invMath : msg.startsWith "invalid math string '" = true <;> simp [h_invMath] at h_code)
+      try (by_cases h_dupDj : msg.startsWith "duplicate disjoint variable " = true <;> simp [h_dupDj] at h_code)
+      try (by_cases h_notScope : msg.endsWith " not in scope" = true <;> simp [h_notScope] at h_code)
+      try (by_cases h_notVar : msg.endsWith " is not a variable" = true <;> simp [h_notVar] at h_code)
+      try (by_cases h_notCv : msg.endsWith " is not a constant or variable" = true <;> simp [h_notCv] at h_code)
+      try (by_cases h_unkStmt : msg.startsWith "unknown statement type " = true <;> simp [h_unkStmt] at h_code)
+      try (by_cases h_incCycle : msg.startsWith "include cycle detected: '" = true <;> simp [h_incCycle] at h_code)
+      try (by_cases h_emptyPath : msg.startsWith "extracted empty path from position " = true <;> simp [h_emptyPath] at h_code)
+      try (by_cases h_emptyNorm : msg.startsWith "extracted empty include path before normalization in " = true <;> simp [h_emptyNorm] at h_code)
+      try (by_cases h_becameEmpty : msg.startsWith "include path became empty after normalizing './' prefix " = true <;> simp [h_becameEmpty] at h_code)
+      try (by_cases h_readFail : msg.startsWith "failed to read include file '" = true <;> simp [h_readFail] at h_code)
+
+theorem decodeCore?_invalidMathString_implies_payload_startsWith
+    (msg : String) :
+    decodeCore? msg = some .invalidMathString →
+    msg.startsWith "invalid math string '" = true := by
+  intro h_code
+  by_cases h_start : msg.startsWith "invalid math string '" = true
+  · exact h_start
+  · exfalso
+    unfold decodeCore? decodePattern? at h_code
+    split at h_code <;> (try simp [h_start] at h_code)
+    case h_36 =>
+      try (by_cases h_dupSym : msg.startsWith "duplicate symbol/assert " = true <;> simp [h_dupSym] at h_code)
+      try (by_cases h_varFloat : (msg.startsWith "variable " = true ∧ msg.endsWith " already has $f hypothesis" = true) <;> simp [h_varFloat] at h_code)
+      try (by_cases h_badTy : msg.startsWith "bad typecode in substitution " = true <;> simp [h_badTy] at h_code)
+      try (by_cases h_invLabel : msg.startsWith "invalid label '" = true <;> simp [h_invLabel] at h_code)
+      try (by_cases h_invMath : msg.startsWith "invalid math string '" = true <;> simp [h_invMath] at h_code)
+      try (by_cases h_dupDj : msg.startsWith "duplicate disjoint variable " = true <;> simp [h_dupDj] at h_code)
+      try (by_cases h_notScope : msg.endsWith " not in scope" = true <;> simp [h_notScope] at h_code)
+      try (by_cases h_notVar : msg.endsWith " is not a variable" = true <;> simp [h_notVar] at h_code)
+      try (by_cases h_notCv : msg.endsWith " is not a constant or variable" = true <;> simp [h_notCv] at h_code)
+      try (by_cases h_unkStmt : msg.startsWith "unknown statement type " = true <;> simp [h_unkStmt] at h_code)
+      try (by_cases h_incCycle : msg.startsWith "include cycle detected: '" = true <;> simp [h_incCycle] at h_code)
+      try (by_cases h_emptyPath : msg.startsWith "extracted empty path from position " = true <;> simp [h_emptyPath] at h_code)
+      try (by_cases h_emptyNorm : msg.startsWith "extracted empty include path before normalization in " = true <;> simp [h_emptyNorm] at h_code)
+      try (by_cases h_becameEmpty : msg.startsWith "include path became empty after normalizing './' prefix " = true <;> simp [h_becameEmpty] at h_code)
+      try (by_cases h_readFail : msg.startsWith "failed to read include file '" = true <;> simp [h_readFail] at h_code)
+
+theorem decodeCore?_tokenNotVariable_implies_payload_endsWith
+    (msg : String) :
+    decodeCore? msg = some .tokenNotVariable →
+    msg.endsWith " is not a variable" = true := by
+  intro h_code
+  by_cases h_end : msg.endsWith " is not a variable" = true
+  · exact h_end
+  · exfalso
+    unfold decodeCore? decodePattern? at h_code
+    split at h_code <;> (try simp [h_end] at h_code)
+    case h_36 =>
+      try (by_cases h_dupSym : msg.startsWith "duplicate symbol/assert " = true <;> simp [h_dupSym] at h_code)
+      try (by_cases h_varFloat : (msg.startsWith "variable " = true ∧ msg.endsWith " already has $f hypothesis" = true) <;> simp [h_varFloat] at h_code)
+      try (by_cases h_badTy : msg.startsWith "bad typecode in substitution " = true <;> simp [h_badTy] at h_code)
+      try (by_cases h_invLabel : msg.startsWith "invalid label '" = true <;> simp [h_invLabel] at h_code)
+      try (by_cases h_invMath : msg.startsWith "invalid math string '" = true <;> simp [h_invMath] at h_code)
+      try (by_cases h_dupDj : msg.startsWith "duplicate disjoint variable " = true <;> simp [h_dupDj] at h_code)
+      try (by_cases h_notScope : msg.endsWith " not in scope" = true <;> simp [h_notScope] at h_code)
+      try (by_cases h_notVar : msg.endsWith " is not a variable" = true <;> simp [h_notVar] at h_code)
+      try (by_cases h_notCv : msg.endsWith " is not a constant or variable" = true <;> simp [h_notCv] at h_code)
+      try (by_cases h_unkStmt : msg.startsWith "unknown statement type " = true <;> simp [h_unkStmt] at h_code)
+      try (by_cases h_incCycle : msg.startsWith "include cycle detected: '" = true <;> simp [h_incCycle] at h_code)
+      try (by_cases h_emptyPath : msg.startsWith "extracted empty path from position " = true <;> simp [h_emptyPath] at h_code)
+      try (by_cases h_emptyNorm : msg.startsWith "extracted empty include path before normalization in " = true <;> simp [h_emptyNorm] at h_code)
+      try (by_cases h_becameEmpty : msg.startsWith "include path became empty after normalizing './' prefix " = true <;> simp [h_becameEmpty] at h_code)
+      try (by_cases h_readFail : msg.startsWith "failed to read include file '" = true <;> simp [h_readFail] at h_code)
+
+theorem decodeCore?_tokenNotConstantOrVariable_implies_payload_endsWith
+    (msg : String) :
+    decodeCore? msg = some .tokenNotConstantOrVariable →
+    msg.endsWith " is not a constant or variable" = true := by
+  intro h_code
+  by_cases h_end : msg.endsWith " is not a constant or variable" = true
+  · exact h_end
+  · exfalso
+    unfold decodeCore? decodePattern? at h_code
+    split at h_code <;> (try simp [h_end] at h_code)
+    case h_36 =>
+      try (by_cases h_dupSym : msg.startsWith "duplicate symbol/assert " = true <;> simp [h_dupSym] at h_code)
+      try (by_cases h_varFloat : (msg.startsWith "variable " = true ∧ msg.endsWith " already has $f hypothesis" = true) <;> simp [h_varFloat] at h_code)
+      try (by_cases h_badTy : msg.startsWith "bad typecode in substitution " = true <;> simp [h_badTy] at h_code)
+      try (by_cases h_invLabel : msg.startsWith "invalid label '" = true <;> simp [h_invLabel] at h_code)
+      try (by_cases h_invMath : msg.startsWith "invalid math string '" = true <;> simp [h_invMath] at h_code)
+      try (by_cases h_dupDj : msg.startsWith "duplicate disjoint variable " = true <;> simp [h_dupDj] at h_code)
+      try (by_cases h_notScope : msg.endsWith " not in scope" = true <;> simp [h_notScope] at h_code)
+      try (by_cases h_notVar : msg.endsWith " is not a variable" = true <;> simp [h_notVar] at h_code)
+      try (by_cases h_notCv : msg.endsWith " is not a constant or variable" = true <;> simp [h_notCv] at h_code)
+      try (by_cases h_unkStmt : msg.startsWith "unknown statement type " = true <;> simp [h_unkStmt] at h_code)
+      try (by_cases h_incCycle : msg.startsWith "include cycle detected: '" = true <;> simp [h_incCycle] at h_code)
+      try (by_cases h_emptyPath : msg.startsWith "extracted empty path from position " = true <;> simp [h_emptyPath] at h_code)
+      try (by_cases h_emptyNorm : msg.startsWith "extracted empty include path before normalization in " = true <;> simp [h_emptyNorm] at h_code)
+      try (by_cases h_becameEmpty : msg.startsWith "include path became empty after normalizing './' prefix " = true <;> simp [h_becameEmpty] at h_code)
+      try (by_cases h_readFail : msg.startsWith "failed to read include file '" = true <;> simp [h_readFail] at h_code)
+
+theorem decodeCore?_unknownStatementType_implies_payload_startsWith
+    (msg : String) :
+    decodeCore? msg = some .unknownStatementType →
+    msg.startsWith "unknown statement type " = true := by
+  intro h_code
+  by_cases h_start : msg.startsWith "unknown statement type " = true
+  · exact h_start
+  · exfalso
+    unfold decodeCore? decodePattern? at h_code
+    split at h_code <;> (try simp [h_start] at h_code)
+    case h_36 =>
+      try (by_cases h_dupSym : msg.startsWith "duplicate symbol/assert " = true <;> simp [h_dupSym] at h_code)
+      try (by_cases h_varFloat : (msg.startsWith "variable " = true ∧ msg.endsWith " already has $f hypothesis" = true) <;> simp [h_varFloat] at h_code)
+      try (by_cases h_badTy : msg.startsWith "bad typecode in substitution " = true <;> simp [h_badTy] at h_code)
+      try (by_cases h_invLabel : msg.startsWith "invalid label '" = true <;> simp [h_invLabel] at h_code)
+      try (by_cases h_invMath : msg.startsWith "invalid math string '" = true <;> simp [h_invMath] at h_code)
+      try (by_cases h_dupDj : msg.startsWith "duplicate disjoint variable " = true <;> simp [h_dupDj] at h_code)
+      try (by_cases h_notScope : msg.endsWith " not in scope" = true <;> simp [h_notScope] at h_code)
+      try (by_cases h_notVar : msg.endsWith " is not a variable" = true <;> simp [h_notVar] at h_code)
+      try (by_cases h_notCv : msg.endsWith " is not a constant or variable" = true <;> simp [h_notCv] at h_code)
+      try (by_cases h_unkStmt : msg.startsWith "unknown statement type " = true <;> simp [h_unkStmt] at h_code)
+      try (by_cases h_incCycle : msg.startsWith "include cycle detected: '" = true <;> simp [h_incCycle] at h_code)
+      try (by_cases h_emptyPath : msg.startsWith "extracted empty path from position " = true <;> simp [h_emptyPath] at h_code)
+      try (by_cases h_emptyNorm : msg.startsWith "extracted empty include path before normalization in " = true <;> simp [h_emptyNorm] at h_code)
+      try (by_cases h_becameEmpty : msg.startsWith "include path became empty after normalizing './' prefix " = true <;> simp [h_becameEmpty] at h_code)
+      try (by_cases h_readFail : msg.startsWith "failed to read include file '" = true <;> simp [h_readFail] at h_code)
+
+theorem decodeCore?_includeCycleDetected_implies_payload_startsWith
+    (msg : String) :
+    decodeCore? msg = some .includeCycleDetected →
+    msg.startsWith "include cycle detected: '" = true := by
+  intro h_code
+  by_cases h_start : msg.startsWith "include cycle detected: '" = true
+  · exact h_start
+  · exfalso
+    unfold decodeCore? decodePattern? at h_code
+    split at h_code <;> (try simp [h_start] at h_code)
+    case h_36 =>
+      try (by_cases h_dupSym : msg.startsWith "duplicate symbol/assert " = true <;> simp [h_dupSym] at h_code)
+      try (by_cases h_varFloat : (msg.startsWith "variable " = true ∧ msg.endsWith " already has $f hypothesis" = true) <;> simp [h_varFloat] at h_code)
+      try (by_cases h_badTy : msg.startsWith "bad typecode in substitution " = true <;> simp [h_badTy] at h_code)
+      try (by_cases h_invLabel : msg.startsWith "invalid label '" = true <;> simp [h_invLabel] at h_code)
+      try (by_cases h_invMath : msg.startsWith "invalid math string '" = true <;> simp [h_invMath] at h_code)
+      try (by_cases h_dupDj : msg.startsWith "duplicate disjoint variable " = true <;> simp [h_dupDj] at h_code)
+      try (by_cases h_notScope : msg.endsWith " not in scope" = true <;> simp [h_notScope] at h_code)
+      try (by_cases h_notVar : msg.endsWith " is not a variable" = true <;> simp [h_notVar] at h_code)
+      try (by_cases h_notCv : msg.endsWith " is not a constant or variable" = true <;> simp [h_notCv] at h_code)
+      try (by_cases h_unkStmt : msg.startsWith "unknown statement type " = true <;> simp [h_unkStmt] at h_code)
+      try (by_cases h_incCycle : msg.startsWith "include cycle detected: '" = true <;> simp [h_incCycle] at h_code)
+      try (by_cases h_emptyPath : msg.startsWith "extracted empty path from position " = true <;> simp [h_emptyPath] at h_code)
+      try (by_cases h_emptyNorm : msg.startsWith "extracted empty include path before normalization in " = true <;> simp [h_emptyNorm] at h_code)
+      try (by_cases h_becameEmpty : msg.startsWith "include path became empty after normalizing './' prefix " = true <;> simp [h_becameEmpty] at h_code)
+      try (by_cases h_readFail : msg.startsWith "failed to read include file '" = true <;> simp [h_readFail] at h_code)
+
+theorem decodeCore?_includeExtractedEmptyPath_implies_payload_startsWith
+    (msg : String) :
+    decodeCore? msg = some .includeExtractedEmptyPath →
+    msg.startsWith "extracted empty path from position " = true := by
+  intro h_code
+  by_cases h_start : msg.startsWith "extracted empty path from position " = true
+  · exact h_start
+  · exfalso
+    unfold decodeCore? decodePattern? at h_code
+    split at h_code <;> (try simp [h_start] at h_code)
+    case h_36 =>
+      try (by_cases h_dupSym : msg.startsWith "duplicate symbol/assert " = true <;> simp [h_dupSym] at h_code)
+      try (by_cases h_varFloat : (msg.startsWith "variable " = true ∧ msg.endsWith " already has $f hypothesis" = true) <;> simp [h_varFloat] at h_code)
+      try (by_cases h_badTy : msg.startsWith "bad typecode in substitution " = true <;> simp [h_badTy] at h_code)
+      try (by_cases h_invLabel : msg.startsWith "invalid label '" = true <;> simp [h_invLabel] at h_code)
+      try (by_cases h_invMath : msg.startsWith "invalid math string '" = true <;> simp [h_invMath] at h_code)
+      try (by_cases h_dupDj : msg.startsWith "duplicate disjoint variable " = true <;> simp [h_dupDj] at h_code)
+      try (by_cases h_notScope : msg.endsWith " not in scope" = true <;> simp [h_notScope] at h_code)
+      try (by_cases h_notVar : msg.endsWith " is not a variable" = true <;> simp [h_notVar] at h_code)
+      try (by_cases h_notCv : msg.endsWith " is not a constant or variable" = true <;> simp [h_notCv] at h_code)
+      try (by_cases h_unkStmt : msg.startsWith "unknown statement type " = true <;> simp [h_unkStmt] at h_code)
+      try (by_cases h_incCycle : msg.startsWith "include cycle detected: '" = true <;> simp [h_incCycle] at h_code)
+      try (by_cases h_emptyPath : msg.startsWith "extracted empty path from position " = true <;> simp [h_emptyPath] at h_code)
+      try (by_cases h_emptyNorm : msg.startsWith "extracted empty include path before normalization in " = true <;> simp [h_emptyNorm] at h_code)
+      try (by_cases h_becameEmpty : msg.startsWith "include path became empty after normalizing './' prefix " = true <;> simp [h_becameEmpty] at h_code)
+      try (by_cases h_readFail : msg.startsWith "failed to read include file '" = true <;> simp [h_readFail] at h_code)
+
+theorem decodeCore?_includeEmptyPathBeforeNormalization_implies_payload_startsWith
+    (msg : String) :
+    decodeCore? msg = some .includeEmptyPathBeforeNormalization →
+    msg.startsWith "extracted empty include path before normalization in " = true := by
+  intro h_code
+  by_cases h_start : msg.startsWith "extracted empty include path before normalization in " = true
+  · exact h_start
+  · exfalso
+    unfold decodeCore? decodePattern? at h_code
+    split at h_code <;> (try simp [h_start] at h_code)
+    case h_36 =>
+      try (by_cases h_dupSym : msg.startsWith "duplicate symbol/assert " = true <;> simp [h_dupSym] at h_code)
+      try (by_cases h_varFloat : (msg.startsWith "variable " = true ∧ msg.endsWith " already has $f hypothesis" = true) <;> simp [h_varFloat] at h_code)
+      try (by_cases h_badTy : msg.startsWith "bad typecode in substitution " = true <;> simp [h_badTy] at h_code)
+      try (by_cases h_invLabel : msg.startsWith "invalid label '" = true <;> simp [h_invLabel] at h_code)
+      try (by_cases h_invMath : msg.startsWith "invalid math string '" = true <;> simp [h_invMath] at h_code)
+      try (by_cases h_dupDj : msg.startsWith "duplicate disjoint variable " = true <;> simp [h_dupDj] at h_code)
+      try (by_cases h_notScope : msg.endsWith " not in scope" = true <;> simp [h_notScope] at h_code)
+      try (by_cases h_notVar : msg.endsWith " is not a variable" = true <;> simp [h_notVar] at h_code)
+      try (by_cases h_notCv : msg.endsWith " is not a constant or variable" = true <;> simp [h_notCv] at h_code)
+      try (by_cases h_unkStmt : msg.startsWith "unknown statement type " = true <;> simp [h_unkStmt] at h_code)
+      try (by_cases h_incCycle : msg.startsWith "include cycle detected: '" = true <;> simp [h_incCycle] at h_code)
+      try (by_cases h_emptyPath : msg.startsWith "extracted empty path from position " = true <;> simp [h_emptyPath] at h_code)
+      try (by_cases h_emptyNorm : msg.startsWith "extracted empty include path before normalization in " = true <;> simp [h_emptyNorm] at h_code)
+      try (by_cases h_becameEmpty : msg.startsWith "include path became empty after normalizing './' prefix " = true <;> simp [h_becameEmpty] at h_code)
+      try (by_cases h_readFail : msg.startsWith "failed to read include file '" = true <;> simp [h_readFail] at h_code)
+
+theorem decodeCore?_includePathEmptyAfterNormalization_implies_payload_startsWith
+    (msg : String) :
+    decodeCore? msg = some .includePathEmptyAfterNormalization →
+    msg.startsWith "include path became empty after normalizing './' prefix " = true := by
+  intro h_code
+  by_cases h_start : msg.startsWith "include path became empty after normalizing './' prefix " = true
+  · exact h_start
+  · exfalso
+    unfold decodeCore? decodePattern? at h_code
+    split at h_code <;> (try simp [h_start] at h_code)
+    case h_36 =>
+      try (by_cases h_dupSym : msg.startsWith "duplicate symbol/assert " = true <;> simp [h_dupSym] at h_code)
+      try (by_cases h_varFloat : (msg.startsWith "variable " = true ∧ msg.endsWith " already has $f hypothesis" = true) <;> simp [h_varFloat] at h_code)
+      try (by_cases h_badTy : msg.startsWith "bad typecode in substitution " = true <;> simp [h_badTy] at h_code)
+      try (by_cases h_invLabel : msg.startsWith "invalid label '" = true <;> simp [h_invLabel] at h_code)
+      try (by_cases h_invMath : msg.startsWith "invalid math string '" = true <;> simp [h_invMath] at h_code)
+      try (by_cases h_dupDj : msg.startsWith "duplicate disjoint variable " = true <;> simp [h_dupDj] at h_code)
+      try (by_cases h_notScope : msg.endsWith " not in scope" = true <;> simp [h_notScope] at h_code)
+      try (by_cases h_notVar : msg.endsWith " is not a variable" = true <;> simp [h_notVar] at h_code)
+      try (by_cases h_notCv : msg.endsWith " is not a constant or variable" = true <;> simp [h_notCv] at h_code)
+      try (by_cases h_unkStmt : msg.startsWith "unknown statement type " = true <;> simp [h_unkStmt] at h_code)
+      try (by_cases h_incCycle : msg.startsWith "include cycle detected: '" = true <;> simp [h_incCycle] at h_code)
+      try (by_cases h_emptyPath : msg.startsWith "extracted empty path from position " = true <;> simp [h_emptyPath] at h_code)
+      try (by_cases h_emptyNorm : msg.startsWith "extracted empty include path before normalization in " = true <;> simp [h_emptyNorm] at h_code)
+      try (by_cases h_becameEmpty : msg.startsWith "include path became empty after normalizing './' prefix " = true <;> simp [h_becameEmpty] at h_code)
+      try (by_cases h_readFail : msg.startsWith "failed to read include file '" = true <;> simp [h_readFail] at h_code)
+
+theorem decodeCore?_includeReadFailure_implies_payload_startsWith
+    (msg : String) :
+    decodeCore? msg = some .includeReadFailure →
+    msg.startsWith "failed to read include file '" = true := by
+  intro h_code
+  by_cases h_start : msg.startsWith "failed to read include file '" = true
+  · exact h_start
+  · exfalso
+    unfold decodeCore? decodePattern? at h_code
+    split at h_code <;> (try simp [h_start] at h_code)
+    case h_36 =>
+      try (by_cases h_dupSym : msg.startsWith "duplicate symbol/assert " = true <;> simp [h_dupSym] at h_code)
+      try (by_cases h_varFloat : (msg.startsWith "variable " = true ∧ msg.endsWith " already has $f hypothesis" = true) <;> simp [h_varFloat] at h_code)
+      try (by_cases h_badTy : msg.startsWith "bad typecode in substitution " = true <;> simp [h_badTy] at h_code)
+      try (by_cases h_invLabel : msg.startsWith "invalid label '" = true <;> simp [h_invLabel] at h_code)
+      try (by_cases h_invMath : msg.startsWith "invalid math string '" = true <;> simp [h_invMath] at h_code)
+      try (by_cases h_dupDj : msg.startsWith "duplicate disjoint variable " = true <;> simp [h_dupDj] at h_code)
+      try (by_cases h_notScope : msg.endsWith " not in scope" = true <;> simp [h_notScope] at h_code)
+      try (by_cases h_notVar : msg.endsWith " is not a variable" = true <;> simp [h_notVar] at h_code)
+      try (by_cases h_notCv : msg.endsWith " is not a constant or variable" = true <;> simp [h_notCv] at h_code)
+      try (by_cases h_unkStmt : msg.startsWith "unknown statement type " = true <;> simp [h_unkStmt] at h_code)
+      try (by_cases h_incCycle : msg.startsWith "include cycle detected: '" = true <;> simp [h_incCycle] at h_code)
+      try (by_cases h_emptyPath : msg.startsWith "extracted empty path from position " = true <;> simp [h_emptyPath] at h_code)
+      try (by_cases h_emptyNorm : msg.startsWith "extracted empty include path before normalization in " = true <;> simp [h_emptyNorm] at h_code)
+      try (by_cases h_becameEmpty : msg.startsWith "include path became empty after normalizing './' prefix " = true <;> simp [h_becameEmpty] at h_code)
+      try (by_cases h_readFail : msg.startsWith "failed to read include file '" = true <;> simp [h_readFail] at h_code)
+
+
+theorem ofMessage?_invalidLabel_payload_startsWith
+    (msg : String) :
+    ofMessage? msg = some .invalidLabel →
+    (payload msg).startsWith "invalid label '" = true := by
+  intro h_code
+  exact decodeCore?_invalidLabel_implies_payload_startsWith (payload msg)
+    (ofMessage?_payload_decode msg .invalidLabel h_code)
+
+theorem ofMessage?_duplicateDisjointVariable_payload_startsWith
+    (msg : String) :
+    ofMessage? msg = some .duplicateDisjointVariable →
+    (payload msg).startsWith "duplicate disjoint variable " = true := by
+  intro h_code
+  exact decodeCore?_duplicateDisjointVariable_implies_payload_startsWith (payload msg)
+    (ofMessage?_payload_decode msg .duplicateDisjointVariable h_code)
+
+theorem ofMessage?_tokenNotInScope_payload_endsWith
+    (msg : String) :
+    ofMessage? msg = some .tokenNotInScope →
+    (payload msg).endsWith " not in scope" = true := by
+  intro h_code
+  exact decodeCore?_tokenNotInScope_implies_payload_endsWith (payload msg)
+    (ofMessage?_payload_decode msg .tokenNotInScope h_code)
+
+def patternShape : ParseErrorCode → String → Prop
+  | .duplicateSymbolOrAssert, msg => msg.startsWith "duplicate symbol/assert " = true
+  | .variableAlreadyHasFloatHyp, msg =>
+      msg.startsWith "variable " = true ∧ msg.endsWith " already has $f hypothesis" = true
+  | .badTypecodeInSubstitution, msg => msg.startsWith "bad typecode in substitution " = true
+  | .invalidLabel, msg => msg.startsWith "invalid label '" = true
+  | .invalidMathString, msg => msg.startsWith "invalid math string '" = true
+  | .duplicateDisjointVariable, msg => msg.startsWith "duplicate disjoint variable " = true
+  | .tokenNotInScope, msg => msg.endsWith " not in scope" = true
+  | .tokenNotVariable, msg => msg.endsWith " is not a variable" = true
+  | .tokenNotConstantOrVariable, msg => msg.endsWith " is not a constant or variable" = true
+  | .unknownStatementType, msg => msg.startsWith "unknown statement type " = true
+  | .includeCycleDetected, msg => msg.startsWith "include cycle detected: '" = true
+  | .includeExtractedEmptyPath, msg => msg.startsWith "extracted empty path from position " = true
+  | .includeEmptyPathBeforeNormalization, msg =>
+      msg.startsWith "extracted empty include path before normalization in " = true
+  | .includePathEmptyAfterNormalization, msg =>
+      msg.startsWith "include path became empty after normalizing './' prefix " = true
+  | .includeReadFailure, msg => msg.startsWith "failed to read include file '" = true
+  | _, _ => False
+
+/-- Semantic message-shape contract for any parser error code.
+Pattern-coded constructors require prefix/suffix constraints;
+all remaining constructors require exact canonical payload text. -/
+def semanticShape (code : ParseErrorCode) (msg : String) : Prop :=
+  if hasPattern code then patternShape code msg else msg = code.message
+
+theorem decodeCore?_eq_message_of_not_hasPattern
+    (msg : String) (code : ParseErrorCode) :
+    hasPattern code = false →
+    decodeCore? msg = some code →
+    msg = code.message := by
+  intro h_not h_code
+  unfold decodeCore? at h_code
+  split at h_code <;> (try simp [message] at h_code)
+  all_goals
+    first
+    | cases h_code
+      rfl
+    | skip
+  case h_36 =>
+    have h_pat : hasPattern code = true := decodePattern?_hasPattern msg code h_code
+    simp [h_not] at h_pat
+
+/-- Per-code parser payload-shape contract.
+For all codes, this includes decoded-code consistency on the normalized payload.
+For wildcard-coded parser messages, this enforces concrete prefix/suffix shape;
+for all other codes, this enforces exact canonical payload text. -/
+def payloadShape (code : ParseErrorCode) (msg : String) : Prop :=
+  decodeCore? msg = some code ∧
+    semanticShape code msg
+
+theorem payloadShape_implies_semanticShape
+    (code : ParseErrorCode) (msg : String) :
+    payloadShape code msg → semanticShape code msg := by
+  intro h
+  exact h.2
+
+theorem ofMessage?_payloadShape
+    (msg : String) (code : ParseErrorCode) :
+    ofMessage? msg = some code →
+    payloadShape code (payload msg) := by
+  intro h_code
+  have h_payload : decodeCore? (payload msg) = some code :=
+    ofMessage?_payload_decode msg code h_code
+  refine ⟨h_payload, ?_⟩
+  by_cases h_pat : hasPattern code = true
+  · have h_shape : patternShape code (payload msg) := by
+      cases code <;> simp [hasPattern] at h_pat
+      case duplicateSymbolOrAssert =>
+        exact decodeCore?_duplicateSymbolOrAssert_implies_payload_startsWith (payload msg) h_payload
+      case variableAlreadyHasFloatHyp =>
+        exact decodeCore?_variableAlreadyHasFloatHyp_implies_payload_shape (payload msg) h_payload
+      case badTypecodeInSubstitution =>
+        exact decodeCore?_badTypecodeInSubstitution_implies_payload_startsWith (payload msg) h_payload
+      case invalidLabel =>
+        exact decodeCore?_invalidLabel_implies_payload_startsWith (payload msg) h_payload
+      case invalidMathString =>
+        exact decodeCore?_invalidMathString_implies_payload_startsWith (payload msg) h_payload
+      case duplicateDisjointVariable =>
+        exact decodeCore?_duplicateDisjointVariable_implies_payload_startsWith (payload msg) h_payload
+      case tokenNotInScope =>
+        exact decodeCore?_tokenNotInScope_implies_payload_endsWith (payload msg) h_payload
+      case tokenNotVariable =>
+        exact decodeCore?_tokenNotVariable_implies_payload_endsWith (payload msg) h_payload
+      case tokenNotConstantOrVariable =>
+        exact decodeCore?_tokenNotConstantOrVariable_implies_payload_endsWith (payload msg) h_payload
+      case unknownStatementType =>
+        exact decodeCore?_unknownStatementType_implies_payload_startsWith (payload msg) h_payload
+      case includeCycleDetected =>
+        exact decodeCore?_includeCycleDetected_implies_payload_startsWith (payload msg) h_payload
+      case includeExtractedEmptyPath =>
+        exact decodeCore?_includeExtractedEmptyPath_implies_payload_startsWith (payload msg) h_payload
+      case includeEmptyPathBeforeNormalization =>
+        exact decodeCore?_includeEmptyPathBeforeNormalization_implies_payload_startsWith (payload msg) h_payload
+      case includePathEmptyAfterNormalization =>
+        exact decodeCore?_includePathEmptyAfterNormalization_implies_payload_startsWith (payload msg) h_payload
+      case includeReadFailure =>
+        exact decodeCore?_includeReadFailure_implies_payload_startsWith (payload msg) h_payload
+    simpa [payloadShape, semanticShape, h_pat] using h_shape
+  · have h_not : hasPattern code = false := by
+      cases h_bool : hasPattern code <;> simp [h_bool] at h_pat ⊢
+    have h_exact : payload msg = code.message :=
+      decodeCore?_eq_message_of_not_hasPattern (payload msg) code h_not h_payload
+    simpa [payloadShape, semanticShape, h_not, h_exact]
+
+theorem ofMessage?_semanticShape
+    (msg : String) (code : ParseErrorCode) :
+    ofMessage? msg = some code →
+    semanticShape code (payload msg) := by
+  intro h_code
+  exact payloadShape_implies_semanticShape code (payload msg)
+    (ofMessage?_payloadShape msg code h_code)
+
+@[simp] theorem ofMessage?_message (code : ParseErrorCode) :
+    ofMessage? (message code) = some code := by
+  cases code <;> native_decide
+
+theorem ofMessage?_message_ne_unclosedDjvars
+    (code : ParseErrorCode) (h_code : code ≠ .unclosedDjvars) :
+    ofMessage? (message code) ≠ some .unclosedDjvars := by
+  intro h_eq
+  have h_msg : ofMessage? (message code) = some code := ofMessage?_message code
+  rw [h_msg] at h_eq
+  exact h_code (Option.some.inj h_eq)
+
+/-- Primary Metamath-spec clause associated to each parser error code. -/
+def specClause : ParseErrorCode → SpecClause
+  | .unclosedComment => .sec4_1_2_comments
+  | .nestedCommentDelimiter => .sec4_1_2_comments
+  | .includeCycleDetected => .sec4_1_2_includes
+  | .includeInInnerScope => .sec4_1_2_includes
+  | .includeInsideStatement => .sec4_1_2_includes
+  | .includeExtractedEmptyPath => .sec4_1_2_includes
+  | .includeEmptyPathBeforeNormalization => .sec4_1_2_includes
+  | .includePathEmptyAfterNormalization => .sec4_1_2_includes
+  | .includeReadFailure => .sec4_1_2_includes
+  | .invalidLabel => .sec4_2_1_labels
+  | .unclosedDjvars => .sec4_2_4_djvars
+  | .duplicateDisjointVariable => .sec4_2_4_djvars
+  | .tokenNotInScope => .sec4_2_4_djvars
+  | .tokenNotVariable => .sec4_2_4_djvars
+  | .constMustBeOutermost => .sec4_2_8_constOutermost
+  | .invalidMathString => .sec4_1_1_whitespace
+  | _ => .sec4_3_statementTermination
+
+/-- Option-valued compatibility wrapper (kept for existing callsites/tests). -/
+def specClause? (code : ParseErrorCode) : Option SpecClause :=
+  some (specClause code)
+
+@[simp] theorem specClause?_unclosedDjvars :
+    specClause? .unclosedDjvars = some .sec4_2_4_djvars := rfl
+
+end ParseErrorCode
+
 structure Interrupt where
   e : Error
   idx : Nat
@@ -397,6 +1299,13 @@ namespace DB
 def mkError (s : DB) (pos : Pos) (msg : String) : DB :=
   { s with error? := some ⟨.error pos msg, default⟩ }
 
+/-- Parser-specific error constructor with stable code-to-message mapping. -/
+def mkParseError (s : DB) (pos : Pos) (code : ParseErrorCode) : DB :=
+  s.mkError pos code.message
+
+@[simp] theorem mkParseError_eq_mkError (s : DB) (pos : Pos) (code : ParseErrorCode) :
+    s.mkParseError pos code = s.mkError pos code.message := rfl
+
 @[simp] theorem mkError_config (s : DB) (pos : Pos) (msg : String) :
     (s.mkError pos msg).config = s.config := rfl
 
@@ -405,6 +1314,324 @@ def mkError (s : DB) (pos : Pos) (msg : String) : DB :=
 
 @[simp] theorem mkError_error?_isSome (s : DB) (pos : Pos) (msg : String) :
     (s.mkError pos msg).error?.isSome = true := rfl
+
+@[simp] theorem mkParseError_config (s : DB) (pos : Pos) (code : ParseErrorCode) :
+    (s.mkParseError pos code).config = s.config := by
+  simp [mkParseError]
+
+@[simp] theorem mkParseError_error?_isSome (s : DB) (pos : Pos) (code : ParseErrorCode) :
+    (s.mkParseError pos code).error?.isSome = true := by
+  simp [mkParseError]
+
+/-- Decode parser error code (when present) from the DB interrupt payload. -/
+def parseErrorCode? (s : DB) : Option ParseErrorCode :=
+  match s.error? with
+  | some ⟨.error _ msg, _⟩ => ParseErrorCode.ofMessage? msg
+  | _ => none
+
+/-- Declarative parser-level violation witness for a decoded parser error code. -/
+def ParserSpecViolation (s : DB) (code : ParseErrorCode) : Prop :=
+  ∃ pos msg idx,
+    s.error? = some ⟨.error pos msg, idx⟩ ∧
+    ParseErrorCode.ofMessage? msg = some code
+
+/-- Parser-level witness lifted to a concrete Metamath-spec clause. -/
+def ParserSpecClauseViolation (s : DB) (clause : SpecClause) : Prop :=
+  ∃ code, s.parseErrorCode? = some code ∧ ParseErrorCode.specClause code = clause
+
+/-- Concrete parser violation for label syntax. -/
+def InvalidLabelViolation (s : DB) : Prop :=
+  ∃ (pos : Pos) (msg : String) (idx : Nat),
+    s.error? = some ⟨.error pos msg, idx⟩ ∧
+    ParseErrorCode.ofMessage? msg = some .invalidLabel ∧
+    (ParseErrorCode.payload msg).startsWith "invalid label '" = true
+
+/-- Concrete parser violation for duplicate `$d` symbols. -/
+def DuplicateDisjointVariableViolation (s : DB) : Prop :=
+  ∃ (pos : Pos) (msg : String) (idx : Nat),
+    s.error? = some ⟨.error pos msg, idx⟩ ∧
+    ParseErrorCode.ofMessage? msg = some .duplicateDisjointVariable ∧
+    (ParseErrorCode.payload msg).startsWith "duplicate disjoint variable " = true
+
+/-- Concrete parser violation for out-of-scope `$d` symbol use. -/
+def TokenNotInScopeViolation (s : DB) : Prop :=
+  ∃ (pos : Pos) (msg : String) (idx : Nat),
+    s.error? = some ⟨.error pos msg, idx⟩ ∧
+    ParseErrorCode.ofMessage? msg = some .tokenNotInScope ∧
+    (ParseErrorCode.payload msg).endsWith " not in scope" = true
+
+/-- Metamath book §4.2.1 predicate for label-token syntax violations. -/
+def Sec4_2_1_LabelSyntaxViolation (s : DB) : Prop :=
+  s.InvalidLabelViolation
+
+/-- Metamath book §4.2.4 predicate for duplicate `$d` variable entries. -/
+def Sec4_2_4_DjvarsDuplicateViolation (s : DB) : Prop :=
+  s.DuplicateDisjointVariableViolation
+
+/-- Metamath book §4.2.4 predicate for `$d` variable scope violations. -/
+def Sec4_2_4_DjvarsScopeViolation (s : DB) : Prop :=
+  s.TokenNotInScopeViolation
+
+/-- Code-indexed bundle for high-value parser-error shape evidence. -/
+def HighValueShapeViolation (s : DB) (code : ParseErrorCode) : Prop :=
+  match code with
+  | .invalidLabel => s.InvalidLabelViolation
+  | .duplicateDisjointVariable => s.DuplicateDisjointVariableViolation
+  | .tokenNotInScope => s.TokenNotInScopeViolation
+  | _ => True
+
+/-- All-code payload-shape witness carried by a concrete parser interrupt. -/
+def AllCodePayloadShapeViolation (s : DB) (code : ParseErrorCode) : Prop :=
+  ∃ pos msg idx,
+    s.error? = some ⟨.error pos msg, idx⟩ ∧
+    ParseErrorCode.ofMessage? msg = some code ∧
+    ParseErrorCode.payloadShape code (ParseErrorCode.payload msg)
+
+/-- All-code semantic witness carried by a concrete parser interrupt.
+This is the semantic projection of `AllCodePayloadShapeViolation`, retaining only
+the code-indexed message-shape contract. -/
+def AllCodeSemanticViolation (s : DB) (code : ParseErrorCode) : Prop :=
+  ∃ pos msg idx,
+    s.error? = some ⟨.error pos msg, idx⟩ ∧
+    ParseErrorCode.ofMessage? msg = some code ∧
+    ParseErrorCode.semanticShape code (ParseErrorCode.payload msg)
+
+/-- Clause-indexed all-code semantic violation predicate. -/
+def AllCodeClauseSemanticViolation (s : DB) (clause : SpecClause) : Prop :=
+  ∃ code, ParseErrorCode.specClause code = clause ∧ s.AllCodeSemanticViolation code
+
+/-- Canonical per-code rule-semantic predicate.
+This is the stable theorem-facing API for code-indexed parser semantics.
+Specific constructors can be strengthened over time without changing callers. -/
+def RuleSemanticViolation (s : DB) (code : ParseErrorCode) : Prop :=
+  match code with
+  | .invalidLabel => s.InvalidLabelViolation
+  | .duplicateDisjointVariable => s.DuplicateDisjointVariableViolation
+  | .tokenNotInScope => s.TokenNotInScopeViolation
+  | _ => s.AllCodeSemanticViolation code
+
+/-- Concrete parser violations emitted by `done`-mode closure checks at EOF. -/
+def DoneModeViolation (s : DB) (code : ParseErrorCode) : Prop :=
+  match code with
+  | .cantSaveEmptyStack => s.AllCodeSemanticViolation code
+  | .unclosedBlock => s.AllCodeSemanticViolation code
+  | .unclosedComment => s.AllCodeSemanticViolation code
+  | .unclosedConst => s.AllCodeSemanticViolation code
+  | .unclosedVar => s.AllCodeSemanticViolation code
+  | .unclosedDjvars => s.AllCodeSemanticViolation code
+  | .unclosedFloat => s.AllCodeSemanticViolation code
+  | .unclosedEss => s.AllCodeSemanticViolation code
+  | .unclosedAx => s.AllCodeSemanticViolation code
+  | .unclosedThm => s.AllCodeSemanticViolation code
+  | .unclosedProof => s.AllCodeSemanticViolation code
+  | _ => False
+
+/-- Rule semantic predicate paired with the code's mapped spec clause. -/
+def RuleClauseSemanticViolation (s : DB) (code : ParseErrorCode) : Prop :=
+  s.RuleSemanticViolation code ∧
+    s.ParserSpecClauseViolation (ParseErrorCode.specClause code)
+
+/-- Canonical parser semantic violation bundle:
+decoded error-code witness + mapped spec-clause witness + high-value shape evidence. -/
+def ParserSemanticViolation (s : DB) (code : ParseErrorCode) : Prop :=
+  s.ParserSpecViolation code ∧
+    s.ParserSpecClauseViolation (ParseErrorCode.specClause code) ∧
+      s.HighValueShapeViolation code ∧
+        s.AllCodePayloadShapeViolation code
+
+/-- Parser-level soundness: every decoded parse error code has a concrete error witness. -/
+theorem parseErrorCode?_sound (s : DB) (code : ParseErrorCode) :
+    s.parseErrorCode? = some code → s.ParserSpecViolation code := by
+  intro h_code
+  unfold DB.parseErrorCode? at h_code
+  cases h_err : s.error? with
+  | none =>
+      simp [h_err] at h_code
+  | some intr =>
+      cases intr with
+      | mk e idx =>
+          cases e with
+          | error pos msg =>
+              refine ⟨pos, msg, idx, ?_, ?_⟩
+              · simpa [h_err]
+              · simpa [h_err] using h_code
+          | ax pos l f fr =>
+              simp [h_err] at h_code
+          | thm pos l f fr =>
+              simp [h_err] at h_code
+
+/-- Parser-level clause soundness from decoded code + code-to-clause map. -/
+theorem parseErrorCode?_clause_sound
+    (s : DB) (code : ParseErrorCode) (clause : SpecClause) :
+    s.parseErrorCode? = some code →
+    ParseErrorCode.specClause code = clause →
+    s.ParserSpecClauseViolation clause := by
+  intro h_code h_clause
+  exact ⟨code, h_code, h_clause⟩
+
+/-- Parser-level clause soundness with the canonical clause chosen by the code. -/
+theorem parseErrorCode?_specClause_sound
+    (s : DB) (code : ParseErrorCode) :
+    s.parseErrorCode? = some code →
+    s.ParserSpecClauseViolation (ParseErrorCode.specClause code) := by
+  intro h_code
+  exact ⟨code, h_code, rfl⟩
+
+/-- Canonical parser-level semantic soundness:
+decoded code implies both concrete code witness and clause witness. -/
+theorem parseErrorCode?_semantic_sound
+    (s : DB) (code : ParseErrorCode) :
+    s.parseErrorCode? = some code →
+    s.ParserSemanticViolation code := by
+  intro h_code
+  obtain ⟨pos, msg, idx, h_err, h_decode⟩ := parseErrorCode?_sound s code h_code
+  refine ⟨
+    ⟨pos, msg, idx, h_err, h_decode⟩,
+    parseErrorCode?_specClause_sound s code h_code,
+    ?_,
+    ?_
+  ⟩
+  cases code <;> simp [DB.HighValueShapeViolation]
+  · exact ⟨pos, msg, idx, h_err, h_decode, ParseErrorCode.ofMessage?_invalidLabel_payload_startsWith msg h_decode⟩
+  · exact ⟨pos, msg, idx, h_err, h_decode, ParseErrorCode.ofMessage?_duplicateDisjointVariable_payload_startsWith msg h_decode⟩
+  · exact ⟨pos, msg, idx, h_err, h_decode, ParseErrorCode.ofMessage?_tokenNotInScope_payload_endsWith msg h_decode⟩
+  · exact ⟨pos, msg, idx, h_err, h_decode, ParseErrorCode.ofMessage?_payloadShape msg code h_decode⟩
+
+theorem parseErrorCode?_invalidLabel_violation
+    (s : DB) :
+    s.parseErrorCode? = some .invalidLabel →
+    s.InvalidLabelViolation := by
+  intro h_code
+  exact (parseErrorCode?_semantic_sound s .invalidLabel h_code).2.2.1
+
+theorem parseErrorCode?_duplicateDisjointVariable_violation
+    (s : DB) :
+    s.parseErrorCode? = some .duplicateDisjointVariable →
+    s.DuplicateDisjointVariableViolation := by
+  intro h_code
+  exact (parseErrorCode?_semantic_sound s .duplicateDisjointVariable h_code).2.2.1
+
+theorem parseErrorCode?_tokenNotInScope_violation
+    (s : DB) :
+    s.parseErrorCode? = some .tokenNotInScope →
+    s.TokenNotInScopeViolation := by
+  intro h_code
+  exact (parseErrorCode?_semantic_sound s .tokenNotInScope h_code).2.2.1
+
+/-- All-code payload-shape soundness:
+decoded parser code carries a normalized payload-shape witness for that code. -/
+theorem parseErrorCode?_allCodePayloadShape_sound
+    (s : DB) (code : ParseErrorCode) :
+    s.parseErrorCode? = some code →
+    s.AllCodePayloadShapeViolation code := by
+  intro h_code
+  exact (parseErrorCode?_semantic_sound s code h_code).2.2.2
+
+/-- Clause witness derivable directly from all-code payload-shape witness. -/
+theorem allCodePayloadShape_implies_specClauseViolation
+    (s : DB) (code : ParseErrorCode) :
+    s.AllCodePayloadShapeViolation code →
+    s.ParserSpecClauseViolation (ParseErrorCode.specClause code) := by
+  intro h_shape
+  rcases h_shape with ⟨pos, msg, idx, h_err, h_decode, _h_payload⟩
+  refine ⟨code, ?_, rfl⟩
+  unfold DB.parseErrorCode?
+  rw [h_err]
+  simpa [h_decode]
+
+/-- All-code semantic soundness:
+decoded parser code carries semantic payload-shape evidence for every constructor. -/
+theorem parseErrorCode?_allCodeSemantic_sound
+    (s : DB) (code : ParseErrorCode) :
+    s.parseErrorCode? = some code →
+    s.AllCodeSemanticViolation code := by
+  intro h_code
+  rcases parseErrorCode?_allCodePayloadShape_sound s code h_code with
+    ⟨pos, msg, idx, h_err, h_decode, h_payload_shape⟩
+  exact ⟨pos, msg, idx, h_err, h_decode,
+    ParseErrorCode.payloadShape_implies_semanticShape code (ParseErrorCode.payload msg)
+      h_payload_shape⟩
+
+/-- Lift any code-indexed semantic witness to the corresponding clause-indexed one. -/
+theorem allCodeSemantic_implies_clauseSemantic
+    (s : DB) (code : ParseErrorCode) :
+    s.AllCodeSemanticViolation code →
+    s.AllCodeClauseSemanticViolation (ParseErrorCode.specClause code) := by
+  intro h_sem
+  exact ⟨code, rfl, h_sem⟩
+
+/-- Clause-indexed semantic soundness for any decoded parser code. -/
+theorem parseErrorCode?_allCodeClauseSemantic_sound
+    (s : DB) (code : ParseErrorCode) :
+    s.parseErrorCode? = some code →
+    s.AllCodeClauseSemanticViolation (ParseErrorCode.specClause code) := by
+  intro h_code
+  exact allCodeSemantic_implies_clauseSemantic s code
+    (parseErrorCode?_allCodeSemantic_sound s code h_code)
+
+/-- Concrete parser-spec predicate:
+decoded-code clause witness paired with all-code payload-shape evidence. -/
+def ConcreteSpecPredicate (s : DB) (code : ParseErrorCode) : Prop :=
+  s.ParserSpecClauseViolation (ParseErrorCode.specClause code) ∧
+    s.AllCodePayloadShapeViolation code
+
+/-- Canonical all-code semantic clause predicate:
+decoded-code clause witness paired with semantic payload-shape evidence. -/
+def ConcreteSemanticClausePredicate (s : DB) (code : ParseErrorCode) : Prop :=
+  s.AllCodeClauseSemanticViolation (ParseErrorCode.specClause code) ∧
+    s.AllCodeSemanticViolation code
+
+/-- Canonical all-code packaging theorem from decoded parser code
+to concrete spec predicate (clause + payload-shape). -/
+theorem parseErrorCode?_concrete_spec_sound
+    (s : DB) (code : ParseErrorCode) :
+    s.parseErrorCode? = some code →
+    s.ConcreteSpecPredicate code := by
+  intro h_code
+  have h_shape : s.AllCodePayloadShapeViolation code :=
+    parseErrorCode?_allCodePayloadShape_sound s code h_code
+  exact ⟨allCodePayloadShape_implies_specClauseViolation s code h_shape, h_shape⟩
+
+/-- Canonical all-code semantic packaging theorem from decoded parser code
+to semantic clause predicate (clause + semantic payload-shape). -/
+theorem parseErrorCode?_concrete_semantic_clause_sound
+    (s : DB) (code : ParseErrorCode) :
+    s.parseErrorCode? = some code →
+    s.ConcreteSemanticClausePredicate code := by
+  intro h_code
+  have h_sem : s.AllCodeSemanticViolation code :=
+    parseErrorCode?_allCodeSemantic_sound s code h_code
+  exact ⟨allCodeSemantic_implies_clauseSemantic s code h_sem, h_sem⟩
+
+/-- Canonical parser rule-semantic soundness for any decoded code. -/
+theorem parseErrorCode?_ruleSemantic_sound
+    (s : DB) (code : ParseErrorCode) :
+    s.parseErrorCode? = some code →
+    s.RuleSemanticViolation code := by
+  intro h_code
+  by_cases h_invalid : code = .invalidLabel
+  · subst h_invalid
+    exact parseErrorCode?_invalidLabel_violation s h_code
+  by_cases h_dup : code = .duplicateDisjointVariable
+  · subst h_dup
+    exact parseErrorCode?_duplicateDisjointVariable_violation s h_code
+  by_cases h_scope : code = .tokenNotInScope
+  · subst h_scope
+    exact parseErrorCode?_tokenNotInScope_violation s h_code
+  have h_sem : s.AllCodeSemanticViolation code :=
+    parseErrorCode?_allCodeSemantic_sound s code h_code
+  simpa [DB.RuleSemanticViolation, h_invalid, h_dup, h_scope] using h_sem
+
+/-- Canonical parser rule+clause semantic soundness for any decoded code. -/
+theorem parseErrorCode?_ruleClauseSemantic_sound
+    (s : DB) (code : ParseErrorCode) :
+    s.parseErrorCode? = some code →
+    s.RuleClauseSemanticViolation code := by
+  intro h_code
+  exact ⟨
+    parseErrorCode?_ruleSemantic_sound s code h_code,
+    parseErrorCode?_specClause_sound s code h_code
+  ⟩
 
 def pushScope (s : DB) : DB :=
   { s with scopes := s.scopes.push s.frame.size }
@@ -428,6 +1655,17 @@ def isConst (db : DB) (tk : String) : Bool :=
 
 def isVar (db : DB) (tk : String) : Bool :=
   if let some (.var _) := db.find? tk then true else false
+
+/-- `$d` activity predicate: variable must already be active in current frame. -/
+def activeVarInScope (db : DB) (tk : String) : Bool :=
+  db.frame.hyps.toList.any fun lbl =>
+    match db.find? lbl with
+    | some (.hyp false prevF _) =>
+        prevF.size >= 2 &&
+          (match prevF[1]! with
+          | .var v' => v'
+          | _ => "") == tk
+    | _ => false
 
 def isSym (db : DB) (tk : String) : Bool :=
   match db.find? tk with
@@ -529,6 +1767,9 @@ def floatVarOccursInFrame (db : DB) (v : String) : Bool :=
           | _ => "") == v
     | _ => false
 
+@[simp] theorem activeVarInScope_eq_floatVarOccursInFrame (db : DB) (tk : String) :
+    db.activeVarInScope tk = db.floatVarOccursInFrame tk := rfl
+
 def hypOK? (db : DB) (label : String) : Bool :=
   match db.find? label with
   | some (.hyp ess f _) => if ess then f.hasConstHead else f.isFloatShape
@@ -576,6 +1817,20 @@ def frameFloatVars (db : DB) (fr : Frame) : List String :=
         else
           none
     | _ => none
+
+/-- For a frame attached to an assertion, every DV-pair variable must have an
+    active floating hypothesis in that frame. -/
+def frameDvVarsInFrame? (db : DB) (fr : Frame) : Bool :=
+  let fvars := db.frameFloatVars fr
+  fr.dj.toList.all fun p => decide (p.1 ∈ fvars ∧ p.2 ∈ fvars)
+
+/-- Global parser post-check: every stored assertion frame satisfies
+    `frameDvVarsInFrame?`. -/
+def assertDvVarsInFrame? (db : DB) : Bool :=
+  db.objects.toList.all fun kv =>
+    match kv.2 with
+    | .assert _ fr _ => db.frameDvVarsInFrame? fr
+    | _ => true
 
 /-- Check that formula symbols respect the frame's float variables.
 
@@ -1175,10 +2430,7 @@ termination_by arr.size - i
 
 def djvars_loop (arr : Array String) (s : ParserState) (pos : Pos) (tk : String) : ParserState :=
   if s.db.isVar tk then
-    if s.db.floatVarOccursInFrame tk then
-      djvars_loop_aux arr s pos tk 0
-    else
-      s.mkError pos s!"{tk} not in scope"
+    djvars_loop_aux arr s pos tk 0
   else
     s.mkError pos s!"{tk} is not a variable"
 
@@ -1187,9 +2439,7 @@ def djvars_loop (arr : Array String) (s : ParserState) (pos : Pos) (tk : String)
     (djvars_loop arr s pos tk).db.config = s.db.config := by
   unfold djvars_loop
   by_cases h_var : s.db.isVar tk
-  · by_cases h_float : s.db.floatVarOccursInFrame tk
-    · simp [h_var, h_float, djvars_loop_aux_db_config]
-    · simp [h_var, h_float, ParserState.mkError_db_config]
+  · simp [h_var, djvars_loop_aux_db_config]
   · simp [h_var, ParserState.mkError_db_config]
 
 def sym (s : ParserState) (pos : Pos) (tk : ByteSlice) (f : String → Object) : ParserState :=
@@ -1709,86 +2959,152 @@ def feedAll (s : ParserState) (base : Nat) (arr : ByteArray) : ParserState :=
 
 def done (s : ParserState) (base : Nat) : DB := Id.run do
   let mut s := s
+  if s.db.error then
+    return s.db
   if let .token pos tk := s.charp then
     s := s.feedToken pos tk.toSlice
+  if s.db.error then
+    return s.db
   let base := s.mkPos base
   let { db := db, tokp := tokp, ..} := s
   match tokp with
   | .start =>
     if db.scopes.size > 0 then
-      db.mkError base "unclosed block (missing $})"
+      db.mkParseError base .unclosedBlock
     else db
-  | .comment _ => db.mkError base "unclosed comment"
-  | .const => db.mkError base "unclosed $c"
-  | .var => db.mkError base "unclosed $v"
-  | .djvars _ => db.mkError base "unclosed $d"
+  | .comment _ => db.mkParseError base .unclosedComment
+  | .const => db.mkParseError base .unclosedConst
+  | .var => db.mkParseError base .unclosedVar
+  | .djvars _ => db.mkParseError base .unclosedDjvars
   | .math _ p => match p.k with
-    | .float => db.mkError base "unclosed $f"
-    | .ess => db.mkError base "unclosed $e"
-    | .ax => db.mkError base "unclosed $a"
-    | .thm => db.mkError base "unclosed $p"
-  | .label pos _ => db.mkError pos "not a command"
-  | .proof _ => db.mkError base "unclosed $p proof"
+    | .float => db.mkParseError base .unclosedFloat
+    | .ess => db.mkParseError base .unclosedEss
+    | .ax => db.mkParseError base .unclosedAx
+    | .thm => db.mkParseError base .unclosedThm
+  | .label pos _ => db.mkParseError pos .notACommand
+  | .proof _ => db.mkParseError base .unclosedProof
 
 /-- If parsing ends in `$d` mode at whitespace boundary, `done` reports unclosed `$d`. -/
 theorem done_error_if_djvars_ws
     (s : ParserState) (base : Nat) (vars : Array String)
     (h_charp : s.charp = .ws)
+    (h_no_err : s.db.error? = none)
     (h_tokp : s.tokp = .djvars vars) :
     (s.done base).error? ≠ none := by
-  simp [ParserState.done, h_charp, h_tokp, DB.mkError, Id.run]
+  simp [ParserState.done, h_charp, h_no_err, h_tokp, DB.mkParseError, DB.mkError, DB.error, Id.run]
 
 /-- If parsing ends in `$d` mode after flushing a pending token, `done` reports unclosed `$d`. -/
 theorem done_error_if_djvars_token
     (s : ParserState) (base : Nat) (pos : Nat) (tk : ByteSliceT) (vars : Array String)
     (h_charp : s.charp = .token pos tk)
+    (h_no_err : s.db.error? = none)
+    (h_feed_no_err : (s.feedToken pos tk.toSlice).db.error? = none)
     (h_tokp : (s.feedToken pos tk.toSlice).tokp = .djvars vars) :
     (s.done base).error? ≠ none := by
-  simp [ParserState.done, h_charp, h_tokp, DB.mkError, Id.run]
+  simp [ParserState.done, h_charp, h_no_err, h_feed_no_err, h_tokp, DB.mkParseError, DB.mkError, DB.error, Id.run]
+
+/-- If parsing ends in `$d` mode at whitespace boundary, `done` reports code `unclosedDjvars`. -/
+theorem done_errorCode_if_djvars_ws
+    (s : ParserState) (base : Nat) (vars : Array String)
+    (h_charp : s.charp = .ws)
+    (h_no_err : s.db.error? = none)
+    (h_tokp : s.tokp = .djvars vars) :
+    (s.done base).parseErrorCode? = some .unclosedDjvars := by
+  simp [ParserState.done, h_charp, h_no_err, h_tokp, DB.parseErrorCode?, DB.mkParseError, DB.mkError, DB.error, Id.run]
+  simpa using (ParseErrorCode.ofMessage?_message .unclosedDjvars)
+
+/-- If parsing ends in `$d` mode after flushing a pending token, code is `unclosedDjvars`. -/
+theorem done_errorCode_if_djvars_token
+    (s : ParserState) (base : Nat) (pos : Nat) (tk : ByteSliceT) (vars : Array String)
+    (h_charp : s.charp = .token pos tk)
+    (h_no_err : s.db.error? = none)
+    (h_feed_no_err : (s.feedToken pos tk.toSlice).db.error? = none)
+    (h_tokp : (s.feedToken pos tk.toSlice).tokp = .djvars vars) :
+    (s.done base).parseErrorCode? = some .unclosedDjvars := by
+  simp [ParserState.done, h_charp, h_no_err, h_feed_no_err, h_tokp, DB.parseErrorCode?, DB.mkParseError, DB.mkError, DB.error, Id.run]
+  simpa using (ParseErrorCode.ofMessage?_message .unclosedDjvars)
+
+/-- `done` preserves any existing parser error code (first parser error wins). -/
+theorem done_preserves_existing_parseErrorCode
+    (s : ParserState) (base : Nat) (code : ParseErrorCode)
+    (h_prev : s.db.parseErrorCode? = some code) :
+    (s.done base).parseErrorCode? = some code := by
+  obtain ⟨pos, msg, idx, h_err, _⟩ :=
+    (DB.parseErrorCode?_semantic_sound (s := s.db) (code := code) h_prev).1
+  have h_err_some : s.db.error?.isSome = true := by
+    simp [h_err]
+  have h_done : s.done base = s.db := by
+    unfold ParserState.done
+    simp [h_err_some, DB.error, Id.run, Pure.pure]
+  simpa [h_done] using h_prev
+
+/-- Parser-level soundness (ws branch): open `$d` at EOF yields `unclosedDjvars`
+under the no-prior-error contract. -/
+theorem done_unclosedDjvars_sound_ws
+    (s : ParserState) (base : Nat)
+    (h_charp : s.charp = .ws)
+    (h_no_err : s.db.error? = none)
+    (vars : Array String)
+    (h_tokp : s.tokp = .djvars vars) :
+    (s.done base).parseErrorCode? = some .unclosedDjvars := by
+  exact done_errorCode_if_djvars_ws s base vars h_charp h_no_err h_tokp
 
 @[simp] theorem done_config (s : ParserState) (base : Nat) :
     (s.done base).config = s.db.config := by
-  cases h_charp : s.charp with
-  | ws =>
-      cases h_tokp : s.tokp with
-      | start =>
-          by_cases h_scopes : s.db.scopes.size > 0 <;>
-            simp [ParserState.done, h_charp, h_tokp, h_scopes, DB.mkError_config, Id.run]
-      | comment p =>
-          simp [ParserState.done, h_charp, h_tokp, DB.mkError_config, Id.run]
-      | const =>
-          simp [ParserState.done, h_charp, h_tokp, DB.mkError_config, Id.run]
-      | var =>
-          simp [ParserState.done, h_charp, h_tokp, DB.mkError_config, Id.run]
-      | djvars arr =>
-          simp [ParserState.done, h_charp, h_tokp, DB.mkError_config, Id.run]
-      | math a p =>
-          cases h_k : p.k <;>
-            simp [ParserState.done, h_charp, h_tokp, h_k, DB.mkError_config, Id.run]
-      | label pos l =>
-          simp [ParserState.done, h_charp, h_tokp, DB.mkError_config, Id.run]
-      | proof pr =>
-          simp [ParserState.done, h_charp, h_tokp, DB.mkError_config, Id.run]
-  | token pos tk =>
-      cases h_tokp : (s.feedToken pos tk.toSlice).tokp with
-      | start =>
-          by_cases h_scopes : (s.feedToken pos tk.toSlice).db.scopes.size > 0 <;>
-            simp [ParserState.done, h_charp, h_tokp, h_scopes, ParserState.feedToken_db_config, DB.mkError_config, Id.run]
-      | comment p =>
-          simp [ParserState.done, h_charp, h_tokp, ParserState.feedToken_db_config, DB.mkError_config, Id.run]
-      | const =>
-          simp [ParserState.done, h_charp, h_tokp, ParserState.feedToken_db_config, DB.mkError_config, Id.run]
-      | var =>
-          simp [ParserState.done, h_charp, h_tokp, ParserState.feedToken_db_config, DB.mkError_config, Id.run]
-      | djvars arr =>
-          simp [ParserState.done, h_charp, h_tokp, ParserState.feedToken_db_config, DB.mkError_config, Id.run]
-      | math a p =>
-          cases h_k : p.k <;>
-            simp [ParserState.done, h_charp, h_tokp, h_k, ParserState.feedToken_db_config, DB.mkError_config, Id.run]
-      | label pos l =>
-          simp [ParserState.done, h_charp, h_tokp, ParserState.feedToken_db_config, DB.mkError_config, Id.run]
-      | proof pr =>
-          simp [ParserState.done, h_charp, h_tokp, ParserState.feedToken_db_config, DB.mkError_config, Id.run]
+  by_cases h_err0 : s.db.error?.isSome = true
+  · unfold ParserState.done
+    simp [h_err0, DB.error, Bind.bind, Id.run, Pure.pure]
+  · cases h_charp : s.charp with
+    | ws =>
+        unfold ParserState.done
+        simp [h_err0, h_charp, DB.error, Bind.bind, Id.run, Pure.pure]
+        cases h_tokp : s.tokp with
+        | start =>
+            by_cases h_scope : 0 < s.db.scopes.size
+            · simp [h_tokp, h_scope, DB.mkError_config]
+            · simp [h_tokp, h_scope]
+        | comment _ =>
+            simp [h_tokp, DB.mkError_config]
+        | const =>
+            simp [h_tokp, DB.mkError_config]
+        | var =>
+            simp [h_tokp, DB.mkError_config]
+        | djvars _ =>
+            simp [h_tokp, DB.mkError_config]
+        | math _ p =>
+            cases h_k : p.k <;> simp [h_tokp, h_k, DB.mkError_config]
+        | label _ _ =>
+            simp [h_tokp, DB.mkError_config]
+        | proof _ =>
+            simp [h_tokp, DB.mkError_config]
+    | token pos tk =>
+        by_cases h_err1 : (s.feedToken pos tk.toSlice).db.error?.isSome = true
+        · unfold ParserState.done
+          simp [h_err0, h_charp, h_err1, DB.error, Bind.bind, Id.run, Pure.pure,
+            ParserState.feedToken_db_config]
+        · unfold ParserState.done
+          simp [h_err0, h_charp, h_err1, DB.error, Bind.bind, Id.run, Pure.pure,
+            ParserState.feedToken_db_config]
+          cases h_tokp : (s.feedToken pos tk.toSlice).tokp with
+          | start =>
+              by_cases h_scope : 0 < (s.feedToken pos tk.toSlice).db.scopes.size
+              · simp [h_tokp, h_scope, DB.mkError_config, ParserState.feedToken_db_config]
+              · simp [h_tokp, h_scope, ParserState.feedToken_db_config]
+          | comment _ =>
+              simp [h_tokp, DB.mkError_config, ParserState.feedToken_db_config]
+          | const =>
+              simp [h_tokp, DB.mkError_config, ParserState.feedToken_db_config]
+          | var =>
+              simp [h_tokp, DB.mkError_config, ParserState.feedToken_db_config]
+          | djvars _ =>
+              simp [h_tokp, DB.mkError_config, ParserState.feedToken_db_config]
+          | math _ p =>
+              cases h_k : p.k <;>
+                simp [h_tokp, h_k, DB.mkError_config, ParserState.feedToken_db_config]
+          | label _ _ =>
+              simp [h_tokp, DB.mkError_config, ParserState.feedToken_db_config]
+          | proof _ =>
+              simp [h_tokp, DB.mkError_config, ParserState.feedToken_db_config]
 
 end ParserState
 
@@ -1817,12 +3133,54 @@ def checkBytes (arr : ByteArray) (config : ModeConfig := {}) : DB :=
   if db.error? = none then
     -- When allowDuplicateFloat is true, skip wellFormed? check since duplicate $f
     -- would cause wellFormed? to fail (but is intentionally allowed)
-    if db.config.allowDuplicateFloat || db.wellFormed? then
+    if (db.config.allowDuplicateFloat || db.wellFormed?) && db.assertDvVarsInFrame? then
       db
     else
       db.mkError ⟨0, 0⟩ "internal error: ill-formed database after parse"
   else
     db
+
+/-- Non-overwrite bridge inside `checkBytesCore`:
+if `feedAll` has already produced a decoded parse error code, `done` preserves it. -/
+theorem checkBytesCore_preserves_feedAll_parseErrorCode
+    (arr : ByteArray) (config : ModeConfig) (code : ParseErrorCode)
+    (h_code :
+      (({ (default : ParserState) with db := { (default : DB) with config := config } }).feedAll 0 arr).db.parseErrorCode? = some code) :
+    (checkBytesCore arr config).parseErrorCode? = some code := by
+  unfold checkBytesCore
+  let initialDB : DB := { (default : DB) with config := config }
+  let initialState : ParserState := { (default : ParserState) with db := initialDB }
+  have h_done :
+      ((initialState.feedAll 0 arr).done arr.size).parseErrorCode? = some code := by
+    exact ParserState.done_preserves_existing_parseErrorCode
+      (s := initialState.feedAll 0 arr) (base := arr.size) (code := code)
+      (by simpa [initialState, initialDB] using h_code)
+  simpa [initialState, initialDB] using h_done
+
+/-- Non-overwrite bridge from parser core to final `checkBytes` result:
+if core parser already has a decoded parse error code, the post-check gate keeps it. -/
+theorem checkBytes_preserves_checkBytesCore_parseErrorCode
+    (arr : ByteArray) (config : ModeConfig) (code : ParseErrorCode)
+    (h_code : (checkBytesCore arr config).parseErrorCode? = some code) :
+    (checkBytes arr config).parseErrorCode? = some code := by
+  unfold checkBytes
+  by_cases h_none : (checkBytesCore arr config).error? = none
+  · exfalso
+    rcases (DB.parseErrorCode?_semantic_sound (s := checkBytesCore arr config) code h_code).1 with
+      ⟨pos, msg, idx, h_err, _⟩
+    simp [h_err] at h_none
+  · simp [h_none, h_code]
+
+/-- End-to-end non-overwrite theorem:
+if the feed stage has already produced a decoded parse error code, the full
+`checkBytes` pipeline preserves exactly that code. -/
+theorem checkBytes_preserves_feedAll_parseErrorCode
+    (arr : ByteArray) (config : ModeConfig) (code : ParseErrorCode)
+    (h_code :
+      (({ (default : ParserState) with db := { (default : DB) with config := config } }).feedAll 0 arr).db.parseErrorCode? = some code) :
+    (checkBytes arr config).parseErrorCode? = some code := by
+  exact checkBytes_preserves_checkBytesCore_parseErrorCode arr config code
+    (checkBytesCore_preserves_feedAll_parseErrorCode arr config code h_code)
 
 theorem checkBytes_no_error_wellFormed?
     (arr : ByteArray) (config : ModeConfig := {}) :
@@ -1841,16 +3199,386 @@ theorem checkBytes_no_error_wellFormed?
   · simp only [h_err, ↓reduceIte] at h_ok ⊢
     by_cases h_wf : (checkBytesCore arr config).wellFormed? = true
     · -- When wellFormed? = true, the condition is true and we return db unchanged
-      simp only [h_wf, Bool.or_true, ↓reduceIte]
+      have h_assert : (checkBytesCore arr config).assertDvVarsInFrame? = true := by
+        by_cases h_a : (checkBytesCore arr config).assertDvVarsInFrame? = true
+        · exact h_a
+        · simp [h_wf, h_a, DB.mkError] at h_ok
+      simp only [h_wf, Bool.or_true, h_assert, Bool.true_and, ↓reduceIte]
     · -- wellFormed? = false when not allowing dup sets error, contradicting h_ok
-      have h_cond : ((checkBytesCore arr config).config.allowDuplicateFloat || (checkBytesCore arr config).wellFormed?) = false := by
+      have h_cond :
+          (((checkBytesCore arr config).config.allowDuplicateFloat ||
+              (checkBytesCore arr config).wellFormed?) &&
+            (checkBytesCore arr config).assertDvVarsInFrame?) = false := by
         cases h : (checkBytesCore arr config).wellFormed? with
         | true => exact (h_wf h).elim
-        | false => simp only [h_dup, Bool.false_or]
+        | false => simp only [h_dup, Bool.false_or, Bool.false_and]
       simp only [h_cond, Bool.false_eq_true, ↓reduceIte, DB.mkError] at h_ok
       -- h_ok : some _ = none, which is a contradiction
       cases h_ok
   · simp [h_err] at h_ok
+
+theorem checkBytes_no_error_assertDvVarsInFrame?
+    (arr : ByteArray) (config : ModeConfig := {}) :
+    (checkBytes arr config).error? = none →
+    (checkBytes arr config).assertDvVarsInFrame? = true := by
+  intro h_ok
+  by_cases h_err : (checkBytesCore arr config).error? = none
+  · simp [checkBytes, h_err] at h_ok ⊢
+    by_cases h_assert : (checkBytesCore arr config).assertDvVarsInFrame? = true
+    · by_cases h_gate : config.allowDuplicateFloat = true ∨ (checkBytesCore arr config).wellFormed? = true
+      · simp [h_gate, h_assert]
+      · have h_mk :
+            ((checkBytesCore arr config).mkError ⟨0, 0⟩
+              "internal error: ill-formed database after parse").assertDvVarsInFrame? =
+              (checkBytesCore arr config).assertDvVarsInFrame? := by
+            rfl
+        have h_cond_false :
+            ((config.allowDuplicateFloat = true ∨ (checkBytesCore arr config).wellFormed? = true) ∧
+              (checkBytesCore arr config).assertDvVarsInFrame? = true) = false := by
+          simp [h_gate, h_assert]
+        have h_mk_true :
+            ((checkBytesCore arr config).mkError ⟨0, 0⟩
+              "internal error: ill-formed database after parse").assertDvVarsInFrame? = true := by
+          simpa [h_mk] using h_assert
+        simpa [h_cond_false] using h_mk_true
+    · simp [h_assert, DB.mkError] at h_ok
+  · simp [checkBytes, h_err] at h_ok
+
+/-- Canonical parser-entry semantic soundness:
+`checkBytes` decoded code implies bundled semantic violation witness. -/
+theorem checkBytes_parseErrorCode?_semantic_sound
+    (arr : ByteArray) (config : ModeConfig) (code : ParseErrorCode) :
+    (checkBytes arr config).parseErrorCode? = some code →
+    (checkBytes arr config).ParserSemanticViolation code := by
+  intro h_code
+  exact DB.parseErrorCode?_semantic_sound (s := checkBytes arr config) code h_code
+
+/-- Parser-level soundness at the byte-stream entrypoint. -/
+theorem checkBytes_parseErrorCode?_sound
+    (arr : ByteArray) (config : ModeConfig) (code : ParseErrorCode) :
+    (checkBytes arr config).parseErrorCode? = some code →
+    (checkBytes arr config).ParserSpecViolation code := by
+  intro h_code
+  exact (checkBytes_parseErrorCode?_semantic_sound arr config code h_code).1
+
+/-- `checkBytes` clause-level soundness from decoded code + code-to-clause mapping. -/
+theorem checkBytes_parseErrorCode?_clause_sound
+    (arr : ByteArray) (config : ModeConfig)
+    (code : ParseErrorCode) (clause : SpecClause) :
+    (checkBytes arr config).parseErrorCode? = some code →
+    ParseErrorCode.specClause code = clause →
+    (checkBytes arr config).ParserSpecClauseViolation clause := by
+  intro h_code h_clause
+  rcases (checkBytes_parseErrorCode?_semantic_sound arr config code h_code).2.1 with ⟨code', h_code', h_clause'⟩
+  exact ⟨code', h_code', h_clause'.trans h_clause⟩
+
+/-- `checkBytes` clause soundness using the canonical clause attached to the code. -/
+theorem checkBytes_parseErrorCode?_specClause_sound
+    (arr : ByteArray) (config : ModeConfig) (code : ParseErrorCode) :
+    (checkBytes arr config).parseErrorCode? = some code →
+    (checkBytes arr config).ParserSpecClauseViolation (ParseErrorCode.specClause code) := by
+  intro h_code
+  exact (checkBytes_parseErrorCode?_semantic_sound arr config code h_code).2.1
+
+/-- `checkBytes` all-code payload-shape soundness:
+decoded parser code carries normalized payload-shape evidence for every constructor. -/
+theorem checkBytes_parseErrorCode?_allCodePayloadShape_sound
+    (arr : ByteArray) (config : ModeConfig) (code : ParseErrorCode) :
+    (checkBytes arr config).parseErrorCode? = some code →
+    (checkBytes arr config).AllCodePayloadShapeViolation code := by
+  intro h_code
+  exact (checkBytes_parseErrorCode?_semantic_sound arr config code h_code).2.2.2
+
+/-- `checkBytes` all-code semantic payload-shape soundness:
+decoded parser code carries semantic message-shape evidence for every constructor. -/
+theorem checkBytes_parseErrorCode?_allCodeSemantic_sound
+    (arr : ByteArray) (config : ModeConfig) (code : ParseErrorCode) :
+    (checkBytes arr config).parseErrorCode? = some code →
+    (checkBytes arr config).AllCodeSemanticViolation code := by
+  intro h_code
+  exact DB.parseErrorCode?_allCodeSemantic_sound (s := checkBytes arr config) code h_code
+
+theorem checkBytes_allCodePayloadShape_implies_specClauseViolation
+    (arr : ByteArray) (config : ModeConfig) (code : ParseErrorCode) :
+    (checkBytes arr config).AllCodePayloadShapeViolation code →
+    (checkBytes arr config).ParserSpecClauseViolation (ParseErrorCode.specClause code) := by
+  intro h_shape
+  exact DB.allCodePayloadShape_implies_specClauseViolation (s := checkBytes arr config) code h_shape
+
+/-- `checkBytes` all-code clause-semantic soundness:
+decoded parser code yields semantic witness for the code's mapped clause. -/
+theorem checkBytes_parseErrorCode?_allCodeClauseSemantic_sound
+    (arr : ByteArray) (config : ModeConfig) (code : ParseErrorCode) :
+    (checkBytes arr config).parseErrorCode? = some code →
+    (checkBytes arr config).AllCodeClauseSemanticViolation (ParseErrorCode.specClause code) := by
+  intro h_code
+  exact DB.parseErrorCode?_allCodeClauseSemantic_sound (s := checkBytes arr config) code h_code
+
+/-- Canonical all-code parser-entry packaging theorem:
+decoded code yields concrete spec predicate (clause + payload-shape) for all constructors. -/
+theorem checkBytes_parseErrorCode?_concrete_spec_sound
+    (arr : ByteArray) (config : ModeConfig) (code : ParseErrorCode) :
+    (checkBytes arr config).parseErrorCode? = some code →
+    (checkBytes arr config).ConcreteSpecPredicate code := by
+  intro h_code
+  exact DB.parseErrorCode?_concrete_spec_sound (s := checkBytes arr config) code h_code
+
+/-- Canonical all-code parser-entry semantic packaging theorem:
+decoded code yields concrete semantic clause predicate for all constructors. -/
+theorem checkBytes_parseErrorCode?_concrete_semantic_clause_sound
+    (arr : ByteArray) (config : ModeConfig) (code : ParseErrorCode) :
+    (checkBytes arr config).parseErrorCode? = some code →
+    (checkBytes arr config).ConcreteSemanticClausePredicate code := by
+  intro h_code
+  exact DB.parseErrorCode?_concrete_semantic_clause_sound
+    (s := checkBytes arr config) code h_code
+
+/-- Canonical parser-entry rule-semantic soundness for any decoded code. -/
+theorem checkBytes_parseErrorCode?_ruleSemantic_sound
+    (arr : ByteArray) (config : ModeConfig) (code : ParseErrorCode) :
+    (checkBytes arr config).parseErrorCode? = some code →
+    (checkBytes arr config).RuleSemanticViolation code := by
+  intro h_code
+  exact DB.parseErrorCode?_ruleSemantic_sound (s := checkBytes arr config) code h_code
+
+/-- Canonical parser-entry rule+clause semantic soundness for any decoded code. -/
+theorem checkBytes_parseErrorCode?_ruleClauseSemantic_sound
+    (arr : ByteArray) (config : ModeConfig) (code : ParseErrorCode) :
+    (checkBytes arr config).parseErrorCode? = some code →
+    (checkBytes arr config).RuleClauseSemanticViolation code := by
+  intro h_code
+  exact DB.parseErrorCode?_ruleClauseSemantic_sound
+    (s := checkBytes arr config) code h_code
+
+theorem checkBytes_parseErrorCode?_invalidLabel_violation
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .invalidLabel →
+    (checkBytes arr config).InvalidLabelViolation := by
+  intro h_code
+  exact (checkBytes_parseErrorCode?_semantic_sound arr config .invalidLabel h_code).2.2.1
+
+theorem checkBytes_parseErrorCode?_duplicateDisjointVariable_violation
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .duplicateDisjointVariable →
+    (checkBytes arr config).DuplicateDisjointVariableViolation := by
+  intro h_code
+  exact (checkBytes_parseErrorCode?_semantic_sound arr config .duplicateDisjointVariable h_code).2.2.1
+
+theorem checkBytes_parseErrorCode?_tokenNotInScope_violation
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .tokenNotInScope →
+    (checkBytes arr config).TokenNotInScopeViolation := by
+  intro h_code
+  exact (checkBytes_parseErrorCode?_semantic_sound arr config .tokenNotInScope h_code).2.2.1
+
+theorem checkBytes_parseErrorCode?_cantSaveEmptyStack_violation
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .cantSaveEmptyStack →
+    (checkBytes arr config).DoneModeViolation .cantSaveEmptyStack := by
+  intro h_code
+  have h_rule := checkBytes_parseErrorCode?_ruleSemantic_sound arr config .cantSaveEmptyStack h_code
+  simpa [DB.RuleSemanticViolation, DB.DoneModeViolation] using h_rule
+
+theorem checkBytes_parseErrorCode?_unclosedBlock_violation
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .unclosedBlock →
+    (checkBytes arr config).DoneModeViolation .unclosedBlock := by
+  intro h_code
+  have h_rule := checkBytes_parseErrorCode?_ruleSemantic_sound arr config .unclosedBlock h_code
+  simpa [DB.RuleSemanticViolation, DB.DoneModeViolation] using h_rule
+
+theorem checkBytes_parseErrorCode?_unclosedComment_violation
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .unclosedComment →
+    (checkBytes arr config).DoneModeViolation .unclosedComment := by
+  intro h_code
+  have h_rule := checkBytes_parseErrorCode?_ruleSemantic_sound arr config .unclosedComment h_code
+  simpa [DB.RuleSemanticViolation, DB.DoneModeViolation] using h_rule
+
+theorem checkBytes_parseErrorCode?_unclosedConst_violation
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .unclosedConst →
+    (checkBytes arr config).DoneModeViolation .unclosedConst := by
+  intro h_code
+  have h_rule := checkBytes_parseErrorCode?_ruleSemantic_sound arr config .unclosedConst h_code
+  simpa [DB.RuleSemanticViolation, DB.DoneModeViolation] using h_rule
+
+theorem checkBytes_parseErrorCode?_unclosedVar_violation
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .unclosedVar →
+    (checkBytes arr config).DoneModeViolation .unclosedVar := by
+  intro h_code
+  have h_rule := checkBytes_parseErrorCode?_ruleSemantic_sound arr config .unclosedVar h_code
+  simpa [DB.RuleSemanticViolation, DB.DoneModeViolation] using h_rule
+
+theorem checkBytes_parseErrorCode?_unclosedDjvars_violation
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .unclosedDjvars →
+    (checkBytes arr config).DoneModeViolation .unclosedDjvars := by
+  intro h_code
+  have h_rule := checkBytes_parseErrorCode?_ruleSemantic_sound arr config .unclosedDjvars h_code
+  simpa [DB.RuleSemanticViolation, DB.DoneModeViolation] using h_rule
+
+theorem checkBytes_parseErrorCode?_unclosedFloat_violation
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .unclosedFloat →
+    (checkBytes arr config).DoneModeViolation .unclosedFloat := by
+  intro h_code
+  have h_rule := checkBytes_parseErrorCode?_ruleSemantic_sound arr config .unclosedFloat h_code
+  simpa [DB.RuleSemanticViolation, DB.DoneModeViolation] using h_rule
+
+theorem checkBytes_parseErrorCode?_unclosedEss_violation
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .unclosedEss →
+    (checkBytes arr config).DoneModeViolation .unclosedEss := by
+  intro h_code
+  have h_rule := checkBytes_parseErrorCode?_ruleSemantic_sound arr config .unclosedEss h_code
+  simpa [DB.RuleSemanticViolation, DB.DoneModeViolation] using h_rule
+
+theorem checkBytes_parseErrorCode?_unclosedAx_violation
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .unclosedAx →
+    (checkBytes arr config).DoneModeViolation .unclosedAx := by
+  intro h_code
+  have h_rule := checkBytes_parseErrorCode?_ruleSemantic_sound arr config .unclosedAx h_code
+  simpa [DB.RuleSemanticViolation, DB.DoneModeViolation] using h_rule
+
+theorem checkBytes_parseErrorCode?_unclosedThm_violation
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .unclosedThm →
+    (checkBytes arr config).DoneModeViolation .unclosedThm := by
+  intro h_code
+  have h_rule := checkBytes_parseErrorCode?_ruleSemantic_sound arr config .unclosedThm h_code
+  simpa [DB.RuleSemanticViolation, DB.DoneModeViolation] using h_rule
+
+theorem checkBytes_parseErrorCode?_unclosedProof_violation
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .unclosedProof →
+    (checkBytes arr config).DoneModeViolation .unclosedProof := by
+  intro h_code
+  have h_rule := checkBytes_parseErrorCode?_ruleSemantic_sound arr config .unclosedProof h_code
+  simpa [DB.RuleSemanticViolation, DB.DoneModeViolation] using h_rule
+
+section HighValueParseErrorClauseLinks
+
+theorem parseErrorCode_specClause_invalidLabel :
+    ParseErrorCode.specClause .invalidLabel = .sec4_2_1_labels := rfl
+
+theorem parseErrorCode_specClause_duplicateDisjointVariable :
+    ParseErrorCode.specClause .duplicateDisjointVariable = .sec4_2_4_djvars := rfl
+
+theorem parseErrorCode_specClause_tokenNotInScope :
+    ParseErrorCode.specClause .tokenNotInScope = .sec4_2_4_djvars := rfl
+
+end HighValueParseErrorClauseLinks
+
+section HighValueClausePredicates
+
+theorem invalidLabel_violation_implies_sec4_2_1
+    (s : DB) :
+    s.InvalidLabelViolation →
+    s.Sec4_2_1_LabelSyntaxViolation := by
+  intro h
+  simpa [DB.Sec4_2_1_LabelSyntaxViolation] using h
+
+theorem duplicateDisjointVariable_violation_implies_sec4_2_4_duplicate
+    (s : DB) :
+    s.DuplicateDisjointVariableViolation →
+    s.Sec4_2_4_DjvarsDuplicateViolation := by
+  intro h
+  simpa [DB.Sec4_2_4_DjvarsDuplicateViolation] using h
+
+theorem tokenNotInScope_violation_implies_sec4_2_4_scope
+    (s : DB) :
+    s.TokenNotInScopeViolation →
+    s.Sec4_2_4_DjvarsScopeViolation := by
+  intro h
+  simpa [DB.Sec4_2_4_DjvarsScopeViolation] using h
+
+theorem checkBytes_invalidLabel_implies_sec4_2_1
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .invalidLabel →
+    (checkBytes arr config).Sec4_2_1_LabelSyntaxViolation := by
+  intro h_code
+  exact invalidLabel_violation_implies_sec4_2_1 (s := checkBytes arr config)
+    (checkBytes_parseErrorCode?_invalidLabel_violation arr config h_code)
+
+theorem checkBytes_duplicateDisjointVariable_implies_sec4_2_4_duplicate
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .duplicateDisjointVariable →
+    (checkBytes arr config).Sec4_2_4_DjvarsDuplicateViolation := by
+  intro h_code
+  exact duplicateDisjointVariable_violation_implies_sec4_2_4_duplicate (s := checkBytes arr config)
+    (checkBytes_parseErrorCode?_duplicateDisjointVariable_violation arr config h_code)
+
+theorem checkBytes_tokenNotInScope_implies_sec4_2_4_scope
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .tokenNotInScope →
+    (checkBytes arr config).Sec4_2_4_DjvarsScopeViolation := by
+  intro h_code
+  exact tokenNotInScope_violation_implies_sec4_2_4_scope (s := checkBytes arr config)
+    (checkBytes_parseErrorCode?_tokenNotInScope_violation arr config h_code)
+
+theorem checkBytes_invalidLabel_regression_payload_startsWith
+    (arr : ByteArray) (config : ModeConfig)
+    (h_code : (checkBytes arr config).parseErrorCode? = some .invalidLabel) :
+    ∃ pos msg idx,
+      (checkBytes arr config).error? = some ⟨.error pos msg, idx⟩ ∧
+      (ParseErrorCode.payload msg).startsWith "invalid label '" = true := by
+  rcases checkBytes_parseErrorCode?_invalidLabel_violation arr config h_code with
+    ⟨pos, msg, idx, h_err, _h_decode, h_shape⟩
+  exact ⟨pos, msg, idx, h_err, h_shape⟩
+
+theorem checkBytes_duplicateDisjointVariable_regression_payload_startsWith
+    (arr : ByteArray) (config : ModeConfig)
+    (h_code : (checkBytes arr config).parseErrorCode? = some .duplicateDisjointVariable) :
+    ∃ pos msg idx,
+      (checkBytes arr config).error? = some ⟨.error pos msg, idx⟩ ∧
+      (ParseErrorCode.payload msg).startsWith "duplicate disjoint variable " = true := by
+  rcases checkBytes_parseErrorCode?_duplicateDisjointVariable_violation arr config h_code with
+    ⟨pos, msg, idx, h_err, _h_decode, h_shape⟩
+  exact ⟨pos, msg, idx, h_err, h_shape⟩
+
+theorem checkBytes_tokenNotInScope_regression_payload_endsWith
+    (arr : ByteArray) (config : ModeConfig)
+    (h_code : (checkBytes arr config).parseErrorCode? = some .tokenNotInScope) :
+    ∃ pos msg idx,
+      (checkBytes arr config).error? = some ⟨.error pos msg, idx⟩ ∧
+      (ParseErrorCode.payload msg).endsWith " not in scope" = true := by
+  rcases checkBytes_parseErrorCode?_tokenNotInScope_violation arr config h_code with
+    ⟨pos, msg, idx, h_err, _h_decode, h_shape⟩
+  exact ⟨pos, msg, idx, h_err, h_shape⟩
+
+end HighValueClausePredicates
+
+/-- Concrete clause theorem for the `$d`-at-EOF parser error. -/
+theorem checkBytes_unclosedDjvars_implies_clause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .unclosedDjvars →
+    (checkBytes arr config).ParserSpecClauseViolation .sec4_2_4_djvars := by
+  intro h_code
+  exact ⟨.unclosedDjvars, h_code, rfl⟩
+
+theorem checkBytes_invalidLabel_implies_clause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .invalidLabel →
+    (checkBytes arr config).ParserSpecClauseViolation .sec4_2_1_labels := by
+  intro h_code
+  exact ⟨.invalidLabel, h_code, rfl⟩
+
+theorem checkBytes_duplicateDisjointVariable_implies_clause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .duplicateDisjointVariable →
+    (checkBytes arr config).ParserSpecClauseViolation .sec4_2_4_djvars := by
+  intro h_code
+  exact ⟨.duplicateDisjointVariable, h_code, rfl⟩
+
+theorem checkBytes_tokenNotInScope_implies_clause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .tokenNotInScope →
+    (checkBytes arr config).ParserSpecClauseViolation .sec4_2_4_djvars := by
+  intro h_code
+  exact ⟨.tokenNotInScope, h_code, rfl⟩
 
 -- Preprocessor with include support
 -- Processes $[ filename $] directives by recursively loading files
@@ -1950,7 +3678,7 @@ partial def expandIncludes (fname : String) (processing seen : HashSet String)
 
       i := i + 2
       -- Skip whitespace after $[
-      while i < contents.size && (contents[i]! == ' '.toUInt8 || contents[i]! == '\n'.toUInt8 || contents[i]! == '\t'.toUInt8 || contents[i]! == '\r'.toUInt8) do
+      while i < contents.size && isWhitespace contents[i]! do
         i := i + 1
 
       -- Extract filename until $]
@@ -1958,7 +3686,7 @@ partial def expandIncludes (fname : String) (processing seen : HashSet String)
       let startPos := i  -- Debug: save start position
       while i + 1 < contents.size && !(contents[i]! == '$'.toUInt8 && contents[i+1]! == ']'.toUInt8) do
         let c := contents[i]!
-        if c != ' '.toUInt8 && c != '\n'.toUInt8 && c != '\t'.toUInt8 && c != '\r'.toUInt8 then
+        if !isWhitespace c then
           includePath := includePath.push c
         i := i + 1
       -- Debug: check what we extracted

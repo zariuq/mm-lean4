@@ -125,3 +125,4 @@ end List
 
 **Next step:** Phase 3 - Implement toSubstTyped using these lemmas
 -/
+

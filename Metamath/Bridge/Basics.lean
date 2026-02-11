@@ -248,3 +248,4 @@ theorem TypedSubst_typed_invariant (fr : Spec.Frame) (σ_typed : TypedSubst fr) 
 -/
 
 end Metamath.Bridge
+

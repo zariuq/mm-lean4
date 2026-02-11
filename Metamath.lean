@@ -10,6 +10,9 @@ import Metamath.ParserInvariantsStep1
 
 open Metamath.Verify in
 def main (args : List String) : IO UInt32 := do
+  let showErrorCode := args.contains "--show-error-code" || args.contains "--error-code"
+  let args := args.filter fun a => a != "--show-error-code" && a != "--error-code"
+
   -- Parse mode from args: --mode=zar|knife|exe|permissive or legacy --permissive
   -- The VerifierMode enum provides convenient CLI names that convert to ModeConfig
   let (mode, fname) := match args with
@@ -32,6 +35,14 @@ def main (args : List String) : IO UInt32 := do
     IO.println s!"verified, {db.objects.size} objects"
     pure 0
   | some ⟨Error.error pos err, _⟩ =>
-    IO.println s!"at {pos}: {err}"
+    if showErrorCode then
+      match db.parseErrorCode? with
+      | some code =>
+          IO.println s!"at {pos}: [{repr code}] {err}"
+      | none =>
+          IO.println s!"at {pos}: [unclassified] {err}"
+    else
+      IO.println s!"at {pos}: {err}"
     pure 1
   | some _ => unreachable!
+

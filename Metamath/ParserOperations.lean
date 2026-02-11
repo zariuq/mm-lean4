@@ -20,6 +20,7 @@ import Metamath.ParserCorrectness
 import Metamath.WellFormedness
 import Metamath.DBCaseAnalysis
 import Metamath.ArrayListExt
+import Metamath.ParserLoopInduction
 import Std.Data.HashSet.Lemmas
 import Batteries.Data.String.Lemmas
 set_option linter.unnecessarySimpa false
@@ -630,6 +631,53 @@ theorem floatDeclaredBefore_preserved_by_insert
     simpa [h_find_eq] using h_find
   exact ⟨j, hj, f, lbl, h_find', h_shape, h_f1⟩
 
+/-- If `v` is a variable in `db`, `insert` does not clear that fact. -/
+theorem isVar_true_preserved_by_insert_any
+    (db : DB) (pos : Pos) (label : String) (obj : String → Object) (v : String)
+    (h_var : db.isVar v = true) :
+    (db.insert pos label obj).isVar v = true := by
+  by_cases h_eq : v = label
+  · subst h_eq
+    unfold DB.isVar at h_var ⊢
+    cases h_find : db.find? v with
+    | none =>
+        simp [h_find] at h_var
+    | some objv =>
+        cases objv with
+        | const _ =>
+            simp [h_find] at h_var
+        | hyp _ _ _ =>
+            simp [h_find] at h_var
+        | assert _ _ _ =>
+            simp [h_find] at h_var
+        | var a =>
+            have h_find_obj : db.objects[v]? = some (.var a) := by
+              simpa [DB.find?] using h_find
+            have h_find_insert : (db.insert pos v obj).find? v = db.find? v := by
+              unfold DB.insert
+              cases h_obj : obj v with
+              | const c =>
+                  by_cases h_scope : !db.config.allowConstInnerScope && db.scopes.size > 0
+                  · simp [h_scope, DB.find?, DB.mkError, DB.error]
+                  · by_cases h_err : db.error = true
+                    · simp [h_scope, h_err, DB.find?]
+                    · simp [h_scope, h_err, h_find_obj, DB.find?, DB.mkError]
+              | var w =>
+                  by_cases h_err : db.error = true
+                  · simp [h_err, DB.find?]
+                  · simp [h_err, h_find_obj, DB.find?]
+              | hyp ess f lbl' =>
+                  by_cases h_err : db.error = true
+                  · simp [h_err, DB.find?]
+                  · simp [h_err, h_find_obj, DB.find?, DB.mkError]
+              | assert f fr lbl' =>
+                  by_cases h_err : db.error = true
+                  · simp [h_err, DB.find?]
+                  · simp [h_err, h_find_obj, DB.find?, DB.mkError]
+            simpa [DB.isVar, h_find_insert, h_find]
+  ·
+    exact Metamath.ParserCorrectness.isVar_preserved_by_insert db pos label v obj h_eq h_var
+
 theorem wellScopedFrame_preserved_by_insert
     (db : DB) (pos : Pos) (label : String) (obj : String → Object)
     (fr : Frame) (h_scoped : WellScopedFrame db fr)
@@ -677,10 +725,10 @@ theorem wellScopedFrame_preserved_by_insert
   · intro v w h_mem
     have h_scoped_dv := h_scoped.2 v w h_mem
     rcases h_scoped_dv with ⟨h_lt, h_in1, h_in2⟩
-    have h_in1' : v ∈ DB.frameFloatVars (db.insert pos label obj) fr := by
-      exact (frameFloatVars_mem_preserved_by_insert db pos label obj fr h_not_in v).2 h_in1
-    have h_in2' : w ∈ DB.frameFloatVars (db.insert pos label obj) fr := by
-      exact (frameFloatVars_mem_preserved_by_insert db pos label obj fr h_not_in w).2 h_in2
+    have h_in1' : (db.insert pos label obj).isVar v = true := by
+      exact isVar_true_preserved_by_insert_any db pos label obj v h_in1
+    have h_in2' : (db.insert pos label obj).isVar w = true := by
+      exact isVar_true_preserved_by_insert_any db pos label obj w h_in2
     exact ⟨h_lt, h_in1', h_in2'⟩
 
 /-- Array.push lemmas used by withHyps proofs. -/
@@ -770,14 +818,8 @@ theorem wellScopedFrame_push_float
   · intro v w h_mem
     have h_scoped_dv := h_scoped.2 v w h_mem
     rcases h_scoped_dv with ⟨h_lt, h_in1, h_in2⟩
-    have h_in1' :
-        v ∈ DB.frameFloatVars db { fr with hyps := fr.hyps.push lbl } := by
-      simpa [DB.frameFloatVars] using
-        (frameFloatVars_mem_of_mem_prefix db fr.hyps lbl v h_in1)
-    have h_in2' :
-        w ∈ DB.frameFloatVars db { fr with hyps := fr.hyps.push lbl } := by
-      simpa [DB.frameFloatVars] using
-        (frameFloatVars_mem_of_mem_prefix db fr.hyps lbl w h_in2)
+    have h_in1' : db.isVar v = true := h_in1
+    have h_in2' : db.isVar w = true := h_in2
     exact ⟨h_lt, h_in1', h_in2'⟩
 
 theorem wellScopedFrame_push_ess
@@ -847,16 +889,8 @@ theorem wellScopedFrame_push_ess
   · intro v w h_mem
     have h_scoped_dv := h_scoped.2 v w h_mem
     rcases h_scoped_dv with ⟨h_lt, h_in1, h_in2⟩
-    have h_in1' :
-        v ∈ DB.frameFloatVars db { fr with hyps := fr.hyps.push lbl } := by
-      have h_in1' :=
-        (frameFloatVars_mem_push_ess_iff db fr.hyps lbl f_ess lbl_ess v h_find_ess).2 h_in1
-      simpa [DB.frameFloatVars] using h_in1'
-    have h_in2' :
-        w ∈ DB.frameFloatVars db { fr with hyps := fr.hyps.push lbl } := by
-      have h_in2' :=
-        (frameFloatVars_mem_push_ess_iff db fr.hyps lbl f_ess lbl_ess w h_find_ess).2 h_in2
-      simpa [DB.frameFloatVars] using h_in2'
+    have h_in1' : db.isVar v = true := h_in1
+    have h_in2' : db.isVar w = true := h_in2
     exact ⟨h_lt, h_in1', h_in2'⟩
 
 /-- withHyps with push preserves WellFormedDB when adding a HypOK label and a fresh float binder. -/
@@ -3409,14 +3443,10 @@ theorem trimFrame'_success_implies_scoped_frame
           simpa using h_pred
         exact (Bool.and_eq_true_iff).1 h_pred_bool
       exact ⟨h_in, h_pred'.1, h_pred'.2⟩
-    rcases h_mem' with ⟨h_in_db, h_in_v, h_in_w⟩
+    rcases h_mem' with ⟨h_in_db, _h_in_v, _h_in_w⟩
     have h_scoped_dj := h_scoped_frame.2 v w h_in_db
     rcases h_scoped_dj with ⟨h_lt, h_in_frame_v, h_in_frame_w⟩
-    have h_in_fr_v : v ∈ DB.frameFloatVars db fr :=
-      floatVar_in_trimmed v h_in_frame_v h_in_v
-    have h_in_fr_w : w ∈ DB.frameFloatVars db fr :=
-      floatVar_in_trimmed w h_in_frame_w h_in_w
-    exact ⟨h_lt, h_in_fr_v, h_in_fr_w⟩
+    exact ⟨h_lt, h_in_frame_v, h_in_frame_w⟩
 
 theorem trimFrame'_success_implies_formulaSymsRespectFrame
     (db : DB) (fmla : Formula) (fr : Frame)
@@ -4693,7 +4723,7 @@ def TokpInv (db : DB) : TokenParser → Prop
   | .comment p =>
       TokpInv db p
   | .djvars arr =>
-      ∀ v ∈ arr.toList, db.isVar v = true ∧ db.floatVarOccursInFrame v = true
+      ∀ v ∈ arr.toList, db.isVar v = true
   | .math arr _ =>
       FormulaSymbolsDeclared db arr
   | .proof pr =>
@@ -4925,7 +4955,7 @@ theorem wellFormedDB_preserved_by_withDJ
 theorem wellScopedFrame_push_dj
     (db : DB) (fr : Frame) (p : DJ)
     (h_scoped : WellScopedFrame db fr)
-    (h_p : p.1 < p.2 ∧ p.1 ∈ DB.frameFloatVars db fr ∧ p.2 ∈ DB.frameFloatVars db fr) :
+    (h_p : p.1 < p.2 ∧ db.isVar p.1 = true ∧ db.isVar p.2 = true) :
     WellScopedFrame db { fr with dj := fr.dj.push p } := by
   rcases h_scoped with ⟨h_hyps, h_dj⟩
   refine ⟨?_, ?_⟩
@@ -5162,7 +5192,8 @@ theorem shrink_push_of_le {α : Type _} (xs : Array α) (x : α) (n : Nat) (h : 
   -- Use toList characterization of shrink and `take` over append.
   have h_len : n ≤ xs.toList.length := by
     -- Array.toList.length is definitional equal to Array.size
-    cases xs <;> simpa using h
+    cases xs
+    simpa using h
   simp [Array.toList_shrink, Array.toList_push, List.take_append_of_le_length h_len]
 
 /-- Extracting a prefix from a pushed array (within the original size) ignores the pushed element. -/
@@ -5170,7 +5201,8 @@ theorem extract_push_of_le {α : Type _} (xs : Array α) (x : α) (n : Nat) (h :
     (xs.push x).extract 0 n = xs.extract 0 n := by
   apply Array.ext'
   have h_len : n ≤ xs.toList.length := by
-    cases xs <;> simpa using h
+    cases xs
+    simpa using h
   simp [Array.toList_extract_take, Array.toList_push, List.take_append_of_le_length h_len]
 
 end Array
@@ -5180,7 +5212,7 @@ theorem wellScopedDBWithScopes_withDJ_push
     (h_wf : WellFormedDB db)
     (h_scoped : WellScopedDBWithScopes db)
     (h_ok : ScopesOk db)
-    (h_p : p.1 < p.2 ∧ p.1 ∈ DB.frameFloatVars db db.frame ∧ p.2 ∈ DB.frameFloatVars db db.frame) :
+    (h_p : p.1 < p.2 ∧ db.isVar p.1 = true ∧ db.isVar p.2 = true) :
     WellScopedDBWithScopes (db.withDJ (·.push p)) := by
   classical
   rcases h_scoped with ⟨h_scoped_db, h_scopes⟩
@@ -5192,9 +5224,9 @@ theorem wellScopedDBWithScopes_withDJ_push
   have h_scoped_frame_db' : WellScopedFrame db' db.frame := by
     simpa [db'] using (wellScopedFrame_preserved_by_withDJ db (f := (·.push p)) (fr := db.frame) h_scoped_frame_old)
   have h_p' : p.1 < p.2 ∧
-      p.1 ∈ DB.frameFloatVars db' db.frame ∧
-      p.2 ∈ DB.frameFloatVars db' db.frame := by
-    simpa [db', DB.withDJ, DB.withFrame, DB.frameFloatVars, DB.find?] using h_p
+      db'.isVar p.1 = true ∧
+      db'.isVar p.2 = true := by
+    simpa [db', DB.isVar, DB.withDJ, DB.withFrame, DB.find?] using h_p
   have h_scoped_frame' : WellScopedFrame db' db'.frame := by
     simpa [db'] using (wellScopedFrame_push_dj db' db.frame p h_scoped_frame_db' h_p')
 
@@ -5328,6 +5360,75 @@ theorem scopesOk_insert
     have hi_old : i < db.scopes.size := by
       simpa [insert_scopes] using hi
     simpa [insert_scopes, insert_frame_unchanged] using h_within i hi_old
+
+theorem scopesOk_mkError
+    (db : DB) (pos : Pos) (msg : String) :
+    ScopesOk db → ScopesOk (db.mkError pos msg) := by
+  intro h_ok
+  simpa [DB.mkError] using h_ok
+
+theorem scopesOk_insertHypChecks
+    (db : DB) (pos : Pos) (ess : Bool) (f : Formula) :
+    ScopesOk db → ScopesOk (db.insertHypChecks pos ess f) := by
+  intro h_ok
+  unfold DB.insertHypChecks
+  by_cases h_head : f.hasConstHead
+  · by_cases h_db_err : db.error
+    · simp [h_head, h_db_err, h_ok]
+    · cases h_ess : ess with
+      | true =>
+          by_cases h_syms : DB.formulaSymsRespectFrame db f (Verify.Frame.mk #[] db.frame.hyps) = true
+          · simp [h_head, h_db_err, h_ess, h_syms, h_ok]
+          · simpa [h_head, h_db_err, h_ess, h_syms, DB.mkError] using h_ok
+      | false =>
+          by_cases h_shape : f.isFloatShape = true
+          · by_cases h_size : f.size >= 2
+            · by_cases h_dup :
+                db.config.allowDuplicateFloat = false ∧ db.floatVarOccursInFrame f[1]!.value = true
+              · simpa [h_head, h_db_err, h_ess, h_shape, h_size, h_dup, DB.mkError] using h_ok
+              · simpa [h_head, h_db_err, h_ess, h_shape, h_size, h_dup] using h_ok
+            · simpa [h_head, h_db_err, h_ess, h_shape, h_size] using h_ok
+          · simpa [h_head, h_db_err, h_ess, h_shape, DB.mkError] using h_ok
+  · simpa [h_head, DB.mkError] using h_ok
+
+theorem scopesOk_insertHyp
+    (db : DB) (pos : Pos) (l : String) (ess : Bool) (f : Formula) :
+    ScopesOk db → ScopesOk (db.insertHyp pos l ess f) := by
+  intro h_ok
+  let db1 : DB := db.insertHypChecks pos ess f
+  have h_checks : ScopesOk db1 := by
+    simpa [db1] using scopesOk_insertHypChecks db pos ess f h_ok
+  let db2 : DB := db1.insert pos l (.hyp ess f)
+  have h_insert : ScopesOk db2 := by
+    exact scopesOk_insert db1 pos l (.hyp ess f) h_checks
+  have h_push : ScopesOk (db2.withHyps fun hyps => hyps.push l) := by
+    exact scopesOk_withHyps_push db2 l h_insert
+  unfold DB.insertHyp
+  by_cases h_err1 : db1.error
+  · simpa [db1, h_err1] using h_checks
+  · by_cases h_err2 : db2.error
+    · simpa [db1, db2, h_err1, h_err2] using h_insert
+    · simpa [db1, db2, h_err1, h_err2] using h_push
+
+theorem scopesOk_insertAxiom
+    (db : DB) (pos : Pos) (l : String) (fmla : Formula) :
+    ScopesOk db → ScopesOk (db.insertAxiom pos l fmla) := by
+  intro h_ok
+  unfold DB.insertAxiom
+  by_cases h_head : fmla.hasConstHead
+  · simp [h_head]
+    split
+    · simpa using h_ok
+    · cases h_trim : db.trimFrame' fmla with
+      | error msg =>
+          simpa [h_trim, DB.mkError] using h_ok
+      | ok fr =>
+          by_cases h_interrupt : db.interrupt
+          · simpa [h_trim, h_interrupt] using h_ok
+          · have h_ins : ScopesOk (db.insert pos l (.assert fmla fr)) :=
+              scopesOk_insert db pos l (.assert fmla fr) h_ok
+            simpa [h_trim, h_interrupt] using h_ins
+  · simpa [h_head, DB.mkError] using h_ok
 
 /-- Strengthening of `insertHyp_full_maintains_scoped`: also preserves the stored-scope snapshots. -/
 theorem insertHyp_full_maintains_scopedWithScopes
@@ -5992,6 +6093,253 @@ theorem feedTokens_maintains_scopedWithScopes_nonthm
       | thm =>
           exact (h_non_thm rfl).elim
 
+/-- Non-`$p` `feedTokens` steps preserve `WellFormedDB` using only
+    success-side facts (head check, float shape, and fresh label extraction). -/
+theorem feedTokens_maintains_wf_nonthm
+    (s : ParserState) (arr : Array Sym) (tokp : TokensParser)
+    (h_non_thm : tokp.k ≠ TokensKind.thm)
+    (h_wf : WellFormedDB s.db)
+    (h_no_err : s.db.error? = none)
+    (h_no_dup : s.db.config.allowDuplicateFloat = false)
+    (h_success : (s.feedTokens arr tokp).db.error? = none) :
+    WellFormedDB (s.feedTokens arr tokp).db := by
+  cases tokp with
+  | mk k pos label =>
+      cases k with
+      | float =>
+          have h_first : arr.size > 0 ∧ !arr[0]!.isVar :=
+            feedTokens_success_first_not_var s arr ⟨.float, pos, label⟩ (by simpa using h_success)
+          have h_shape : arr.size = 2 ∧ arr[1]!.isVar :=
+            feedTokens_success_float_shape s arr pos label (by simpa using h_success)
+          have h_fresh_db : s.db.find? label = none := by
+            have h_db_eq :
+                (s.feedTokens arr ⟨.float, pos, label⟩).db = s.db.insertHyp pos label false arr :=
+              feedTokens_float_db s arr pos label h_first h_shape (by simpa using h_success)
+            have h_insert_ok : (s.db.insertHyp pos label false arr).error? = none := by
+              simpa [h_db_eq] using h_success
+            exact insertHyp_success_fresh_db s.db pos label false arr h_insert_ok
+          have h_fresh_label :
+              ∀ (i : Nat) (hi : i < s.db.frame.hyps.size), s.db.frame.hyps[i]'hi ≠ label := by
+            exact fresh_not_in_frame_of_wfFrame s.db s.db.frame label h_wf.1 h_fresh_db
+          have h_fresh_in_asserts :
+              ∀ (lbl : String) (fmla : Formula) (fr_assert : Frame) (name : String),
+                s.db.find? lbl = some (.assert fmla fr_assert name) →
+                ∀ (i : Nat) (hi : i < fr_assert.hyps.size), fr_assert.hyps[i]'hi ≠ label := by
+            exact fresh_not_in_assert_frames_of_wf s.db h_wf label h_fresh_db
+          have h_float : (TokensKind.float = TokensKind.float → (arr.size = 2 ∧ arr[1]!.isVar)) := by
+            intro _
+            exact h_shape
+          exact feedTokens_maintains_wf s arr ⟨.float, pos, label⟩
+            h_wf h_no_err h_no_dup h_first h_float
+            h_fresh_db h_fresh_label h_fresh_in_asserts (by simpa using h_success)
+      | ess =>
+          have h_first : arr.size > 0 ∧ !arr[0]!.isVar :=
+            feedTokens_success_first_not_var s arr ⟨.ess, pos, label⟩ (by simpa using h_success)
+          have h_fresh_db : s.db.find? label = none := by
+            have h_db_eq :
+                (s.feedTokens arr ⟨.ess, pos, label⟩).db = s.db.insertHyp pos label true arr :=
+              feedTokens_ess_db s arr pos label h_first (by simpa using h_success)
+            have h_insert_ok : (s.db.insertHyp pos label true arr).error? = none := by
+              simpa [h_db_eq] using h_success
+            exact insertHyp_success_fresh_db s.db pos label true arr h_insert_ok
+          have h_fresh_label :
+              ∀ (i : Nat) (hi : i < s.db.frame.hyps.size), s.db.frame.hyps[i]'hi ≠ label := by
+            exact fresh_not_in_frame_of_wfFrame s.db s.db.frame label h_wf.1 h_fresh_db
+          have h_fresh_in_asserts :
+              ∀ (lbl : String) (fmla : Formula) (fr_assert : Frame) (name : String),
+                s.db.find? lbl = some (.assert fmla fr_assert name) →
+                ∀ (i : Nat) (hi : i < fr_assert.hyps.size), fr_assert.hyps[i]'hi ≠ label := by
+            exact fresh_not_in_assert_frames_of_wf s.db h_wf label h_fresh_db
+          have h_float : (TokensKind.ess = TokensKind.float → (arr.size = 2 ∧ arr[1]!.isVar)) := by
+            intro h_eq
+            cases h_eq
+          exact feedTokens_maintains_wf s arr ⟨.ess, pos, label⟩
+            h_wf h_no_err h_no_dup h_first h_float
+            h_fresh_db h_fresh_label h_fresh_in_asserts (by simpa using h_success)
+      | ax =>
+          have h_first : arr.size > 0 ∧ !arr[0]!.isVar :=
+            feedTokens_success_first_not_var s arr ⟨.ax, pos, label⟩ (by simpa using h_success)
+          have h_fresh_db : s.db.find? label = none := by
+            have h_db_eq :
+                (s.feedTokens arr ⟨.ax, pos, label⟩).db = s.db.insertAxiom pos label arr :=
+              feedTokens_ax_db s arr pos label h_first (by simpa using h_success)
+            have h_insert_ok : (s.db.insertAxiom pos label arr).error? = none := by
+              simpa [h_db_eq] using h_success
+            exact insertAxiom_success_fresh_db s.db pos label arr h_insert_ok
+          have h_fresh_label :
+              ∀ (i : Nat) (hi : i < s.db.frame.hyps.size), s.db.frame.hyps[i]'hi ≠ label := by
+            exact fresh_not_in_frame_of_wfFrame s.db s.db.frame label h_wf.1 h_fresh_db
+          have h_fresh_in_asserts :
+              ∀ (lbl : String) (fmla : Formula) (fr_assert : Frame) (name : String),
+                s.db.find? lbl = some (.assert fmla fr_assert name) →
+                ∀ (i : Nat) (hi : i < fr_assert.hyps.size), fr_assert.hyps[i]'hi ≠ label := by
+            exact fresh_not_in_assert_frames_of_wf s.db h_wf label h_fresh_db
+          have h_float : (TokensKind.ax = TokensKind.float → (arr.size = 2 ∧ arr[1]!.isVar)) := by
+            intro h_eq
+            cases h_eq
+          exact feedTokens_maintains_wf s arr ⟨.ax, pos, label⟩
+            h_wf h_no_err h_no_dup h_first h_float
+            h_fresh_db h_fresh_label h_fresh_in_asserts (by simpa using h_success)
+      | thm =>
+          exact (h_non_thm rfl).elim
+
+/-- In `.math` mode for non-`$p` statements, successful `feedToken` preserves
+    `WellFormedDB`. -/
+theorem feedToken_math_nonthm_maintains_wf
+    (s : ParserState) (i : Nat) (tk : ByteSlice) (arr : Array Sym) (p : TokensParser)
+    (h_tokp : s.tokp = .math arr p)
+    (h_non_thm : p.k ≠ TokensKind.thm)
+    (h_wf : WellFormedDB s.db)
+    (h_no_err : s.db.error? = none)
+    (h_no_dup : s.db.config.allowDuplicateFloat = false)
+    (h_success : (s.feedToken i tk).db.error? = none) :
+    WellFormedDB (s.feedToken i tk).db := by
+  by_cases h_open : tk.eqArray "$(".toAscii
+  · -- Enter comment mode; DB is unchanged.
+    have h_db_eq : (s.feedToken i tk).db = s.db := by
+      simp [ParserState.feedToken, h_tokp, h_open]
+    simpa [h_db_eq] using h_wf
+  · by_cases h_delim : tk.eqArray p.k.delim
+    · -- Delimiter closes the math statement and dispatches to feedTokens.
+      have h_success_feedTokens : (s.feedTokens arr p).db.error? = none := by
+        simpa [ParserState.feedToken, h_tokp, h_open, h_delim] using h_success
+      have h_wf_feedTokens :
+          WellFormedDB (s.feedTokens arr p).db :=
+        feedTokens_maintains_wf_nonthm s arr p h_non_thm
+          h_wf h_no_err h_no_dup h_success_feedTokens
+      simpa [ParserState.feedToken, h_tokp, h_open, h_delim] using h_wf_feedTokens
+    · -- Non-delimiter token in `.math`: on success, only tokp changes.
+      have h_db_eq : (s.feedToken i tk).db = s.db := by
+        by_cases h_math_ok : (toMath tk).fst = true
+        · let tk' := (toMath tk).2
+          cases h_find : s.db.find? tk' with
+          | none =>
+              have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+                  h_math_ok, tk', h_find, ParserState.mkError, ParserState.withDB, DB.mkError]
+              exact (h_bad h_success).elim
+          | some obj =>
+              cases obj with
+              | const _ =>
+                  simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+                    h_math_ok, tk', h_find, Bind.bind, Pure.pure]
+              | var _ =>
+                  simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+                    h_math_ok, tk', h_find, Bind.bind, Pure.pure]
+              | hyp _ _ _ =>
+                  have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                    simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+                      h_math_ok, tk', h_find, ParserState.mkError, ParserState.withDB, DB.mkError]
+                  exact (h_bad h_success).elim
+              | assert _ _ _ =>
+                  have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                    simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+                      h_math_ok, tk', h_find, ParserState.mkError, ParserState.withDB, DB.mkError]
+                  exact (h_bad h_success).elim
+        · have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+            simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+              h_math_ok, ParserState.mkError, ParserState.withDB, DB.mkError]
+          exact (h_bad h_success).elim
+      simpa [h_db_eq] using h_wf
+
+/-- Non-`$p` `feedTokens` steps preserve `ScopesOk`. -/
+theorem feedTokens_maintains_scopesOk_nonthm
+    (s : ParserState) (arr : Array Sym) (tokp : TokensParser)
+    (h_non_thm : tokp.k ≠ TokensKind.thm)
+    (h_ok : ScopesOk s.db)
+    (h_success : (s.feedTokens arr tokp).db.error? = none) :
+    ScopesOk (s.feedTokens arr tokp).db := by
+  cases tokp with
+  | mk k pos label =>
+      cases k with
+      | float =>
+          have h_first : arr.size > 0 ∧ !arr[0]!.isVar :=
+            feedTokens_success_first_not_var s arr ⟨.float, pos, label⟩ (by simpa using h_success)
+          have h_shape : arr.size = 2 ∧ arr[1]!.isVar :=
+            feedTokens_success_float_shape s arr pos label (by simpa using h_success)
+          have h_db_eq :
+              (s.feedTokens arr ⟨.float, pos, label⟩).db = s.db.insertHyp pos label false arr :=
+            feedTokens_float_db s arr pos label h_first h_shape (by simpa using h_success)
+          have h_ok_insert :
+              ScopesOk (s.db.insertHyp pos label false arr) :=
+            scopesOk_insertHyp s.db pos label false arr h_ok
+          simpa [h_db_eq] using h_ok_insert
+      | ess =>
+          have h_first : arr.size > 0 ∧ !arr[0]!.isVar :=
+            feedTokens_success_first_not_var s arr ⟨.ess, pos, label⟩ (by simpa using h_success)
+          have h_db_eq :
+              (s.feedTokens arr ⟨.ess, pos, label⟩).db = s.db.insertHyp pos label true arr :=
+            feedTokens_ess_db s arr pos label h_first (by simpa using h_success)
+          have h_ok_insert :
+              ScopesOk (s.db.insertHyp pos label true arr) :=
+            scopesOk_insertHyp s.db pos label true arr h_ok
+          simpa [h_db_eq] using h_ok_insert
+      | ax =>
+          have h_first : arr.size > 0 ∧ !arr[0]!.isVar :=
+            feedTokens_success_first_not_var s arr ⟨.ax, pos, label⟩ (by simpa using h_success)
+          have h_db_eq :
+              (s.feedTokens arr ⟨.ax, pos, label⟩).db = s.db.insertAxiom pos label arr :=
+            feedTokens_ax_db s arr pos label h_first (by simpa using h_success)
+          have h_ok_insert :
+              ScopesOk (s.db.insertAxiom pos label arr) :=
+            scopesOk_insertAxiom s.db pos label arr h_ok
+          simpa [h_db_eq] using h_ok_insert
+      | thm =>
+          exact (h_non_thm rfl).elim
+
+/-- In `.math` mode for non-`$p` statements, successful `feedToken` preserves
+    `ScopesOk`. -/
+theorem feedToken_math_nonthm_maintains_scopesOk
+    (s : ParserState) (i : Nat) (tk : ByteSlice) (arr : Array Sym) (p : TokensParser)
+    (h_tokp : s.tokp = .math arr p)
+    (h_non_thm : p.k ≠ TokensKind.thm)
+    (h_ok : ScopesOk s.db)
+    (h_success : (s.feedToken i tk).db.error? = none) :
+    ScopesOk (s.feedToken i tk).db := by
+  by_cases h_open : tk.eqArray "$(".toAscii
+  · have h_db_eq : (s.feedToken i tk).db = s.db := by
+      simp [ParserState.feedToken, h_tokp, h_open]
+    simpa [h_db_eq] using h_ok
+  · by_cases h_delim : tk.eqArray p.k.delim
+    · have h_success_feedTokens : (s.feedTokens arr p).db.error? = none := by
+        simpa [ParserState.feedToken, h_tokp, h_open, h_delim] using h_success
+      have h_ok_feedTokens :
+          ScopesOk (s.feedTokens arr p).db :=
+        feedTokens_maintains_scopesOk_nonthm s arr p h_non_thm h_ok h_success_feedTokens
+      simpa [ParserState.feedToken, h_tokp, h_open, h_delim] using h_ok_feedTokens
+    · have h_db_eq : (s.feedToken i tk).db = s.db := by
+        by_cases h_math_ok : (toMath tk).fst = true
+        · let tk' := (toMath tk).snd
+          cases h_find : s.db.find? tk' with
+          | none =>
+              have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+                  h_math_ok, tk', h_find, ParserState.mkError, ParserState.withDB, DB.mkError]
+              exact (h_bad h_success).elim
+          | some obj =>
+              cases obj with
+              | const _ =>
+                  simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+                    h_math_ok, tk', h_find, Bind.bind, Pure.pure]
+              | var _ =>
+                  simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+                    h_math_ok, tk', h_find, Bind.bind, Pure.pure]
+              | hyp _ _ _ =>
+                  have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                    simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+                      h_math_ok, tk', h_find, ParserState.mkError, ParserState.withDB, DB.mkError]
+                  exact (h_bad h_success).elim
+              | assert _ _ _ =>
+                  have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                    simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+                      h_math_ok, tk', h_find, ParserState.mkError, ParserState.withDB, DB.mkError]
+                  exact (h_bad h_success).elim
+        · have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+            simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+              h_math_ok, ParserState.mkError, ParserState.withDB, DB.mkError]
+          exact (h_bad h_success).elim
+      simpa [h_db_eq] using h_ok
+
 /-- In `.math` mode for non-`$p` statements, successful `feedToken` preserves
     `WellScopedDBWithScopes`. -/
 theorem feedToken_math_nonthm_maintains_scopedWithScopes
@@ -6226,6 +6574,178 @@ theorem wellScopedDBWithScopes_popScope
           simpa [db', WellScopedFrame, FloatDeclaredBefore, DB.formulaSymsRespectFrame, DB.frameFloatVars, DB.find?] using h_scoped_sc'
         simpa [db', h_shrink] using h_scoped_sc''
 
+/-- In `.start` mode, successful `feedToken` preserves `WellFormedDB`. -/
+theorem feedToken_start_maintains_wf
+    (s : ParserState) (i : Nat) (tk : ByteSlice)
+    (h_tokp : s.tokp = .start)
+    (h_wf : WellFormedDB s.db)
+    (h_no_err : s.db.error? = none)
+    (h_success : (s.feedToken i tk).db.error? = none) :
+    WellFormedDB (s.feedToken i tk).db := by
+  by_cases h_open : tk.eqArray "$(".toAscii
+  · have h_db_eq : (s.feedToken i tk).db = s.db := by
+      simp [ParserState.feedToken, h_tokp, h_open]
+    simpa [h_db_eq] using h_wf
+  · by_cases h_cmd : tk.len == 2 && tk[0]! == '$'.toUInt8
+    · by_cases h_lbrace : tk[1]!.toChar = '{'
+      · have h_db_eq : (s.feedToken i tk).db = s.db.pushScope := by
+          simp [ParserState.feedToken, h_tokp, h_open, h_cmd, h_lbrace, ParserState.withDB]
+        simpa [h_db_eq] using wellFormedDB_pushScope s.db h_wf
+      · by_cases h_rbrace : tk[1]!.toChar = '}'
+        · have h_pop_ok : (s.db.popScope (s.mkPos i)).error? = none := by
+            simpa [ParserState.feedToken, h_tokp, h_open, h_cmd, h_lbrace, h_rbrace, ParserState.withDB] using h_success
+          have h_wf_pop :
+              WellFormedDB (s.db.popScope (s.mkPos i)) :=
+            wellFormedDB_popScope s.db (s.mkPos i) h_wf h_no_err h_pop_ok
+          simpa [ParserState.feedToken, h_tokp, h_open, h_cmd, h_lbrace, h_rbrace, ParserState.withDB] using h_wf_pop
+        · by_cases h_c : tk[1]!.toChar = 'c'
+          · have h_db_eq : (s.feedToken i tk).db = s.db := by
+              simp [ParserState.feedToken, h_tokp, h_open, h_cmd, h_lbrace, h_rbrace, h_c]
+            simpa [h_db_eq] using h_wf
+          · by_cases h_v : tk[1]!.toChar = 'v'
+            · have h_db_eq : (s.feedToken i tk).db = s.db := by
+                simp [ParserState.feedToken, h_tokp, h_open, h_cmd, h_lbrace, h_rbrace, h_c, h_v]
+              simpa [h_db_eq] using h_wf
+            · by_cases h_d : tk[1]!.toChar = 'd'
+              · have h_db_eq : (s.feedToken i tk).db = s.db := by
+                  simp [ParserState.feedToken, h_tokp, h_open, h_cmd, h_lbrace, h_rbrace, h_c, h_v, h_d]
+                simpa [h_db_eq] using h_wf
+              · have h_db_eq : (s.feedToken i tk).db = s.db := by
+                  unfold ParserState.feedToken
+                  simp [h_tokp, h_open, h_cmd, h_lbrace, h_rbrace, h_c, h_v, h_d, ParserState.label]
+                  by_cases h_label_ok : (toLabel tk).fst
+                  · simp [h_label_ok]
+                  · have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                      simp [ParserState.feedToken, h_tokp, h_open, h_cmd, h_lbrace, h_rbrace, h_c, h_v, h_d,
+                        ParserState.label, h_label_ok, ParserState.mkError, ParserState.withDB, DB.mkError]
+                    exact (h_bad h_success).elim
+                simpa [h_db_eq] using h_wf
+    · have h_db_eq : (s.feedToken i tk).db = s.db := by
+        unfold ParserState.feedToken
+        simp [h_tokp, h_open, h_cmd, ParserState.label]
+        by_cases h_label_ok : (toLabel tk).fst
+        · simp [h_label_ok]
+        · have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+            simp [ParserState.feedToken, h_tokp, h_open, h_cmd,
+              ParserState.label, h_label_ok, ParserState.mkError, ParserState.withDB, DB.mkError]
+          exact (h_bad h_success).elim
+      simpa [h_db_eq] using h_wf
+
+/-- In `.const` mode, successful `feedToken` preserves `WellFormedDB`. -/
+theorem feedToken_const_maintains_wf
+    (s : ParserState) (i : Nat) (tk : ByteSlice)
+    (h_tokp : s.tokp = .const)
+    (h_wf : WellFormedDB s.db)
+    (h_no_err : s.db.error? = none)
+    (h_success : (s.feedToken i tk).db.error? = none) :
+    WellFormedDB (s.feedToken i tk).db := by
+  by_cases h_open : tk.eqArray "$(".toAscii
+  · have h_db_eq : (s.feedToken i tk).db = s.db := by
+      simp [ParserState.feedToken, h_tokp, h_open]
+    simpa [h_db_eq] using h_wf
+  · by_cases h_end : tk.eqArray "$.".toAscii
+    · have h_db_eq : (s.feedToken i tk).db = s.db := by
+        simp [ParserState.feedToken, h_tokp, h_open, h_end, ParserState.sym]
+      simpa [h_db_eq] using h_wf
+    · by_cases h_math_ok : (toMath tk).fst = true
+      · let tk' := (toMath tk).snd
+        have h_insert_ok : (s.db.insert (s.mkPos i) tk' (fun x => Object.const x)).error? = none := by
+          simpa [ParserState.feedToken, h_tokp, h_open, h_end, ParserState.sym, ParserState.withMath,
+            h_math_ok, tk', ParserState.withDB] using h_success
+        have h_fresh_db : s.db.find? tk' = none := by
+          exact insert_success_nonvar_fresh s.db (s.mkPos i) tk' (fun x => Object.const x)
+            h_no_err h_insert_ok (by intro v h_eq; cases h_eq)
+        have h_fresh_label :
+            ∀ (j : Nat) (hj : j < s.db.frame.hyps.size), s.db.frame.hyps[j]'hj ≠ tk' := by
+          exact fresh_not_in_frame_of_wfFrame s.db s.db.frame tk' h_wf.1 h_fresh_db
+        have h_fresh_in_asserts :
+            ∀ (lbl : String) (fmla : Formula) (fr_assert : Frame) (name : String),
+              s.db.find? lbl = some (.assert fmla fr_assert name) →
+              ∀ (j : Nat) (hj : j < fr_assert.hyps.size), fr_assert.hyps[j]'hj ≠ tk' := by
+          exact fresh_not_in_assert_frames_of_wf s.db h_wf tk' h_fresh_db
+        have h_wf_insert :
+            WellFormedDB (s.db.insert (s.mkPos i) tk' (fun x => Object.const x)) := by
+          exact insertConst_maintains_wf_from_parser s.db (s.mkPos i) tk'
+            h_wf h_no_err h_fresh_db h_fresh_label h_fresh_in_asserts h_insert_ok
+        have h_db_eq :
+            (s.feedToken i tk).db = s.db.insert (s.mkPos i) tk' (fun x => Object.const x) := by
+          simp [ParserState.feedToken, h_tokp, h_open, h_end, ParserState.sym, ParserState.withMath,
+            h_math_ok, tk', ParserState.withDB]
+        simpa [h_db_eq] using h_wf_insert
+      · have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+          simp [ParserState.feedToken, h_tokp, h_open, h_end, ParserState.sym, ParserState.withMath, h_math_ok,
+            ParserState.mkError, ParserState.withDB, DB.mkError]
+        exact (h_bad h_success).elim
+
+/-- In `.var` mode, successful `feedToken` preserves `WellFormedDB`. -/
+theorem feedToken_var_maintains_wf
+    (s : ParserState) (i : Nat) (tk : ByteSlice)
+    (h_tokp : s.tokp = .var)
+    (h_wf : WellFormedDB s.db)
+    (h_no_err : s.db.error? = none)
+    (h_success : (s.feedToken i tk).db.error? = none) :
+    WellFormedDB (s.feedToken i tk).db := by
+  have h_db_err_false : s.db.error = false := by
+    exact (error_false_iff_error?_none s.db).2 h_no_err
+  by_cases h_open : tk.eqArray "$(".toAscii
+  · have h_db_eq : (s.feedToken i tk).db = s.db := by
+      simp [ParserState.feedToken, h_tokp, h_open]
+    simpa [h_db_eq] using h_wf
+  · by_cases h_end : tk.eqArray "$.".toAscii
+    · have h_db_eq : (s.feedToken i tk).db = s.db := by
+        simp [ParserState.feedToken, h_tokp, h_open, h_end, ParserState.sym]
+      simpa [h_db_eq] using h_wf
+    · by_cases h_math_ok : (toMath tk).fst = true
+      · let tk' := (toMath tk).snd
+        cases h_find : s.db.find? tk' with
+        | none =>
+            have h_insert_ok : (s.db.insert (s.mkPos i) tk' (fun x => Object.var x)).error? = none := by
+              simpa [ParserState.feedToken, h_tokp, h_open, h_end, ParserState.sym, ParserState.withMath,
+                h_math_ok, tk', ParserState.withDB, h_find] using h_success
+            have h_fresh_label :
+                ∀ (j : Nat) (hj : j < s.db.frame.hyps.size), s.db.frame.hyps[j]'hj ≠ tk' := by
+              exact fresh_not_in_frame_of_wfFrame s.db s.db.frame tk' h_wf.1 h_find
+            have h_fresh_in_asserts :
+                ∀ (lbl : String) (fmla : Formula) (fr_assert : Frame) (name : String),
+                  s.db.find? lbl = some (.assert fmla fr_assert name) →
+                  ∀ (j : Nat) (hj : j < fr_assert.hyps.size), fr_assert.hyps[j]'hj ≠ tk' := by
+              exact fresh_not_in_assert_frames_of_wf s.db h_wf tk' h_find
+            have h_wf_insert :
+                WellFormedDB (s.db.insert (s.mkPos i) tk' (fun x => Object.var x)) := by
+              exact insertVar_maintains_wf_from_parser s.db (s.mkPos i) tk'
+                h_wf h_no_err h_find h_fresh_label h_fresh_in_asserts h_insert_ok
+            have h_db_eq :
+                (s.feedToken i tk).db = s.db.insert (s.mkPos i) tk' (fun x => Object.var x) := by
+              simp [ParserState.feedToken, h_tokp, h_open, h_end, ParserState.sym, ParserState.withMath,
+                h_math_ok, tk', ParserState.withDB, h_find]
+            simpa [h_db_eq] using h_wf_insert
+        | some obj =>
+            cases obj with
+            | var _ =>
+                have h_db_eq : (s.feedToken i tk).db = s.db := by
+                  simp [ParserState.feedToken, h_tokp, h_open, h_end, ParserState.sym, ParserState.withMath,
+                    h_math_ok, tk', ParserState.withDB, h_find, DB.insert, h_no_err]
+                simpa [h_db_eq] using h_wf
+            | const _ =>
+                have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                  simp [ParserState.feedToken, h_tokp, h_open, h_end, ParserState.sym, ParserState.withMath,
+                    h_math_ok, tk', ParserState.withDB, h_find, DB.insert, h_no_err, h_db_err_false, DB.mkError]
+                exact (h_bad h_success).elim
+            | hyp _ _ _ =>
+                have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                  simp [ParserState.feedToken, h_tokp, h_open, h_end, ParserState.sym, ParserState.withMath,
+                    h_math_ok, tk', ParserState.withDB, h_find, DB.insert, h_no_err, h_db_err_false, DB.mkError]
+                exact (h_bad h_success).elim
+            | assert _ _ _ =>
+                have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                  simp [ParserState.feedToken, h_tokp, h_open, h_end, ParserState.sym, ParserState.withMath,
+                    h_math_ok, tk', ParserState.withDB, h_find, DB.insert, h_no_err, h_db_err_false, DB.mkError]
+                exact (h_bad h_success).elim
+      · have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+          simp [ParserState.feedToken, h_tokp, h_open, h_end, ParserState.sym, ParserState.withMath, h_math_ok,
+            ParserState.mkError, ParserState.withDB, DB.mkError]
+        exact (h_bad h_success).elim
+
 /-- In `.start` mode, successful `feedToken` preserves `WellScopedDBWithScopes`. -/
 theorem feedToken_start_maintains_scopedWithScopes
     (s : ParserState) (i : Nat) (tk : ByteSlice)
@@ -6393,6 +6913,119 @@ theorem feedToken_var_maintains_scopedWithScopes
             ParserState.mkError, ParserState.withDB, DB.mkError]
         exact (h_bad h_success).elim
 
+/-- In `.start` mode, successful `feedToken` preserves `ScopesOk`. -/
+theorem feedToken_start_maintains_scopesOk
+    (s : ParserState) (i : Nat) (tk : ByteSlice)
+    (h_tokp : s.tokp = .start)
+    (h_ok : ScopesOk s.db)
+    (h_success : (s.feedToken i tk).db.error? = none) :
+    ScopesOk (s.feedToken i tk).db := by
+  by_cases h_open : tk.eqArray "$(".toAscii
+  · have h_db_eq : (s.feedToken i tk).db = s.db := by
+      simp [ParserState.feedToken, h_tokp, h_open]
+    simpa [h_db_eq] using h_ok
+  · by_cases h_cmd : tk.len == 2 && tk[0]! == '$'.toUInt8
+    · by_cases h_lbrace : tk[1]!.toChar = '{'
+      · have h_db_eq : (s.feedToken i tk).db = s.db.pushScope := by
+          simp [ParserState.feedToken, h_tokp, h_open, h_cmd, h_lbrace, ParserState.withDB]
+        simpa [h_db_eq] using scopesOk_pushScope s.db h_ok
+      · by_cases h_rbrace : tk[1]!.toChar = '}'
+        · have h_pop_ok : (s.db.popScope (s.mkPos i)).error? = none := by
+            simpa [ParserState.feedToken, h_tokp, h_open, h_cmd, h_lbrace, h_rbrace, ParserState.withDB] using h_success
+          have h_ok_pop : ScopesOk (s.db.popScope (s.mkPos i)) :=
+            scopesOk_popScope s.db (s.mkPos i) h_ok h_pop_ok
+          simpa [ParserState.feedToken, h_tokp, h_open, h_cmd, h_lbrace, h_rbrace, ParserState.withDB] using h_ok_pop
+        · by_cases h_c : tk[1]!.toChar = 'c'
+          · have h_db_eq : (s.feedToken i tk).db = s.db := by
+              simp [ParserState.feedToken, h_tokp, h_open, h_cmd, h_lbrace, h_rbrace, h_c]
+            simpa [h_db_eq] using h_ok
+          · by_cases h_v : tk[1]!.toChar = 'v'
+            · have h_db_eq : (s.feedToken i tk).db = s.db := by
+                simp [ParserState.feedToken, h_tokp, h_open, h_cmd, h_lbrace, h_rbrace, h_c, h_v]
+              simpa [h_db_eq] using h_ok
+            · by_cases h_d : tk[1]!.toChar = 'd'
+              · have h_db_eq : (s.feedToken i tk).db = s.db := by
+                  simp [ParserState.feedToken, h_tokp, h_open, h_cmd, h_lbrace, h_rbrace, h_c, h_v, h_d]
+                simpa [h_db_eq] using h_ok
+              · have h_db_eq : (s.feedToken i tk).db = s.db := by
+                  unfold ParserState.feedToken
+                  simp [h_tokp, h_open, h_cmd, h_lbrace, h_rbrace, h_c, h_v, h_d, ParserState.label]
+                  by_cases h_label_ok : (toLabel tk).fst
+                  · simp [h_label_ok]
+                  · have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                      simp [ParserState.feedToken, h_tokp, h_open, h_cmd, h_lbrace, h_rbrace, h_c, h_v, h_d,
+                        ParserState.label, h_label_ok, ParserState.mkError, ParserState.withDB, DB.mkError]
+                    exact (h_bad h_success).elim
+                simpa [h_db_eq] using h_ok
+    · have h_db_eq : (s.feedToken i tk).db = s.db := by
+        unfold ParserState.feedToken
+        simp [h_tokp, h_open, h_cmd, ParserState.label]
+        by_cases h_label_ok : (toLabel tk).fst
+        · simp [h_label_ok]
+        · have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+            simp [ParserState.feedToken, h_tokp, h_open, h_cmd,
+              ParserState.label, h_label_ok, ParserState.mkError, ParserState.withDB, DB.mkError]
+          exact (h_bad h_success).elim
+      simpa [h_db_eq] using h_ok
+
+/-- In `.const` mode, successful `feedToken` preserves `ScopesOk`. -/
+theorem feedToken_const_maintains_scopesOk
+    (s : ParserState) (i : Nat) (tk : ByteSlice)
+    (h_tokp : s.tokp = .const)
+    (h_ok : ScopesOk s.db)
+    (h_success : (s.feedToken i tk).db.error? = none) :
+    ScopesOk (s.feedToken i tk).db := by
+  by_cases h_open : tk.eqArray "$(".toAscii
+  · have h_db_eq : (s.feedToken i tk).db = s.db := by
+      simp [ParserState.feedToken, h_tokp, h_open]
+    simpa [h_db_eq] using h_ok
+  · by_cases h_end : tk.eqArray "$.".toAscii
+    · have h_db_eq : (s.feedToken i tk).db = s.db := by
+        simp [ParserState.feedToken, h_tokp, h_open, h_end, ParserState.sym]
+      simpa [h_db_eq] using h_ok
+    · by_cases h_math_ok : (toMath tk).fst = true
+      · let tk' := (toMath tk).snd
+        have h_db_eq :
+            (s.feedToken i tk).db = s.db.insert (s.mkPos i) tk' (fun x => Object.const x) := by
+          simp [ParserState.feedToken, h_tokp, h_open, h_end, ParserState.sym, ParserState.withMath,
+            h_math_ok, tk', ParserState.withDB]
+        have h_ok_ins : ScopesOk (s.db.insert (s.mkPos i) tk' (fun x => Object.const x)) :=
+          scopesOk_insert s.db (s.mkPos i) tk' (fun x => Object.const x) h_ok
+        simpa [h_db_eq] using h_ok_ins
+      · have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+          simp [ParserState.feedToken, h_tokp, h_open, h_end, ParserState.sym, ParserState.withMath, h_math_ok,
+            ParserState.mkError, ParserState.withDB, DB.mkError]
+        exact (h_bad h_success).elim
+
+/-- In `.var` mode, successful `feedToken` preserves `ScopesOk`. -/
+theorem feedToken_var_maintains_scopesOk
+    (s : ParserState) (i : Nat) (tk : ByteSlice)
+    (h_tokp : s.tokp = .var)
+    (h_ok : ScopesOk s.db)
+    (h_success : (s.feedToken i tk).db.error? = none) :
+    ScopesOk (s.feedToken i tk).db := by
+  by_cases h_open : tk.eqArray "$(".toAscii
+  · have h_db_eq : (s.feedToken i tk).db = s.db := by
+      simp [ParserState.feedToken, h_tokp, h_open]
+    simpa [h_db_eq] using h_ok
+  · by_cases h_end : tk.eqArray "$.".toAscii
+    · have h_db_eq : (s.feedToken i tk).db = s.db := by
+        simp [ParserState.feedToken, h_tokp, h_open, h_end, ParserState.sym]
+      simpa [h_db_eq] using h_ok
+    · by_cases h_math_ok : (toMath tk).fst = true
+      · let tk' := (toMath tk).snd
+        have h_db_eq :
+            (s.feedToken i tk).db = s.db.insert (s.mkPos i) tk' (fun x => Object.var x) := by
+          simp [ParserState.feedToken, h_tokp, h_open, h_end, ParserState.sym, ParserState.withMath,
+            h_math_ok, tk', ParserState.withDB]
+        have h_ok_ins : ScopesOk (s.db.insert (s.mkPos i) tk' (fun x => Object.var x)) :=
+          scopesOk_insert s.db (s.mkPos i) tk' (fun x => Object.var x) h_ok
+        simpa [h_db_eq] using h_ok_ins
+      · have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+          simp [ParserState.feedToken, h_tokp, h_open, h_end, ParserState.sym, ParserState.withMath, h_math_ok,
+            ParserState.mkError, ParserState.withDB, DB.mkError]
+        exact (h_bad h_success).elim
+
 /-- Internal: `djvars_loop_aux` preserves `WellScopedDBWithScopes` on success. -/
 theorem djvars_loop_aux_maintains_scopedWithScopes
     (arr : Array String) (s : ParserState) (pos : Pos) (tk : String) (i : Nat)
@@ -6401,7 +7034,6 @@ theorem djvars_loop_aux_maintains_scopedWithScopes
     (h_ok : ScopesOk s.db)
     (h_tokp : TokpInv s.db (.djvars arr))
     (h_var : s.db.isVar tk = true)
-    (h_in_scope : s.db.floatVarOccursInFrame tk = true)
     (h_success : (ParserState.djvars_loop_aux arr s pos tk i).db.error? = none) :
     WellScopedDBWithScopes (ParserState.djvars_loop_aux arr s pos tk i).db := by
   -- Induction on the remainder `arr.size - i`.
@@ -6412,18 +7044,17 @@ theorem djvars_loop_aux_maintains_scopedWithScopes
       ScopesOk s.db →
       TokpInv s.db (.djvars arr) →
       s.db.isVar tk = true →
-      s.db.floatVarOccursInFrame tk = true →
       (ParserState.djvars_loop_aux arr s pos tk i).db.error? = none →
       WellScopedDBWithScopes (ParserState.djvars_loop_aux arr s pos tk i).db)
-    ?base ?step (arr.size - i) i s rfl h_wf h_scoped h_ok h_tokp h_var h_in_scope h_success
-  · intro i s hs h_wf h_scoped _h_ok _h_tokp _h_var _h_in_scope _h_success
+    ?base ?step (arr.size - i) i s rfl h_wf h_scoped h_ok h_tokp h_var h_success
+  · intro i s hs h_wf h_scoped _h_ok _h_tokp _h_var _h_success
     have hi : ¬ i < arr.size := by
       intro hi
       have hpos : arr.size - i > 0 := Nat.sub_pos_of_lt hi
       simpa [hs] using hpos
     -- Base: no loop step, DB unchanged.
     simpa [ParserState.djvars_loop_aux, hi] using h_scoped
-  · intro m ih i s hs h_wf h_scoped h_ok h_tokp h_var h_in_scope h_success
+  · intro m ih i s hs h_wf h_scoped h_ok h_tokp h_var h_success
     have hi : i < arr.size := by
       by_cases hi' : i < arr.size
       · exact hi'
@@ -6461,15 +7092,7 @@ theorem djvars_loop_aux_maintains_scopedWithScopes
         have h_mem := Array.getElem!_mem_toList arr i hi
         -- `arr[i]!` equals `arr[i]` in this branch.
         simpa [tk1] using h_mem
-      have h_tk1_props := h_tokp tk1 h_mem_tk1
-      have h_var_tk1 : s.db.isVar tk1 = true := h_tk1_props.1
-      have h_scope_tk1 : s.db.floatVarOccursInFrame tk1 = true := h_tk1_props.2
-      have h_tk1_in :
-          tk1 ∈ DB.frameFloatVars s.db s.db.frame := by
-        exact floatVarOccursInFrame_true_implies s.db tk1 h_wf h_scope_tk1
-      have h_tk_in :
-          tk ∈ DB.frameFloatVars s.db s.db.frame := by
-        exact floatVarOccursInFrame_true_implies s.db tk h_wf h_in_scope
+      have h_var_tk1 : s.db.isVar tk1 = true := h_tokp tk1 h_mem_tk1
       have h_ne : tk1 ≠ tk := by
         exact h_eq
       have h_lt_pair : (if tk1 < tk then tk1 else tk) < (if tk1 < tk then tk else tk1) := by
@@ -6485,17 +7108,17 @@ theorem djvars_loop_aux_maintains_scopedWithScopes
       let p : DJ := if tk1 < tk then (tk1, tk) else (tk, tk1)
       have h_p : p = if tk1 < tk then (tk1, tk) else (tk, tk1) := rfl
       have h_p' : p.1 < p.2 ∧
-          p.1 ∈ DB.frameFloatVars s.db s.db.frame ∧
-          p.2 ∈ DB.frameFloatVars s.db s.db.frame := by
+          s.db.isVar p.1 = true ∧
+          s.db.isVar p.2 = true := by
         by_cases h_lt : tk1 < tk
-        · simp [h_p, h_lt, h_lt_pair, h_tk1_in, h_tk_in]
+        · simp [h_p, h_lt, h_lt_pair, h_var_tk1, h_var]
         · -- In this branch p = (tk, tk1)
           have h_gt : tk < tk1 := by
             by_cases h_gt' : tk < tk1
             · exact h_gt'
             · have h_eq' : tk1 = tk := String.lt_antisymm h_lt h_gt'
               exact (h_ne h_eq').elim
-          simp [h_p, h_lt, h_gt, h_tk1_in, h_tk_in]
+          simp [h_p, h_lt, h_gt, h_var_tk1, h_var]
       -- Update invariants for the recursive call.
       have h_wf' : WellFormedDB (s.db.withDJ (·.push p)) := by
         exact wellFormedDB_preserved_by_withDJ s.db (·.push p) h_wf
@@ -6504,26 +7127,275 @@ theorem djvars_loop_aux_maintains_scopedWithScopes
       have h_ok' : ScopesOk (s.db.withDJ (·.push p)) := by
         exact scopesOk_withDJ_push s.db p h_ok
       have h_tokp' : TokpInv (s.db.withDJ (·.push p)) (.djvars arr) := by
-        -- `isVar` and `floatVarOccursInFrame` are unchanged by `withDJ`.
+        -- `isVar` is unchanged by `withDJ`.
         intro v h_mem
         have h_old := h_tokp v h_mem
-        constructor
-        · simpa [DB.isVar, DB.withDJ, DB.withFrame, DB.find?] using h_old.1
-        · simpa [DB.floatVarOccursInFrame, DB.withDJ, DB.withFrame, DB.find?] using h_old.2
+        simpa [DB.isVar, DB.withDJ, DB.withFrame, DB.find?] using h_old
       have h_var' : (s.db.withDJ (·.push p)).isVar tk = true := by
         simpa [DB.isVar, DB.withDJ, DB.withFrame, DB.find?] using h_var
-      have h_in_scope' : (s.db.withDJ (·.push p)).floatVarOccursInFrame tk = true := by
-        simpa [DB.floatVarOccursInFrame, DB.withDJ, DB.withFrame, DB.find?] using h_in_scope
       have h_success_rec :
           (ParserState.djvars_loop_aux arr (s.withDB fun db => db.withDJ (·.push p)) pos tk (i + 1)).db.error? = none := by
         simpa [tk1, h_p] using h_success'
       -- Apply IH
       have h_rec :=
         ih (i + 1) (s.withDB fun db => db.withDJ (·.push p)) hs'
-          h_wf' h_scoped' h_ok' h_tokp' h_var' h_in_scope' h_success_rec
+          h_wf' h_scoped' h_ok' h_tokp' h_var' h_success_rec
       -- finish by rewriting the outer call (avoid recursive simp loops)
       simpa [ParserState.djvars_loop_aux, hi, tk1, h_eq, ParserState.withDB, h_p,
         -ParserState.djvars_loop_aux.eq_1] using h_rec
+
+/-- Internal: `djvars_loop_aux` preserves `ScopesOk` on success. -/
+theorem djvars_loop_aux_maintains_scopesOk
+    (arr : Array String) (s : ParserState) (pos : Pos) (tk : String) (i : Nat)
+    (h_ok : ScopesOk s.db)
+    (h_success : (ParserState.djvars_loop_aux arr s pos tk i).db.error? = none) :
+    ScopesOk (ParserState.djvars_loop_aux arr s pos tk i).db := by
+  refine Nat.rec (motive := fun m => ∀ i (s : ParserState),
+      arr.size - i = m →
+      ScopesOk s.db →
+      (ParserState.djvars_loop_aux arr s pos tk i).db.error? = none →
+      ScopesOk (ParserState.djvars_loop_aux arr s pos tk i).db)
+    ?base ?step (arr.size - i) i s rfl h_ok h_success
+  · intro i s hs h_ok _h_success
+    have hi : ¬ i < arr.size := by
+      intro hi
+      have hpos : arr.size - i > 0 := Nat.sub_pos_of_lt hi
+      simpa [hs] using hpos
+    simpa [ParserState.djvars_loop_aux, hi] using h_ok
+  · intro m ih i s hs h_ok h_success
+    have hi : i < arr.size := by
+      by_cases hi' : i < arr.size
+      · exact hi'
+      ·
+        have hz : arr.size - i = 0 := Nat.sub_eq_zero_of_le (Nat.le_of_not_gt hi')
+        have : False := by
+          have hs' := hs
+          simpa [hz] using hs'
+        exact False.elim this
+    have hs' : arr.size - (i + 1) = m := by
+      simp only [Nat.add_one, Nat.sub_succ, hs, Nat.pred_succ]
+    unfold ParserState.djvars_loop_aux at h_success ⊢
+    simp [hi] at h_success ⊢
+    let tk1 := arr[i]
+    by_cases h_eq : tk1 = tk
+    · have h_success' :
+          (s.mkError pos s!"duplicate disjoint variable {tk}").db.error? = none := by
+        simpa [tk1, h_eq] using h_success
+      have h_bad : (s.mkError pos s!"duplicate disjoint variable {tk}").db.error? ≠ none := by
+        simp [ParserState.mkError, ParserState.withDB, DB.mkError]
+      exact (h_bad h_success').elim
+    · have h_success' :
+          (ParserState.djvars_loop_aux arr
+              (s.withDB
+                (fun db => DB.withDJ (fun dj => dj.push (if arr[i] < tk then (arr[i], tk) else (tk, arr[i]))) db) )
+              pos tk (i + 1)).db.error? = none := by
+          simpa [tk1, h_eq] using h_success
+      let p : DJ := if tk1 < tk then (tk1, tk) else (tk, tk1)
+      have h_ok' : ScopesOk (s.withDB (fun db => db.withDJ (·.push p))).db := by
+        have h_db' : ScopesOk (s.db.withDJ (·.push p)) := scopesOk_withDJ_push s.db p h_ok
+        simpa [ParserState.withDB] using h_db'
+      have h_rec :=
+        ih (i + 1) (s.withDB fun db => db.withDJ (·.push p)) hs' h_ok' (by simpa [tk1, p] using h_success')
+      simpa [ParserState.djvars_loop_aux, hi, tk1, h_eq, ParserState.withDB, p,
+        -ParserState.djvars_loop_aux.eq_1] using h_rec
+
+/-- `djvars_loop` preserves `ScopesOk` on success. -/
+theorem djvars_loop_maintains_scopesOk
+    (arr : Array String) (s : ParserState) (pos : Pos) (tk : String)
+    (h_ok : ScopesOk s.db)
+    (h_success : (ParserState.djvars_loop arr s pos tk).db.error? = none) :
+    ScopesOk (ParserState.djvars_loop arr s pos tk).db := by
+  unfold ParserState.djvars_loop at h_success ⊢
+  by_cases h_var : s.db.isVar tk = true
+  · simp [h_var] at h_success ⊢
+    exact djvars_loop_aux_maintains_scopesOk arr s pos tk 0 h_ok h_success
+  · have h_bad : (s.mkError pos s!"{tk} is not a variable").db.error? ≠ none := by
+      simp [ParserState.mkError, ParserState.withDB, DB.mkError]
+    have h_success' : (s.mkError pos s!"{tk} is not a variable").db.error? = none := by
+      simpa [h_var] using h_success
+    exact (h_bad h_success').elim
+
+/-- Internal: `djvars_loop_aux` preserves `TokpInv` on success. -/
+theorem djvars_loop_aux_maintains_tokpInv
+    (arr : Array String) (s : ParserState) (pos : Pos) (tk : String) (i : Nat)
+    (h_tokp : TokpInv s.db (.djvars arr))
+    (h_var : s.db.isVar tk = true)
+    (h_success : (ParserState.djvars_loop_aux arr s pos tk i).db.error? = none) :
+    TokpInv (ParserState.djvars_loop_aux arr s pos tk i).db
+      (ParserState.djvars_loop_aux arr s pos tk i).tokp := by
+  refine Nat.rec (motive := fun m => ∀ i (s : ParserState),
+      arr.size - i = m →
+      TokpInv s.db (.djvars arr) →
+      s.db.isVar tk = true →
+      (ParserState.djvars_loop_aux arr s pos tk i).db.error? = none →
+      TokpInv (ParserState.djvars_loop_aux arr s pos tk i).db
+        (ParserState.djvars_loop_aux arr s pos tk i).tokp)
+    ?base ?step (arr.size - i) i s rfl h_tokp h_var h_success
+  · intro i s hs h_tokp h_var _h_success
+    have hi : ¬ i < arr.size := by
+      intro hi
+      have hpos : arr.size - i > 0 := Nat.sub_pos_of_lt hi
+      simpa [hs] using hpos
+    unfold ParserState.djvars_loop_aux
+    simp [hi, TokpInv]
+    intro v h_mem
+    have h_mem' : v ∈ arr.toList ∨ v = tk := by
+      simpa [Array.toList_push] using h_mem
+    cases h_mem' with
+    | inl h_old =>
+        exact h_tokp v h_old
+    | inr h_eq =>
+        subst h_eq
+        exact h_var
+  · intro m ih i s hs h_tokp h_var h_success
+    have hi : i < arr.size := by
+      by_cases hi' : i < arr.size
+      · exact hi'
+      ·
+        have hz : arr.size - i = 0 := Nat.sub_eq_zero_of_le (Nat.le_of_not_gt hi')
+        have : False := by
+          have hs' := hs
+          simpa [hz] using hs'
+        exact False.elim this
+    have hs' : arr.size - (i + 1) = m := by
+      simp only [Nat.add_one, Nat.sub_succ, hs, Nat.pred_succ]
+    unfold ParserState.djvars_loop_aux at h_success ⊢
+    simp [hi] at h_success ⊢
+    let tk1 : String := arr[i]
+    by_cases h_eq : tk1 = tk
+    · have h_success' :
+        (s.mkError pos s!"duplicate disjoint variable {tk}").db.error? = none := by
+        simpa [tk1, h_eq] using h_success
+      have h_bad : (s.mkError pos s!"duplicate disjoint variable {tk}").db.error? ≠ none := by
+        simp [ParserState.mkError, ParserState.withDB, DB.mkError]
+      exact (h_bad h_success').elim
+    · have h_success' :
+        (ParserState.djvars_loop_aux arr
+            (s.withDB
+              (fun db => DB.withDJ (fun dj => dj.push (if arr[i] < tk then (arr[i], tk) else (tk, arr[i]))) db))
+            pos tk (i + 1)).db.error? = none := by
+        simpa [tk1, h_eq] using h_success
+      let p : DJ := if tk1 < tk then (tk1, tk) else (tk, tk1)
+      have h_tokp' : TokpInv (s.db.withDJ (·.push p)) (.djvars arr) := by
+        intro v h_mem
+        have h_old := h_tokp v h_mem
+        simpa [DB.isVar, DB.withDJ, DB.withFrame, DB.find?] using h_old
+      have h_var' : (s.db.withDJ (·.push p)).isVar tk = true := by
+        simpa [DB.isVar, DB.withDJ, DB.withFrame, DB.find?] using h_var
+      have h_success_rec :
+          (ParserState.djvars_loop_aux arr (s.withDB fun db => db.withDJ (·.push p)) pos tk (i + 1)).db.error? = none := by
+        simpa [tk1, p] using h_success'
+      have h_rec :=
+        ih (i + 1) (s.withDB fun db => db.withDJ (·.push p)) hs'
+          h_tokp' h_var' h_success_rec
+      simpa [ParserState.djvars_loop_aux, hi, tk1, h_eq, ParserState.withDB, p,
+        -ParserState.djvars_loop_aux.eq_1] using h_rec
+
+/-- Internal: `djvars_loop_aux` preserves `WellFormedDB` on success. -/
+theorem djvars_loop_aux_maintains_wf
+    (arr : Array String) (s : ParserState) (pos : Pos) (tk : String) (i : Nat)
+    (h_wf : WellFormedDB s.db)
+    (h_success : (ParserState.djvars_loop_aux arr s pos tk i).db.error? = none) :
+    WellFormedDB (ParserState.djvars_loop_aux arr s pos tk i).db := by
+  refine Nat.rec (motive := fun m => ∀ i (s : ParserState),
+      arr.size - i = m →
+      WellFormedDB s.db →
+      (ParserState.djvars_loop_aux arr s pos tk i).db.error? = none →
+      WellFormedDB (ParserState.djvars_loop_aux arr s pos tk i).db)
+    ?base ?step (arr.size - i) i s rfl h_wf h_success
+  · intro i s hs h_wf _h_success
+    have hi : ¬ i < arr.size := by
+      intro hi
+      have hpos : arr.size - i > 0 := Nat.sub_pos_of_lt hi
+      simpa [hs] using hpos
+    simpa [ParserState.djvars_loop_aux, hi] using h_wf
+  · intro m ih i s hs h_wf h_success
+    have hi : i < arr.size := by
+      by_cases hi' : i < arr.size
+      · exact hi'
+      ·
+        have hz : arr.size - i = 0 := Nat.sub_eq_zero_of_le (Nat.le_of_not_gt hi')
+        have : False := by
+          have hs' := hs
+          simpa [hz] using hs'
+        exact False.elim this
+    have hs' : arr.size - (i + 1) = m := by
+      simp only [Nat.add_one, Nat.sub_succ, hs, Nat.pred_succ]
+    unfold ParserState.djvars_loop_aux at h_success ⊢
+    simp [hi] at h_success ⊢
+    let tk1 : String := arr[i]
+    by_cases h_eq : tk1 = tk
+    · have h_success' :
+        (s.mkError pos s!"duplicate disjoint variable {tk}").db.error? = none := by
+        simpa [tk1, h_eq] using h_success
+      have h_bad : (s.mkError pos s!"duplicate disjoint variable {tk}").db.error? ≠ none := by
+        simp [ParserState.mkError, ParserState.withDB, DB.mkError]
+      exact (h_bad h_success').elim
+    · have h_success' :
+        (ParserState.djvars_loop_aux arr
+            (s.withDB
+              (fun db => DB.withDJ (fun dj => dj.push (if arr[i] < tk then (arr[i], tk) else (tk, arr[i]))) db))
+            pos tk (i + 1)).db.error? = none := by
+        simpa [tk1, h_eq] using h_success
+      let p : DJ := if tk1 < tk then (tk1, tk) else (tk, tk1)
+      have h_wf' : WellFormedDB (s.db.withDJ (·.push p)) := by
+        exact wellFormedDB_preserved_by_withDJ s.db (·.push p) h_wf
+      have h_wf_state :
+          WellFormedDB ((s.withDB fun db => db.withDJ (·.push p)).db) := by
+        simpa [ParserState.withDB] using h_wf'
+      have h_success_rec :
+          (ParserState.djvars_loop_aux arr (s.withDB fun db => db.withDJ (·.push p)) pos tk (i + 1)).db.error? = none := by
+        simpa [tk1, p] using h_success'
+      have h_rec :=
+        ih (i + 1) (s.withDB fun db => db.withDJ (·.push p)) hs'
+          h_wf_state h_success_rec
+      simpa [ParserState.djvars_loop_aux, hi, tk1, h_eq, ParserState.withDB, p,
+        -ParserState.djvars_loop_aux.eq_1] using h_rec
+
+/-- `djvars_loop` preserves `WellFormedDB` on success. -/
+theorem djvars_loop_maintains_wf
+    (arr : Array String) (s : ParserState) (pos : Pos) (tk : String)
+    (h_wf : WellFormedDB s.db)
+    (h_success : (ParserState.djvars_loop arr s pos tk).db.error? = none) :
+    WellFormedDB (ParserState.djvars_loop arr s pos tk).db := by
+  unfold ParserState.djvars_loop at h_success ⊢
+  by_cases h_var : s.db.isVar tk = true
+  · simp [h_var] at h_success ⊢
+    exact djvars_loop_aux_maintains_wf arr s pos tk 0 h_wf h_success
+  · have h_bad : (s.mkError pos s!"{tk} is not a variable").db.error? ≠ none := by
+      simp [ParserState.mkError, ParserState.withDB, DB.mkError]
+    have h_success' : (s.mkError pos s!"{tk} is not a variable").db.error? = none := by
+      simpa [h_var] using h_success
+    exact (h_bad h_success').elim
+
+/-- In `.djvars` mode, successful `feedToken` preserves `WellFormedDB`. -/
+theorem feedToken_djvars_maintains_wf
+    (s : ParserState) (i : Nat) (tk : ByteSlice) (arr : Array String)
+    (h_tokp : s.tokp = .djvars arr)
+    (h_wf : WellFormedDB s.db)
+    (h_success : (s.feedToken i tk).db.error? = none) :
+    WellFormedDB (s.feedToken i tk).db := by
+  by_cases h_open : tk.eqArray "$(".toAscii
+  · have h_db_eq : (s.feedToken i tk).db = s.db := by
+      simp [ParserState.feedToken, h_tokp, h_open]
+    simpa [h_db_eq] using h_wf
+  · by_cases h_end : tk.eqArray "$.".toAscii
+    · have h_db_eq : (s.feedToken i tk).db = s.db := by
+        simp [ParserState.feedToken, h_tokp, h_open, h_end]
+      simpa [h_db_eq] using h_wf
+    · by_cases h_math_ok : (toMath tk).fst = true
+      · let tk' := (toMath tk).snd
+        have h_success_loop :
+            (ParserState.djvars_loop arr s (s.mkPos i) tk').db.error? = none := by
+          simpa [ParserState.feedToken, h_tokp, h_open, h_end, ParserState.withMath, h_math_ok, tk'] using h_success
+        have h_wf_loop :
+            WellFormedDB (ParserState.djvars_loop arr s (s.mkPos i) tk').db :=
+          djvars_loop_maintains_wf arr s (s.mkPos i) tk' h_wf h_success_loop
+        simpa [ParserState.feedToken, h_tokp, h_open, h_end, ParserState.withMath, h_math_ok, tk'] using h_wf_loop
+      · have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+          simp [ParserState.feedToken, h_tokp, h_open, h_end, ParserState.withMath, h_math_ok,
+            ParserState.mkError, ParserState.withDB, DB.mkError]
+        exact (h_bad h_success).elim
 
 /-- `djvars_loop` preserves `WellScopedDBWithScopes` on success. -/
 theorem djvars_loop_maintains_scopedWithScopes
@@ -6533,13 +7405,25 @@ theorem djvars_loop_maintains_scopedWithScopes
     (h_ok : ScopesOk s.db)
     (h_tokp : TokpInv s.db (.djvars arr))
     (h_var : s.db.isVar tk = true)
-    (h_in_scope : s.db.floatVarOccursInFrame tk = true)
     (h_success : (ParserState.djvars_loop arr s pos tk).db.error? = none) :
     WellScopedDBWithScopes (ParserState.djvars_loop arr s pos tk).db := by
   unfold ParserState.djvars_loop at h_success ⊢
-  simp [h_var, h_in_scope] at h_success ⊢
+  simp [h_var] at h_success ⊢
   exact djvars_loop_aux_maintains_scopedWithScopes arr s pos tk 0
-    h_wf h_scoped h_ok h_tokp h_var h_in_scope h_success
+    h_wf h_scoped h_ok h_tokp h_var h_success
+
+/-- `djvars_loop` preserves `TokpInv` on success. -/
+theorem djvars_loop_maintains_tokpInv
+    (arr : Array String) (s : ParserState) (pos : Pos) (tk : String)
+    (h_tokp : TokpInv s.db (.djvars arr))
+    (h_var : s.db.isVar tk = true)
+    (h_success : (ParserState.djvars_loop arr s pos tk).db.error? = none) :
+    TokpInv (ParserState.djvars_loop arr s pos tk).db
+      (ParserState.djvars_loop arr s pos tk).tokp := by
+  unfold ParserState.djvars_loop at h_success ⊢
+  simp [h_var] at h_success ⊢
+  exact djvars_loop_aux_maintains_tokpInv arr s pos tk 0
+    h_tokp h_var h_success
 
 /-- In `.djvars` mode, successful `feedToken` preserves `WellScopedDBWithScopes`. -/
 theorem feedToken_djvars_maintains_scopedWithScopes
@@ -6565,26 +7449,88 @@ theorem feedToken_djvars_maintains_scopedWithScopes
             (ParserState.djvars_loop arr s (s.mkPos i) tk').db.error? = none := by
           simpa [ParserState.feedToken, h_tokp, h_open, h_end, ParserState.withMath, h_math_ok, tk'] using h_success
         have h_var : s.db.isVar tk' = true := by
-          by_cases h_var : s.db.isVar tk'
+          by_cases h_var : s.db.isVar tk' = true
           · exact h_var
           · have h_bad :
               (ParserState.djvars_loop arr s (s.mkPos i) tk').db.error? ≠ none := by
               simp [ParserState.djvars_loop, h_var, ParserState.mkError, ParserState.withDB, DB.mkError]
-            exact (h_bad h_success_loop).elim
-        have h_in_scope : s.db.floatVarOccursInFrame tk' = true := by
-          by_cases h_float : s.db.floatVarOccursInFrame tk'
-          · exact h_float
-          · have h_bad :
-              (ParserState.djvars_loop arr s (s.mkPos i) tk').db.error? ≠ none := by
-              simp [ParserState.djvars_loop, h_var, h_float, ParserState.mkError, ParserState.withDB, DB.mkError]
             exact (h_bad h_success_loop).elim
         have h_tokp' : TokpInv s.db (.djvars arr) := by
           simpa [h_tokp] using h_tokp_inv
         have h_scoped_loop :
             WellScopedDBWithScopes (ParserState.djvars_loop arr s (s.mkPos i) tk').db := by
           exact djvars_loop_maintains_scopedWithScopes arr s (s.mkPos i) tk'
-            h_wf h_scoped h_ok h_tokp' h_var h_in_scope h_success_loop
+            h_wf h_scoped h_ok h_tokp' h_var h_success_loop
         simpa [ParserState.feedToken, h_tokp, h_open, h_end, ParserState.withMath, h_math_ok, tk'] using h_scoped_loop
+      · have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+          simp [ParserState.feedToken, h_tokp, h_open, h_end, ParserState.withMath, h_math_ok,
+            ParserState.mkError, ParserState.withDB, DB.mkError]
+        exact (h_bad h_success).elim
+
+/-- In `.djvars` mode, successful `feedToken` preserves `ScopesOk`. -/
+theorem feedToken_djvars_maintains_scopesOk
+    (s : ParserState) (i : Nat) (tk : ByteSlice) (arr : Array String)
+    (h_tokp : s.tokp = .djvars arr)
+    (h_ok : ScopesOk s.db)
+    (h_success : (s.feedToken i tk).db.error? = none) :
+    ScopesOk (s.feedToken i tk).db := by
+  by_cases h_open : tk.eqArray "$(".toAscii
+  · have h_db_eq : (s.feedToken i tk).db = s.db := by
+      simp [ParserState.feedToken, h_tokp, h_open]
+    simpa [h_db_eq] using h_ok
+  · by_cases h_end : tk.eqArray "$.".toAscii
+    · have h_db_eq : (s.feedToken i tk).db = s.db := by
+        simp [ParserState.feedToken, h_tokp, h_open, h_end]
+      simpa [h_db_eq] using h_ok
+    · by_cases h_math_ok : (toMath tk).fst = true
+      · let tk' := (toMath tk).snd
+        have h_success_loop :
+            (ParserState.djvars_loop arr s (s.mkPos i) tk').db.error? = none := by
+          simpa [ParserState.feedToken, h_tokp, h_open, h_end, ParserState.withMath, h_math_ok, tk'] using h_success
+        have h_ok_loop :
+            ScopesOk (ParserState.djvars_loop arr s (s.mkPos i) tk').db :=
+          djvars_loop_maintains_scopesOk arr s (s.mkPos i) tk' h_ok h_success_loop
+        simpa [ParserState.feedToken, h_tokp, h_open, h_end, ParserState.withMath, h_math_ok, tk'] using h_ok_loop
+      · have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+          simp [ParserState.feedToken, h_tokp, h_open, h_end, ParserState.withMath, h_math_ok,
+            ParserState.mkError, ParserState.withDB, DB.mkError]
+        exact (h_bad h_success).elim
+
+/-- In `.djvars` mode, successful `feedToken` preserves `TokpInv`. -/
+theorem feedToken_djvars_maintains_tokpInv
+    (s : ParserState) (i : Nat) (tk : ByteSlice) (arr : Array String)
+    (h_tokp : s.tokp = .djvars arr)
+    (h_wf : WellFormedDB s.db)
+    (h_scoped : WellScopedDBWithScopes s.db)
+    (h_tokp_inv : TokpInv s.db s.tokp)
+    (h_success : (s.feedToken i tk).db.error? = none) :
+    TokpInv (s.feedToken i tk).db (s.feedToken i tk).tokp := by
+  by_cases h_open : tk.eqArray "$(".toAscii
+  · have h_tokp' : TokpInv s.db (.djvars arr) := by
+      simpa [h_tokp] using h_tokp_inv
+    simpa [ParserState.feedToken, h_tokp, h_open, TokpInv] using h_tokp'
+  · by_cases h_end : tk.eqArray "$.".toAscii
+    · simp [ParserState.feedToken, h_tokp, h_open, h_end, TokpInv]
+    · by_cases h_math_ok : (toMath tk).fst = true
+      · let tk' := (toMath tk).snd
+        have h_success_loop :
+            (ParserState.djvars_loop arr s (s.mkPos i) tk').db.error? = none := by
+          simpa [ParserState.feedToken, h_tokp, h_open, h_end, ParserState.withMath, h_math_ok, tk'] using h_success
+        have h_var : s.db.isVar tk' = true := by
+          by_cases h_var : s.db.isVar tk' = true
+          · exact h_var
+          · have h_bad :
+              (ParserState.djvars_loop arr s (s.mkPos i) tk').db.error? ≠ none := by
+              simp [ParserState.djvars_loop, h_var, ParserState.mkError, ParserState.withDB, DB.mkError]
+            exact (h_bad h_success_loop).elim
+        have h_tokp' : TokpInv s.db (.djvars arr) := by
+          simpa [h_tokp] using h_tokp_inv
+        have h_tokp_loop :
+            TokpInv (ParserState.djvars_loop arr s (s.mkPos i) tk').db
+              (ParserState.djvars_loop arr s (s.mkPos i) tk').tokp := by
+          exact djvars_loop_maintains_tokpInv arr s (s.mkPos i) tk'
+            h_tokp' h_var h_success_loop
+        simpa [ParserState.feedToken, h_tokp, h_open, h_end, ParserState.withMath, h_math_ok, tk'] using h_tokp_loop
       · have h_bad : (s.feedToken i tk).db.error? ≠ none := by
           simp [ParserState.feedToken, h_tokp, h_open, h_end, ParserState.withMath, h_math_ok,
             ParserState.mkError, ParserState.withDB, DB.mkError]
@@ -6633,6 +7579,612 @@ theorem feedProof_success_db
       have : (s.mkError pr.pos msg).db.error? = none := by
         simpa [h_go] using h_inner_ok
       exact (h_bad this).elim
+
+theorem stepAssert_ok_preserves_core
+    (db : DB) (pr : ProofState) (f : Formula) (fr : Frame) (pr' : ProofState)
+    (h_ok : db.stepAssert pr f fr = .ok pr') :
+    pr'.fmla = pr.fmla ∧ pr'.frame = pr.frame := by
+  cases fr with
+  | mk dj hyps =>
+      unfold DB.stepAssert at h_ok
+      by_cases h_size : hyps.size ≤ pr.stack.size
+      · simp [h_size] at h_ok
+        by_cases h_head : f.hasConstHead
+        · simp [h_head] at h_ok
+          by_cases h_syms : db.formulaSymsRespectFrame f { dj := dj, hyps := hyps }
+          · simp [h_syms] at h_ok
+            let off : {off // off + hyps.size = pr.stack.size} :=
+              ⟨pr.stack.size - hyps.size, Nat.sub_add_cancel h_size⟩
+            cases h_chk : db.checkHyp hyps pr.stack off 0 ∅ with
+            | error err =>
+                simp [off, h_chk, Bind.bind, Except.bind, Pure.pure] at h_ok
+            | ok subst =>
+                cases h_dv : DB.dvCheck (db.frameFloatVars pr.frame) pr.frame.dj dj subst with
+                | error err =>
+                    simp [off, h_chk, h_dv, Bind.bind, Except.bind, Pure.pure] at h_ok
+                | ok _ =>
+                    cases h_subst : Formula.subst subst f with
+                    | error err =>
+                        simp [off, h_chk, h_dv, h_subst, Bind.bind, Except.bind, Pure.pure] at h_ok
+                        have h_map_err :
+                            ((fun a =>
+                                { pos := pr.pos, label := pr.label, fmla := pr.fmla, frame := pr.frame,
+                                  heap := pr.heap,
+                                  stack := (pr.stack.extract 0 (pr.stack.size - hyps.size)).push a,
+                                  ptp := pr.ptp }) <$> (Except.error err : Except String Formula))
+                              = (Except.error err : Except String ProofState) := by
+                          rfl
+                        have h_bad : (Except.error err : Except String ProofState) = Except.ok pr' := by
+                          simpa [h_map_err] using h_ok
+                        cases h_bad
+                    | ok concl =>
+                        have h_ok' :
+                            (Except.ok
+                              ({ pos := pr.pos, label := pr.label, fmla := pr.fmla, frame := pr.frame,
+                                 heap := pr.heap,
+                                 stack := (pr.stack.extract 0 (pr.stack.size - hyps.size)).push concl,
+                                 ptp := pr.ptp } : ProofState) : Except String ProofState)
+                              = (Except.ok pr' : Except String ProofState) := by
+                          simpa [off, h_chk, h_dv, h_subst, Bind.bind, Except.bind, Pure.pure,
+                            Functor.map, Except.map] using h_ok
+                        injection h_ok' with hpr
+                        subst hpr
+                        simp
+          · simp [h_syms] at h_ok
+        · simp [h_head] at h_ok
+      · simp [h_size] at h_ok
+
+theorem preloadMandatoryHyps_ok_preserves_core
+    (db : DB) (pr pr' : ProofState)
+    (h_ok : db.preloadMandatoryHyps pr = .ok pr') :
+    pr'.fmla = pr.fmla ∧ pr'.frame = pr.frame := by
+  let body : String → ProofState → Except String (ForInStep ProofState) :=
+    fun lbl acc =>
+      match db.find? lbl with
+      | some (.hyp _ f _) => pure (.yield (acc.pushHeap (.fmla f)))
+      | _ => throw s!"mandatory hypothesis {lbl} not found in database"
+  have h_for : forIn pr.frame.hyps pr body = Except.ok pr' := by
+    unfold DB.preloadMandatoryHyps at h_ok
+    simpa [body] using h_ok
+  have h_for_list : forIn pr.frame.hyps.toList pr body = Except.ok pr' := by
+    calc
+      forIn pr.frame.hyps.toList pr body = forIn pr.frame.hyps pr body := by
+        simpa using (Array.forIn_toList (xs := pr.frame.hyps) (b := pr) (f := body))
+      _ = Except.ok pr' := h_for
+  have h_aux :
+      ∀ (labels : List String) (acc acc' : ProofState),
+        forIn labels acc body = Except.ok acc' →
+        acc'.fmla = acc.fmla ∧ acc'.frame = acc.frame := by
+    intro labels
+    induction labels with
+    | nil =>
+        intro acc acc' h
+        simp [body] at h
+        cases h
+        exact ⟨rfl, rfl⟩
+    | cons lbl rest ih =>
+        intro acc acc' h
+        simp [List.forIn_cons, body] at h
+        cases h_find : db.find? lbl with
+        | none =>
+            simp [h_find, Bind.bind, Except.bind] at h
+        | some obj =>
+            cases obj with
+            | const _ =>
+                simp [h_find, Bind.bind, Except.bind] at h
+            | var _ =>
+                simp [h_find, Bind.bind, Except.bind] at h
+            | assert _ _ _ =>
+                simp [h_find, Bind.bind, Except.bind] at h
+            | hyp _ f _ =>
+                have h_tail : forIn rest (acc.pushHeap (.fmla f)) body = Except.ok acc' := by
+                  simpa [h_find] using h
+                have h_core := ih (acc.pushHeap (.fmla f)) acc' h_tail
+                simpa [ProofState.pushHeap] using h_core
+  exact h_aux pr.frame.hyps.toList pr pr' h_for_list
+
+theorem preload_ok_preserves_core
+    (db : DB) (pr pr' : ProofState) (label : String)
+    (h_ok : db.preload pr label = .ok pr') :
+    pr'.fmla = pr.fmla ∧ pr'.frame = pr.frame := by
+  unfold DB.preload at h_ok
+  cases h_find : db.find? label with
+  | none =>
+      simp [h_find] at h_ok
+  | some obj =>
+      cases obj with
+      | const _ =>
+          simp [h_find] at h_ok
+      | var _ =>
+          simp [h_find] at h_ok
+      | hyp _ f _ =>
+          by_cases h_mem : label ∈ db.frame.hyps.toList
+          · simp [h_find, h_mem] at h_ok
+            injection h_ok with hpr
+            subst hpr
+            simp [ProofState.pushHeap]
+          · simp [h_find, h_mem] at h_ok
+      | assert f fr _ =>
+          simp [h_find] at h_ok
+          injection h_ok with hpr
+          subst hpr
+          simp [ProofState.pushHeap]
+
+theorem stepNormal_ok_preserves_core
+    (db : DB) (pr pr' : ProofState) (label : String)
+    (h_ok : db.stepNormal pr label = .ok pr') :
+    pr'.fmla = pr.fmla ∧ pr'.frame = pr.frame := by
+  unfold DB.stepNormal at h_ok
+  cases h_find : db.find? label with
+  | none =>
+      simp [h_find] at h_ok
+  | some obj =>
+      cases obj with
+      | const _ =>
+          simp [h_find] at h_ok
+      | var _ =>
+          simp [h_find] at h_ok
+      | hyp ess f _ =>
+          by_cases h_mem : label ∈ db.frame.hyps.toList
+          · simp [h_find, h_mem] at h_ok
+            cases ess with
+            | true =>
+                by_cases h_head : f.hasConstHead
+                · simp [h_head] at h_ok
+                  injection h_ok with hpr
+                  subst hpr
+                  simp [ProofState.push]
+                · simp [h_head] at h_ok
+            | false =>
+                by_cases h_shape : f.isFloatShape
+                · simp [h_shape] at h_ok
+                  injection h_ok with hpr
+                  subst hpr
+                  simp [ProofState.push]
+                · simp [h_shape] at h_ok
+          · simp [h_find, h_mem] at h_ok
+      | assert f fr _ =>
+          simp [h_find] at h_ok
+          exact stepAssert_ok_preserves_core db pr f fr pr' h_ok
+
+theorem stepProof_ok_preserves_core
+    (db : DB) (pr pr' : ProofState) (n : Nat)
+    (h_ok : db.stepProof pr n = .ok pr') :
+    pr'.fmla = pr.fmla ∧ pr'.frame = pr.frame := by
+  unfold DB.stepProof at h_ok
+  cases h_heap : pr.heap[n]? with
+  | none =>
+      simp [h_heap] at h_ok
+  | some el =>
+      cases el with
+      | fmla f =>
+          simp [h_heap] at h_ok
+          injection h_ok with hpr
+          subst hpr
+          simp [ProofState.push]
+      | assert f fr =>
+          simp [h_heap] at h_ok
+          exact stepAssert_ok_preserves_core db pr f fr pr' h_ok
+
+theorem applyCompressedActions_ok_preserves_core
+    (db : DB) (pr pr' : ProofState) (acts : List ParserState.CompressedAction)
+    (h_ok : ParserState.applyCompressedActions db pr acts = .ok pr') :
+    pr'.fmla = pr.fmla ∧ pr'.frame = pr.frame := by
+  revert pr
+  induction acts with
+  | nil =>
+      intro pr h_ok
+      simp [ParserState.applyCompressedActions] at h_ok
+      cases h_ok
+      exact ⟨rfl, rfl⟩
+  | cons act rest ih =>
+      intro pr h_ok
+      simp [ParserState.applyCompressedActions, List.foldlM_cons] at h_ok
+      cases act with
+      | step n =>
+          cases h_step : db.stepProof pr n with
+          | error err =>
+              have h_bad : (Except.error err : Except String ProofState) = Except.ok pr' := by
+                simpa [h_step, Bind.bind, Except.bind] using h_ok
+              cases h_bad
+          | ok pr_mid =>
+              have h_rest :
+                  rest.foldlM
+                    (fun pr act =>
+                      match act with
+                      | ParserState.CompressedAction.step n => db.stepProof pr n
+                      | ParserState.CompressedAction.save => pr.save
+                      | ParserState.CompressedAction.unknown =>
+                          if db.config.rejectUnknownSteps then
+                            throw "unknown step '?' not allowed (config rejects incomplete proofs)"
+                          else
+                            pure (pr.push pr.fmla))
+                    pr_mid = .ok pr' := by
+                simpa [h_step] using h_ok
+              have h_mid := stepProof_ok_preserves_core db pr pr_mid n h_step
+              have h_tail := ih pr_mid h_rest
+              exact ⟨h_tail.1.trans h_mid.1, h_tail.2.trans h_mid.2⟩
+      | save =>
+          cases h_save : pr.save with
+          | error err =>
+              have h_bad : (Except.error err : Except String ProofState) = Except.ok pr' := by
+                simpa [h_save, Bind.bind, Except.bind] using h_ok
+              cases h_bad
+          | ok pr_mid =>
+              have h_rest :
+                  rest.foldlM
+                    (fun pr act =>
+                      match act with
+                      | ParserState.CompressedAction.step n => db.stepProof pr n
+                      | ParserState.CompressedAction.save => pr.save
+                      | ParserState.CompressedAction.unknown =>
+                          if db.config.rejectUnknownSteps then
+                            throw "unknown step '?' not allowed (config rejects incomplete proofs)"
+                          else
+                            pure (pr.push pr.fmla))
+                    pr_mid = .ok pr' := by
+                simpa [h_save] using h_ok
+              have h_mid : pr_mid.fmla = pr.fmla ∧ pr_mid.frame = pr.frame := by
+                unfold ProofState.save at h_save
+                cases h_back : pr.stack.back? with
+                | none =>
+                    simp [h_back] at h_save
+                | some f =>
+                    simp [h_back, ProofState.pushHeap] at h_save
+                    injection h_save with hpr
+                    subst hpr
+                    simp [ProofState.pushHeap]
+              have h_tail := ih pr_mid h_rest
+              exact ⟨h_tail.1.trans h_mid.1, h_tail.2.trans h_mid.2⟩
+      | unknown =>
+          by_cases h_reject : db.config.rejectUnknownSteps
+          · have h_bad :
+                (Except.error "unknown step '?' not allowed (config rejects incomplete proofs)" :
+                  Except String ProofState) = Except.ok pr' := by
+              simpa [h_reject, Bind.bind, Except.bind] using h_ok
+            cases h_bad
+          · have h_rest :
+                rest.foldlM
+                (fun pr act =>
+                  match act with
+                  | ParserState.CompressedAction.step n => db.stepProof pr n
+                  | ParserState.CompressedAction.save => pr.save
+                  | ParserState.CompressedAction.unknown =>
+                      if db.config.rejectUnknownSteps then
+                        throw "unknown step '?' not allowed (config rejects incomplete proofs)"
+                      else
+                          pure (pr.push pr.fmla))
+                  (pr.push pr.fmla) = .ok pr' := by
+              simpa [h_reject] using h_ok
+            have h_tail := ih (pr.push pr.fmla) h_rest
+            exact ⟨by simpa [ProofState.push] using h_tail.1, by simpa [ProofState.push] using h_tail.2⟩
+
+theorem feedProof_goNormal_ok_preserves_core
+    (s : ParserState) (tk : ByteSlice) (pr pr' : ProofState)
+    (h_ok : ParserState.feedProof.goNormal s tk pr = .ok pr') :
+    pr'.fmla = pr.fmla ∧ pr'.frame = pr.frame := by
+  unfold ParserState.feedProof.goNormal at h_ok
+  by_cases h_unknown : tk.eqArray "?".toAscii
+  · by_cases h_reject : s.db.config.rejectUnknownSteps
+    · simp [h_unknown, h_reject] at h_ok
+    · simp [h_unknown, h_reject] at h_ok
+      injection h_ok with hpr
+      subst hpr
+      simp [ProofState.push]
+  · by_cases h_lbl_ok : (toLabel tk).fst
+    · let tk' := (toLabel tk).snd
+      have h_step : s.db.stepNormal pr tk' = .ok pr' := by
+        simpa [h_unknown, h_lbl_ok, tk'] using h_ok
+      exact stepNormal_ok_preserves_core s.db pr pr' tk' h_step
+    · simp [h_unknown, h_lbl_ok] at h_ok
+
+theorem feedProof_go_ok_preserves_core
+    (s : ParserState) (tk : ByteSlice) (pr pr' : ProofState)
+    (h_ok : ParserState.feedProof.go s tk pr = .ok pr') :
+    pr'.fmla = pr.fmla ∧ pr'.frame = pr.frame := by
+  unfold ParserState.feedProof.go at h_ok
+  cases h_ptp : pr.ptp with
+  | start =>
+      by_cases h_open : tk.eqArray "(".toAscii
+      · cases h_pre : s.db.preloadMandatoryHyps pr with
+        | error msg =>
+            simp [h_ptp, h_open, h_pre] at h_ok
+            have h_map_err :
+                ((fun a =>
+                    { pos := a.pos, label := a.label, fmla := a.fmla, frame := a.frame, heap := a.heap,
+                      stack := a.stack, ptp := ProofTokenParser.preload }) <$>
+                  (Except.error msg : Except String ProofState))
+                  = (Except.error msg : Except String ProofState) := by
+              rfl
+            have h_bad : (Except.error msg : Except String ProofState) = Except.ok pr' := by
+              simpa [h_map_err] using h_ok
+            cases h_bad
+        | ok pr_mid =>
+            simp [h_ptp, h_open, h_pre] at h_ok
+            injection h_ok with hpr
+            subst hpr
+            have h_core := preloadMandatoryHyps_ok_preserves_core s.db pr pr_mid h_pre
+            simpa using h_core
+      · have h_norm : ParserState.feedProof.goNormal s tk { pr with ptp := .normal } = .ok pr' := by
+          simpa [h_ptp, h_open] using h_ok
+        have h_core := feedProof_goNormal_ok_preserves_core s tk { pr with ptp := .normal } pr' h_norm
+        simpa using h_core
+  | preload =>
+      by_cases h_close : tk.eqArray ")".toAscii
+      · simp [h_ptp, h_close] at h_ok
+        injection h_ok with hpr
+        subst hpr
+        simp
+      · by_cases h_lbl_ok : (toLabel tk).fst
+        · let tk' := (toLabel tk).snd
+          have h_pre : s.db.preload pr tk' = .ok pr' := by
+            simpa [h_ptp, h_close, h_lbl_ok, tk'] using h_ok
+          exact preload_ok_preserves_core s.db pr pr' tk' h_pre
+        · simp [h_ptp, h_close, h_lbl_ok] at h_ok
+  | normal =>
+      have h_norm : ParserState.feedProof.goNormal s tk pr = .ok pr' := by
+        simpa [h_ptp] using h_ok
+      exact feedProof_goNormal_ok_preserves_core s tk pr pr' h_norm
+  | compressed chr =>
+      cases h_dec : ParserState.decodeCompressed tk chr with
+      | error msg =>
+          simp [h_ptp, h_dec, Bind.bind, Except.bind] at h_ok
+      | ok dec =>
+          rcases dec with ⟨acts, chr'⟩
+          cases h_apply : ParserState.applyCompressedActions s.db pr acts with
+          | error msg =>
+              simp [h_ptp, h_dec, h_apply, Bind.bind, Except.bind, Functor.map, Except.map] at h_ok
+          | ok pr_mid =>
+              have h_eq :
+                  { pos := pr_mid.pos, label := pr_mid.label, fmla := pr_mid.fmla, frame := pr_mid.frame,
+                    heap := pr_mid.heap, stack := pr_mid.stack,
+                    ptp := ProofTokenParser.compressed chr' } = pr' := by
+                have h_ok' :
+                    (Except.pure
+                      ({ pos := pr_mid.pos, label := pr_mid.label, fmla := pr_mid.fmla, frame := pr_mid.frame,
+                         heap := pr_mid.heap, stack := pr_mid.stack,
+                         ptp := ProofTokenParser.compressed chr' } : ProofState)
+                      : Except String ProofState) = Except.ok pr' := by
+                  simpa [h_ptp, h_dec, h_apply, Bind.bind, Except.bind, Functor.map, Except.map] using h_ok
+                cases h_ok'
+                rfl
+              subst h_eq
+              have h_core := applyCompressedActions_ok_preserves_core s.db pr pr_mid acts h_apply
+              simpa using h_core
+
+theorem feedProof_success_tokpInv_core
+    (s : ParserState) (tk : ByteSlice) (pr : ProofState)
+    (h_success : (s.feedProof tk pr).db.error? = none) :
+    ∃ pr_mid,
+      (s.feedProof tk pr).tokp = .proof pr_mid ∧
+      pr_mid.fmla = pr.fmla ∧
+      pr_mid.frame = pr.frame := by
+  cases h_go : ParserState.feedProof.go s tk pr with
+  | error msg =>
+      have h_bad : (s.feedProof tk pr).db.error? ≠ none := by
+        unfold ParserState.feedProof
+        simp [h_go, ParserState.withAt, ParserState.mkError, ParserState.withDB, DB.mkError]
+      exact (h_bad h_success).elim
+  | ok pr_mid =>
+      have h_core := feedProof_go_ok_preserves_core s tk pr pr_mid h_go
+      refine ⟨pr_mid, ?_, h_core.1, h_core.2⟩
+      unfold ParserState.feedProof
+      simp [h_go, ParserState.withAt_tokp]
+
+theorem finishProof_tokp_start
+    (s : ParserState) (pr : ProofState) :
+    (s.finishProof pr).tokp = .start := by
+  cases pr with
+  | mk pos l fmla fr heap stack ptp =>
+      cases ptp with
+      | start =>
+          simp [ParserState.finishProof, ParserState.withAt_tokp, ParserState.withDB, ParserState.mkError]
+      | preload =>
+          simp [ParserState.finishProof, ParserState.withAt_tokp, ParserState.withDB, ParserState.mkError]
+      | normal =>
+          by_cases h_size : stack.size = 1
+          · simp [ParserState.finishProof, ParserState.withAt_tokp, ParserState.withDB, ParserState.mkError, h_size]
+            split <;> rfl
+          · simp [ParserState.finishProof, ParserState.withAt_tokp, ParserState.withDB, ParserState.mkError, h_size]
+      | compressed chr =>
+          by_cases h_chr : chr = 0
+          · subst h_chr
+            by_cases h_size : stack.size = 1
+            · simp [ParserState.finishProof, ParserState.withAt_tokp, ParserState.withDB, ParserState.mkError, h_size]
+              split <;> rfl
+            · simp [ParserState.finishProof, ParserState.withAt_tokp, ParserState.withDB, ParserState.mkError, h_size]
+          · simp [ParserState.finishProof, h_chr, ParserState.withAt_tokp, ParserState.withDB, ParserState.mkError]
+
+/-- In `.proof` mode, successful `feedToken` preserves `TokpInv`. -/
+theorem feedToken_proof_maintains_tokpInv
+    (s : ParserState) (i : Nat) (tk : ByteSlice) (pr : ProofState)
+    (h_tokp : s.tokp = .proof pr)
+    (h_tokp_inv : TokpInv s.db s.tokp)
+    (h_success : (s.feedToken i tk).db.error? = none) :
+    TokpInv (s.feedToken i tk).db (s.feedToken i tk).tokp := by
+  by_cases h_open : tk.eqArray "$(".toAscii
+  · have h_inv : TokpInv s.db (.proof pr) := by
+      simpa [h_tokp] using h_tokp_inv
+    simpa [ParserState.feedToken, h_tokp, h_open, TokpInv] using h_inv
+  · let s0 : ParserState := { s with tokp := default }
+    by_cases h_end : tk.eqArray "$.".toAscii
+    · have h_tokp_start : (s0.finishProof pr).tokp = .start := finishProof_tokp_start s0 pr
+      have h_tokp_out : (s.feedToken i tk).tokp = .start := by
+        simpa [ParserState.feedToken, h_tokp, h_open, h_end, s0] using h_tokp_start
+      simpa [h_tokp_out, TokpInv]
+    · have h_success_feed :
+          (s0.feedProof tk pr).db.error? = none := by
+        simpa [ParserState.feedToken, h_tokp, h_open, h_end, s0] using h_success
+      have h_db_eq' : (s0.feedProof tk pr).db = s.db := by
+        have h_db_eq := feedProof_success_db s0 tk pr h_success_feed
+        simpa [s0] using h_db_eq
+      obtain ⟨pr_mid, h_tokp_mid, h_fmla_eq, h_frame_eq⟩ :=
+        feedProof_success_tokpInv_core s0 tk pr h_success_feed
+      have h_inv : TokpInv s.db (.proof pr) := by
+        simpa [h_tokp] using h_tokp_inv
+      rcases h_inv with ⟨h_fmla_wf, h_frame_wf, h_frame_scoped, h_syms, h_decl⟩
+      have h_inv_mid : TokpInv s.db (.proof pr_mid) := by
+        refine ⟨?_, ?_, ?_, ?_, ?_⟩
+        · simpa [h_fmla_eq] using h_fmla_wf
+        · simpa [h_frame_eq] using h_frame_wf
+        · simpa [h_frame_eq] using h_frame_scoped
+        · simpa [h_fmla_eq, h_frame_eq] using h_syms
+        · simpa [h_fmla_eq] using h_decl
+      have h_tokp_out : (s.feedToken i tk).tokp = .proof pr_mid := by
+        simpa [ParserState.feedToken, h_tokp, h_open, h_end, s0] using h_tokp_mid
+      have h_db_eq : (s.feedToken i tk).db = s.db := by
+        simpa [ParserState.feedToken, h_tokp, h_open, h_end, s0] using h_db_eq'
+      simpa [h_db_eq, h_tokp_out] using h_inv_mid
+
+/-- In `.math` theorem mode, successful delimiter `$=` moves to `.proof`
+    with a token-parser invariant derived from `trimFrame'`. -/
+theorem feedToken_math_thm_delim_maintains_tokpInv
+    (s : ParserState) (i : Nat) (tk : ByteSlice) (arr : Formula) (pos : Pos) (label : String)
+    (h_tokp : s.tokp = .math arr ⟨.thm, pos, label⟩)
+    (h_wf : WellFormedDB s.db)
+    (h_scoped : WellScopedDBWithScopes s.db)
+    (h_no_err : s.db.error? = none)
+    (h_decl : FormulaSymbolsDeclared s.db arr)
+    (h_open : tk.eqArray "$(".toAscii = false)
+    (h_delim : tk.eqArray TokensKind.thm.delim = true)
+    (h_success : (s.feedToken i tk).db.error? = none) :
+    TokpInv (s.feedToken i tk).db (s.feedToken i tk).tokp := by
+  have h_success_feedTokens :
+      (s.feedTokens arr ⟨.thm, pos, label⟩).db.error? = none := by
+    simpa [ParserState.feedToken, h_tokp, h_open, h_delim] using h_success
+  have h_first : arr.size > 0 ∧ !arr[0]!.isVar :=
+    feedTokens_success_first_not_var s arr ⟨.thm, pos, label⟩ h_success_feedTokens
+  have h_notvar : arr[0]!.isVar = false := by
+    cases h_var : arr[0]!.isVar with
+    | false => rfl
+    | true =>
+        have : False := by
+          simpa [h_var] using h_first.2
+        exact False.elim this
+  have h_pos : 0 < arr.size := h_first.1
+  have h_head : Formula.hasConstHead arr = true := by
+    unfold Formula.hasConstHead
+    cases h_sym : arr[0]! with
+    | const _ =>
+        simp [h_pos]
+    | var _ =>
+        have : False := by
+          simp [Sym.isVar, h_sym] at h_notvar
+        exact False.elim this
+  cases h_trim : s.db.trimFrame' arr with
+  | error msg =>
+      have h_bad :
+          (ParserState.withAt label (fun _ => s.mkError pos msg)).db.error? ≠ none := by
+        simp [ParserState.withAt, ParserState.mkError, ParserState.withDB, DB.mkError]
+      have h_success' :
+          (ParserState.withAt label (fun _ => s.mkError pos msg)).db.error? = none := by
+        simpa [ParserState.feedTokens, h_head, h_trim] using h_success_feedTokens
+      exact (h_bad h_success').elim
+  | ok fr =>
+      by_cases h_interrupt : s.db.interrupt
+      · have h_bad :
+          (ParserState.withAt label (fun _ =>
+            ParserState.withDB
+              (fun db =>
+                { db with error? := some ⟨.thm pos label arr fr, default⟩ })
+              s)).db.error? ≠ none := by
+          simp [ParserState.withAt, ParserState.withDB]
+        have h_success' :
+            (ParserState.withAt label (fun _ =>
+              ParserState.withDB
+                (fun db =>
+                  { db with error? := some ⟨.thm pos label arr fr, default⟩ })
+                s)).db.error? = none := by
+          simpa [ParserState.feedTokens, h_head, h_trim, h_interrupt] using h_success_feedTokens
+        exact (h_bad h_success').elim
+      · have h_db_eq_feedTokens :
+            (s.feedTokens arr ⟨.thm, pos, label⟩).db = s.db := by
+          simp [ParserState.feedTokens, h_head, h_trim, h_interrupt,
+            ParserState.resumeThm, ParserState.withAt, h_no_err]
+        have h_tokp_eq_feedTokens :
+            (s.feedTokens arr ⟨.thm, pos, label⟩).tokp =
+              .proof (s.db.mkProofState pos label arr fr) := by
+          simp [ParserState.feedTokens, h_head, h_trim, h_interrupt,
+            ParserState.resumeThm, ParserState.withAt_tokp]
+        have h_fmla_wf : WellFormedFormula arr := wellFormedFormula_of_hasConstHead h_head
+        have h_frame_wf : WellFormedFrame s.db fr :=
+          trimFrame'_success_implies_wellformed_frame s.db arr fr h_wf h_trim
+        have h_frame_scoped : WellScopedFrame s.db fr :=
+          trimFrame'_success_implies_scoped_frame s.db arr fr h_scoped.1 h_trim
+        have h_syms_ok : DB.formulaSymsRespectFrame s.db arr fr = true :=
+          trimFrame'_success_implies_formulaSymsRespectFrame s.db arr fr h_wf h_scoped.1 h_decl h_trim
+        have h_tokp_proof : TokpInv s.db (.proof (s.db.mkProofState pos label arr fr)) := by
+          refine ⟨?_, ?_, ?_, ?_, ?_⟩
+          · simpa [DB.mkProofState] using h_fmla_wf
+          · simpa [DB.mkProofState] using h_frame_wf
+          · simpa [DB.mkProofState] using h_frame_scoped
+          · simpa [DB.mkProofState] using h_syms_ok
+          · simpa [DB.mkProofState] using h_decl
+        have h_db_eq : (s.feedToken i tk).db = s.db := by
+          simpa [ParserState.feedToken, h_tokp, h_open, h_delim] using h_db_eq_feedTokens
+        have h_tokp_eq :
+            (s.feedToken i tk).tokp = .proof (s.db.mkProofState pos label arr fr) := by
+          simpa [ParserState.feedToken, h_tokp, h_open, h_delim] using h_tokp_eq_feedTokens
+        simpa [h_db_eq, h_tokp_eq] using h_tokp_proof
+
+/-- In `.math` mode with non-delimiter token, success appends a declared symbol
+    and preserves the `.math` token invariant. -/
+theorem feedToken_math_continue_maintains_tokpInv
+    (s : ParserState) (i : Nat) (tk : ByteSlice) (arr : Formula) (p : TokensParser)
+    (h_tokp : s.tokp = .math arr p)
+    (h_decl : FormulaSymbolsDeclared s.db arr)
+    (h_open : tk.eqArray "$(".toAscii = false)
+    (h_delim : tk.eqArray p.k.delim = false)
+    (h_success : (s.feedToken i tk).db.error? = none) :
+    TokpInv (s.feedToken i tk).db (s.feedToken i tk).tokp := by
+  by_cases h_math_ok : (toMath tk).fst = true
+  · let tk' := (toMath tk).snd
+    cases h_find : s.db.find? tk' with
+    | none =>
+        have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+          simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+            h_math_ok, tk', h_find, ParserState.mkError, ParserState.withDB, DB.mkError]
+        exact (h_bad h_success).elim
+    | some obj =>
+        cases obj with
+        | const _ =>
+            have h_sym : s.db.isConst tk' = true := by
+              simp [DB.isConst, h_find]
+            have h_decl' : FormulaSymbolsDeclared s.db (arr.push (.const tk')) :=
+              FormulaSymbolsDeclared.push s.db arr (.const tk') h_decl (by simpa using h_sym)
+            have h_db_eq : (s.feedToken i tk).db = s.db := by
+              simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+                h_math_ok, tk', h_find, Bind.bind, Pure.pure]
+            have h_tokp_eq : (s.feedToken i tk).tokp = .math (arr.push (.const tk')) p := by
+              simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+                h_math_ok, tk', h_find, Bind.bind, Pure.pure]
+            simpa [h_db_eq, h_tokp_eq, TokpInv] using h_decl'
+        | var _ =>
+            have h_sym : s.db.isVar tk' = true := by
+              simp [DB.isVar, h_find]
+            have h_decl' : FormulaSymbolsDeclared s.db (arr.push (.var tk')) :=
+              FormulaSymbolsDeclared.push s.db arr (.var tk') h_decl (by simpa using h_sym)
+            have h_db_eq : (s.feedToken i tk).db = s.db := by
+              simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+                h_math_ok, tk', h_find, Bind.bind, Pure.pure]
+            have h_tokp_eq : (s.feedToken i tk).tokp = .math (arr.push (.var tk')) p := by
+              simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+                h_math_ok, tk', h_find, Bind.bind, Pure.pure]
+            simpa [h_db_eq, h_tokp_eq, TokpInv] using h_decl'
+        | hyp _ _ _ =>
+            have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+              simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+                h_math_ok, tk', h_find, ParserState.mkError, ParserState.withDB, DB.mkError]
+            exact (h_bad h_success).elim
+        | assert _ _ _ =>
+            have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+              simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+                h_math_ok, tk', h_find, ParserState.mkError, ParserState.withDB, DB.mkError]
+            exact (h_bad h_success).elim
+  · have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+      simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+        h_math_ok, ParserState.mkError, ParserState.withDB, DB.mkError]
+    exact (h_bad h_success).elim
 
 theorem finishProof_success_insert
     (s : ParserState) (pr : ProofState)
@@ -6723,6 +8275,75 @@ theorem finishProof_success_insert
               simp [ParserState.finishProof, h_chr, ParserState.withAt, ParserState.mkError, ParserState.withDB, DB.mkError]
             exact (h_bad h_success).elim
 
+/-- In `.proof` mode, successful `feedToken` preserves `WellFormedDB`. -/
+theorem feedToken_proof_maintains_wf
+    (s : ParserState) (i : Nat) (tk : ByteSlice) (pr : ProofState)
+    (h_tokp : s.tokp = .proof pr)
+    (h_wf : WellFormedDB s.db)
+    (h_no_err : s.db.error? = none)
+    (h_tokp_inv : TokpInv s.db s.tokp)
+    (h_success : (s.feedToken i tk).db.error? = none) :
+    WellFormedDB (s.feedToken i tk).db := by
+  by_cases h_open : tk.eqArray "$(".toAscii
+  · have h_db_eq : (s.feedToken i tk).db = s.db := by
+      simp [ParserState.feedToken, h_tokp, h_open]
+    simpa [h_db_eq] using h_wf
+  · cases pr with
+    | mk pos l fmla fr heap stack ptp =>
+        by_cases h_end : tk.eqArray "$.".toAscii
+        · let s0 : ParserState := { s with tokp := default }
+          have h_success_finish :
+              (s0.finishProof ⟨pos, l, fmla, fr, heap, stack, ptp⟩).db.error? = none := by
+            simpa [ParserState.feedToken, h_tokp, h_open, h_end, s0] using h_success
+          have h_tokp' : TokpInv s.db (.proof ⟨pos, l, fmla, fr, heap, stack, ptp⟩) := by
+            simpa [h_tokp] using h_tokp_inv
+          rcases h_tokp' with ⟨h_fmla_wf, h_frame_wf, _h_frame_scoped, _h_syms, _h_decl⟩
+          have h_finish := finishProof_success_insert s0 ⟨pos, l, fmla, fr, heap, stack, ptp⟩ h_success_finish
+          rcases h_finish with ⟨h_db_eq_finish, h_insert_ok⟩
+          have h_db_eq_finish' :
+              (s0.finishProof ⟨pos, l, fmla, fr, heap, stack, ptp⟩).db =
+                s.db.insert pos l (.assert fmla fr) := by
+            simpa [s0] using h_db_eq_finish
+          have h_insert_ok' : (s.db.insert pos l (.assert fmla fr)).error? = none := by
+            simpa [s0] using h_insert_ok
+          have h_fresh_db : s.db.find? l = none := by
+            exact insert_success_nonvar_fresh s.db pos l (.assert fmla fr)
+              h_no_err h_insert_ok' (by intro v h_eq; cases h_eq)
+          have h_fresh_label :
+              ∀ (j : Nat) (hj : j < s.db.frame.hyps.size), s.db.frame.hyps[j]'hj ≠ l := by
+            exact fresh_not_in_frame_of_wfFrame s.db s.db.frame l h_wf.1 h_fresh_db
+          have h_fresh_in_asserts :
+              ∀ (lbl : String) (fmla' : Formula) (fr_assert : Frame) (name : String),
+                s.db.find? lbl = some (.assert fmla' fr_assert name) →
+                ∀ (j : Nat) (hj : j < fr_assert.hyps.size), fr_assert.hyps[j]'hj ≠ l := by
+            exact fresh_not_in_assert_frames_of_wf s.db h_wf l h_fresh_db
+          have h_fresh_in_frame :
+              ∀ (j : Nat) (hj : j < fr.hyps.size), fr.hyps[j]'hj ≠ l := by
+            exact fresh_not_in_frame_of_wfFrame s.db fr l h_frame_wf h_fresh_db
+          have h_first : fmla.size > 0 ∧ !fmla[0]!.isVar := by
+            refine ⟨WellFormedFormula.size_pos h_fmla_wf, ?_⟩
+            rcases WellFormedFormula.head_const h_fmla_wf with ⟨c, h_head⟩
+            simp [h_head, Sym.isVar]
+          have h_wf_insert :
+              WellFormedDB (s.db.insert pos l (.assert fmla fr)) := by
+            exact insertAxiom_insert_part_maintains_wf s.db pos l fmla fr
+              h_wf h_no_err h_first h_frame_wf h_fresh_in_frame
+              h_fresh_db h_fresh_label h_fresh_in_asserts h_insert_ok'
+          have h_db_eq :
+              (s.feedToken i tk).db = s.db.insert pos l (.assert fmla fr) := by
+            simpa [ParserState.feedToken, h_tokp, h_open, h_end, s0] using h_db_eq_finish'
+          simpa [h_db_eq] using h_wf_insert
+        · let s0 : ParserState := { s with tokp := default }
+          have h_success_feed :
+              (s0.feedProof tk ⟨pos, l, fmla, fr, heap, stack, ptp⟩).db.error? = none := by
+            simpa [ParserState.feedToken, h_tokp, h_open, h_end, s0] using h_success
+          have h_db_eq' : (s0.feedProof tk ⟨pos, l, fmla, fr, heap, stack, ptp⟩).db = s.db := by
+            have h_db_eq := feedProof_success_db s0 tk ⟨pos, l, fmla, fr, heap, stack, ptp⟩ h_success_feed
+            simpa [s0] using h_db_eq
+          have h_db_eq : (s.feedToken i tk).db = s.db := by
+            simpa [ParserState.feedToken, h_tokp, h_open, h_end, s0] using h_db_eq'
+          simpa [h_db_eq] using h_wf
+
 /-- In `.proof` mode, successful `feedToken` preserves `WellScopedDBWithScopes`. -/
 theorem feedToken_proof_maintains_scopedWithScopes
     (s : ParserState) (i : Nat) (tk : ByteSlice) (pr : ProofState)
@@ -6782,5 +8403,1295 @@ theorem feedToken_proof_maintains_scopedWithScopes
             simpa [ParserState.feedToken, h_tokp, h_open, h_end, s0] using h_db_eq'
           simpa [h_db_eq] using h_scoped
 
+/-- In `.proof` mode, successful `feedToken` preserves `ScopesOk`. -/
+theorem feedToken_proof_maintains_scopesOk
+    (s : ParserState) (i : Nat) (tk : ByteSlice) (pr : ProofState)
+    (h_tokp : s.tokp = .proof pr)
+    (h_ok : ScopesOk s.db)
+    (h_success : (s.feedToken i tk).db.error? = none) :
+    ScopesOk (s.feedToken i tk).db := by
+  by_cases h_open : tk.eqArray "$(".toAscii
+  · have h_db_eq : (s.feedToken i tk).db = s.db := by
+      simp [ParserState.feedToken, h_tokp, h_open]
+    simpa [h_db_eq] using h_ok
+  · cases pr with
+    | mk pos l fmla fr heap stack ptp =>
+        by_cases h_end : tk.eqArray "$.".toAscii
+        · let s0 : ParserState := { s with tokp := default }
+          have h_success_finish :
+              (s0.finishProof ⟨pos, l, fmla, fr, heap, stack, ptp⟩).db.error? = none := by
+            simpa [ParserState.feedToken, h_tokp, h_open, h_end, s0] using h_success
+          have h_finish := finishProof_success_insert s0 ⟨pos, l, fmla, fr, heap, stack, ptp⟩ h_success_finish
+          rcases h_finish with ⟨h_db_eq_finish, _h_insert_ok⟩
+          have h_db_eq_finish' :
+              (s0.finishProof ⟨pos, l, fmla, fr, heap, stack, ptp⟩).db =
+                s.db.insert pos l (.assert fmla fr) := by
+            simpa [s0] using h_db_eq_finish
+          have h_ok_insert : ScopesOk (s.db.insert pos l (.assert fmla fr)) :=
+            scopesOk_insert s.db pos l (.assert fmla fr) h_ok
+          have h_db_eq :
+              (s.feedToken i tk).db = s.db.insert pos l (.assert fmla fr) := by
+            simpa [ParserState.feedToken, h_tokp, h_open, h_end, s0] using h_db_eq_finish'
+          simpa [h_db_eq] using h_ok_insert
+        · let s0 : ParserState := { s with tokp := default }
+          have h_success_feed :
+              (s0.feedProof tk ⟨pos, l, fmla, fr, heap, stack, ptp⟩).db.error? = none := by
+            simpa [ParserState.feedToken, h_tokp, h_open, h_end, s0] using h_success
+          have h_db_eq' : (s0.feedProof tk ⟨pos, l, fmla, fr, heap, stack, ptp⟩).db = s.db := by
+            have h_db_eq := feedProof_success_db s0 tk ⟨pos, l, fmla, fr, heap, stack, ptp⟩ h_success_feed
+            simpa [s0] using h_db_eq
+          have h_db_eq : (s.feedToken i tk).db = s.db := by
+            simpa [ParserState.feedToken, h_tokp, h_open, h_end, s0] using h_db_eq'
+          simpa [h_db_eq] using h_ok
+
+/-- Mode-dispatch wrapper: successful `feedToken` preserves `TokpInv`
+    in every token-parser mode. -/
+theorem feedToken_maintains_tokpInv
+    (s : ParserState) (i : Nat) (tk : ByteSlice)
+    (h_wf : WellFormedDB s.db)
+    (h_scoped : WellScopedDBWithScopes s.db)
+    (h_ok : ScopesOk s.db)
+    (h_no_err : s.db.error? = none)
+    (h_no_dup : s.db.config.allowDuplicateFloat = false)
+    (h_tokp_inv : TokpInv s.db s.tokp)
+    (h_success : (s.feedToken i tk).db.error? = none) :
+    TokpInv (s.feedToken i tk).db (s.feedToken i tk).tokp := by
+  cases h_tokp : s.tokp with
+  | start =>
+      cases h_open : tk.eqArray "$(".toAscii with
+      | true =>
+          have h_inv : TokpInv s.db (.comment .start) := by
+            simp [TokpInv]
+          have h_db_eq : (s.feedToken i tk).db = s.db := by
+            simp [ParserState.feedToken, h_tokp, h_open]
+          have h_tokp_eq : (s.feedToken i tk).tokp = .comment .start := by
+            simp [ParserState.feedToken, h_tokp, h_open]
+          simpa [h_db_eq, h_tokp_eq] using h_inv
+      | false =>
+          cases h_cmd : (tk.len == 2 && tk[0]! == '$'.toUInt8) with
+          | true =>
+              by_cases h_lbrace : tk[1]!.toChar = '{'
+              · have h_inv_push :
+                    TokpInv (ParserState.withDB DB.pushScope s).db (ParserState.withDB DB.pushScope s).tokp := by
+                  simp [ParserState.withDB, TokpInv, h_tokp]
+                simpa [ParserState.feedToken, h_tokp, h_open, h_cmd, h_lbrace] using h_inv_push
+              · by_cases h_rbrace : tk[1]!.toChar = '}'
+                · have h_inv_pop :
+                      TokpInv
+                        (ParserState.withDB (DB.popScope (s.mkPos i)) s).db
+                        (ParserState.withDB (DB.popScope (s.mkPos i)) s).tokp := by
+                    simp [ParserState.withDB, TokpInv, h_tokp]
+                  simpa [ParserState.feedToken, h_tokp, h_open, h_cmd, h_lbrace, h_rbrace] using h_inv_pop
+                · by_cases h_c : tk[1]!.toChar = 'c'
+                  · simp [ParserState.feedToken, h_tokp, h_open, h_cmd, h_lbrace, h_rbrace, h_c, TokpInv,
+                      FormulaSymbolsDeclared.nil]
+                  · by_cases h_v : tk[1]!.toChar = 'v'
+                    · simp [ParserState.feedToken, h_tokp, h_open, h_cmd, h_lbrace, h_rbrace, h_c, h_v,
+                        TokpInv, FormulaSymbolsDeclared.nil]
+                    · by_cases h_d : tk[1]!.toChar = 'd'
+                      · simp [ParserState.feedToken, h_tokp, h_open, h_cmd, h_lbrace, h_rbrace, h_c, h_v, h_d,
+                          TokpInv, FormulaSymbolsDeclared.nil]
+                      · have h_inv_label :
+                            TokpInv (s.label (s.mkPos i) tk).db (s.label (s.mkPos i) tk).tokp := by
+                          cases h_lbl : (toLabel tk).fst <;>
+                            simp [ParserState.label, TokpInv, ParserState.mkError, ParserState.withDB, h_tokp, h_lbl]
+                        simpa [ParserState.feedToken, h_tokp, h_open, h_cmd,
+                          h_lbrace, h_rbrace, h_c, h_v, h_d] using h_inv_label
+          | false =>
+              have h_inv_label :
+                  TokpInv (s.label (s.mkPos i) tk).db (s.label (s.mkPos i) tk).tokp := by
+                cases h_lbl : (toLabel tk).fst <;>
+                  simp [ParserState.label, TokpInv, ParserState.mkError, ParserState.withDB, h_tokp, h_lbl]
+              simpa [ParserState.feedToken, h_tokp, h_open, h_cmd] using h_inv_label
+  | const =>
+      cases h_open : tk.eqArray "$(".toAscii with
+      | true =>
+          have h_inv : TokpInv s.db (.comment .const) := by
+            simp [TokpInv]
+          have h_db_eq : (s.feedToken i tk).db = s.db := by
+            simp [ParserState.feedToken, h_tokp, h_open]
+          have h_tokp_eq : (s.feedToken i tk).tokp = .comment .const := by
+            simp [ParserState.feedToken, h_tokp, h_open]
+          simpa [h_db_eq, h_tokp_eq] using h_inv
+      | false =>
+          have h_inv_sym :
+              TokpInv (s.sym (s.mkPos i) tk Object.const).db
+                (s.sym (s.mkPos i) tk Object.const).tokp := by
+            cases h_end : tk.eqArray "$.".toAscii <;>
+              cases h_math : (toMath tk).fst <;>
+                simp [ParserState.sym, ParserState.withMath, TokpInv, ParserState.mkError,
+                  ParserState.withDB, h_tokp, h_end, h_math]
+          simpa [ParserState.feedToken, h_tokp, h_open] using h_inv_sym
+  | var =>
+      cases h_open : tk.eqArray "$(".toAscii with
+      | true =>
+          have h_inv : TokpInv s.db (.comment .var) := by
+            simp [TokpInv]
+          have h_db_eq : (s.feedToken i tk).db = s.db := by
+            simp [ParserState.feedToken, h_tokp, h_open]
+          have h_tokp_eq : (s.feedToken i tk).tokp = .comment .var := by
+            simp [ParserState.feedToken, h_tokp, h_open]
+          simpa [h_db_eq, h_tokp_eq] using h_inv
+      | false =>
+          have h_inv_sym :
+              TokpInv (s.sym (s.mkPos i) tk Object.var).db
+                (s.sym (s.mkPos i) tk Object.var).tokp := by
+            cases h_end : tk.eqArray "$.".toAscii <;>
+              cases h_math : (toMath tk).fst <;>
+                simp [ParserState.sym, ParserState.withMath, TokpInv, ParserState.mkError,
+                  ParserState.withDB, h_tokp, h_end, h_math]
+          simpa [ParserState.feedToken, h_tokp, h_open] using h_inv_sym
+  | djvars arr =>
+      exact feedToken_djvars_maintains_tokpInv s i tk arr
+        h_tokp h_wf h_scoped h_tokp_inv h_success
+  | proof pr =>
+      exact feedToken_proof_maintains_tokpInv s i tk pr
+        h_tokp h_tokp_inv h_success
+  | comment p =>
+      by_cases h_close : tk.eqArray "$)".toAscii
+      · have h_inv_p : TokpInv s.db p := by
+          simpa [h_tokp, TokpInv] using h_tokp_inv
+        have h_db_eq : (s.feedToken i tk).db = s.db := by
+          simp [ParserState.feedToken, h_tokp, h_close]
+        have h_tokp_eq : (s.feedToken i tk).tokp = p := by
+          simp [ParserState.feedToken, h_tokp, h_close]
+        simpa [h_db_eq, h_tokp_eq] using h_inv_p
+      · by_cases h_open : tk.eqArray "$(".toAscii
+        · have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+            simp [ParserState.feedToken, h_tokp, h_close, h_open,
+              ParserState.mkError, ParserState.withDB, DB.mkError]
+          exact (h_bad h_success).elim
+        · have h_inv : TokpInv s.db (.comment p) := by
+            simpa [h_tokp] using h_tokp_inv
+          have h_db_eq : (s.feedToken i tk).db = s.db := by
+            simp [ParserState.feedToken, h_tokp, h_close, h_open]
+          have h_tokp_eq : (s.feedToken i tk).tokp = .comment p := by
+            simp [ParserState.feedToken, h_tokp, h_close, h_open]
+          simpa [h_db_eq, h_tokp_eq] using h_inv
+  | label pos lab =>
+      cases h_open : tk.eqArray "$(".toAscii with
+      | true =>
+          have h_inv : TokpInv s.db (.comment (.label pos lab)) := by
+            simp [TokpInv]
+          have h_db_eq : (s.feedToken i tk).db = s.db := by
+            simp [ParserState.feedToken, h_tokp, h_open]
+          have h_tokp_eq : (s.feedToken i tk).tokp = .comment (.label pos lab) := by
+            simp [ParserState.feedToken, h_tokp, h_open]
+          simpa [h_db_eq, h_tokp_eq] using h_inv
+      | false =>
+          cases h_cmd : (tk.len == 2 && tk[0]! == '$'.toUInt8) with
+          | true =>
+              by_cases h_f : tk[1]!.toChar = 'f'
+              · simp [ParserState.feedToken, h_tokp, h_open, h_cmd, h_f, TokpInv, FormulaSymbolsDeclared.nil]
+              · by_cases h_e : tk[1]!.toChar = 'e'
+                · simp [ParserState.feedToken, h_tokp, h_open, h_cmd, h_f, h_e, TokpInv, FormulaSymbolsDeclared.nil]
+                · by_cases h_a : tk[1]!.toChar = 'a'
+                  · simp [ParserState.feedToken, h_tokp, h_open, h_cmd, h_f, h_e, h_a, TokpInv, FormulaSymbolsDeclared.nil]
+                  · by_cases h_p : tk[1]!.toChar = 'p'
+                    · simp [ParserState.feedToken, h_tokp, h_open, h_cmd, h_f, h_e, h_a, h_p, TokpInv, FormulaSymbolsDeclared.nil]
+                    · have h_inv_err :
+                          TokpInv
+                            (s.mkError pos (toString "unknown statement type " ++ toString (toLabel tk).snd)).db
+                            (s.mkError pos (toString "unknown statement type " ++ toString (toLabel tk).snd)).tokp := by
+                        simp [ParserState.mkError, ParserState.withDB, TokpInv, h_tokp]
+                      simpa [ParserState.feedToken, h_tokp, h_open, h_cmd, h_f, h_e, h_a, h_p] using h_inv_err
+          | false =>
+              have h_inv_err :
+                  TokpInv
+                    (s.mkError pos (toString "unknown statement type " ++ toString (toLabel tk).snd)).db
+                    (s.mkError pos (toString "unknown statement type " ++ toString (toLabel tk).snd)).tokp := by
+                simp [ParserState.mkError, ParserState.withDB, TokpInv, h_tokp]
+              simpa [ParserState.feedToken, h_tokp, h_open, h_cmd] using h_inv_err
+  | math arr p =>
+      have h_decl : FormulaSymbolsDeclared s.db arr := by
+        simpa [h_tokp, TokpInv] using h_tokp_inv
+      cases p with
+      | mk k pos label =>
+          by_cases h_open : tk.eqArray "$(".toAscii = true
+          · have h_inv : TokpInv s.db (.math arr ⟨k, pos, label⟩) := by
+              simpa [h_tokp] using h_tokp_inv
+            simpa [ParserState.feedToken, h_tokp, h_open, TokpInv] using h_inv
+          · have h_open_false : tk.eqArray "$(".toAscii = false := by
+              cases h_val : tk.eqArray "$(".toAscii <;> simp [h_val] at h_open ⊢
+            by_cases h_delim : tk.eqArray k.delim = true
+            · cases k with
+              | float =>
+                  have h_success_feedTokens :
+                      (s.feedTokens arr ⟨.float, pos, label⟩).db.error? = none := by
+                    simpa [ParserState.feedToken, h_tokp, h_open_false, h_delim] using h_success
+                  have h_head : Formula.hasConstHead arr = true := by
+                    by_cases h_head : Formula.hasConstHead arr
+                    · exact h_head
+                    · have h_bad :
+                          (s.feedTokens arr ⟨.float, pos, label⟩).db.error? ≠ none := by
+                        simp [ParserState.feedTokens, h_head, ParserState.withAt,
+                          ParserState.mkError, ParserState.withDB, DB.mkError]
+                      exact (h_bad h_success_feedTokens).elim
+                  have h_shape : Formula.isFloatShape arr = true := by
+                    by_cases h_shape : Formula.isFloatShape arr
+                    · exact h_shape
+                    · have h_bad :
+                          (s.feedTokens arr ⟨.float, pos, label⟩).db.error? ≠ none := by
+                        simp [ParserState.feedTokens, h_head, h_shape, ParserState.withAt,
+                          ParserState.mkError, ParserState.withDB, DB.mkError]
+                      exact (h_bad h_success_feedTokens).elim
+                  have h_tokp_start :
+                      (s.feedTokens arr ⟨.float, pos, label⟩).tokp = .start := by
+                    simp [ParserState.feedTokens, h_head, h_shape, ParserState.withAt_tokp]
+                  have h_tokp_eq : (s.feedToken i tk).tokp = .start := by
+                    simpa [ParserState.feedToken, h_tokp, h_open_false, h_delim] using h_tokp_start
+                  simpa [h_tokp_eq, TokpInv]
+              | ess =>
+                  have h_success_feedTokens :
+                      (s.feedTokens arr ⟨.ess, pos, label⟩).db.error? = none := by
+                    simpa [ParserState.feedToken, h_tokp, h_open_false, h_delim] using h_success
+                  have h_head : Formula.hasConstHead arr = true := by
+                    by_cases h_head : Formula.hasConstHead arr
+                    · exact h_head
+                    · have h_bad :
+                          (s.feedTokens arr ⟨.ess, pos, label⟩).db.error? ≠ none := by
+                        simp [ParserState.feedTokens, h_head, ParserState.withAt,
+                          ParserState.mkError, ParserState.withDB, DB.mkError]
+                      exact (h_bad h_success_feedTokens).elim
+                  have h_reject : (s.db.config.rejectToplevelEss && s.db.scopes.size == 0) = false := by
+                    by_cases h_reject_true : (s.db.config.rejectToplevelEss && s.db.scopes.size == 0) = true
+                    · have h_bad :
+                          (s.feedTokens arr ⟨.ess, pos, label⟩).db.error? ≠ none := by
+                        simp [ParserState.feedTokens, h_head, h_reject_true, ParserState.withAt,
+                          ParserState.mkError, ParserState.withDB, DB.mkError]
+                      exact (h_bad h_success_feedTokens).elim
+                    · cases h_val : (s.db.config.rejectToplevelEss && s.db.scopes.size == 0) <;>
+                        simp [h_val] at h_reject_true ⊢
+                  have h_tokp_start :
+                      (s.feedTokens arr ⟨.ess, pos, label⟩).tokp = .start := by
+                    simp [ParserState.feedTokens, h_head, h_reject, ParserState.withAt_tokp]
+                  have h_tokp_eq : (s.feedToken i tk).tokp = .start := by
+                    simpa [ParserState.feedToken, h_tokp, h_open_false, h_delim] using h_tokp_start
+                  simpa [h_tokp_eq, TokpInv]
+              | ax =>
+                  have h_success_feedTokens :
+                      (s.feedTokens arr ⟨.ax, pos, label⟩).db.error? = none := by
+                    simpa [ParserState.feedToken, h_tokp, h_open_false, h_delim] using h_success
+                  have h_head : Formula.hasConstHead arr = true := by
+                    by_cases h_head : Formula.hasConstHead arr
+                    · exact h_head
+                    · have h_bad :
+                          (s.feedTokens arr ⟨.ax, pos, label⟩).db.error? ≠ none := by
+                        simp [ParserState.feedTokens, h_head, ParserState.withAt,
+                          ParserState.mkError, ParserState.withDB, DB.mkError]
+                      exact (h_bad h_success_feedTokens).elim
+                  have h_tokp_start :
+                      (s.feedTokens arr ⟨.ax, pos, label⟩).tokp = .start := by
+                    simp [ParserState.feedTokens, h_head, ParserState.withAt_tokp]
+                  have h_tokp_eq : (s.feedToken i tk).tokp = .start := by
+                    simpa [ParserState.feedToken, h_tokp, h_open_false, h_delim] using h_tokp_start
+                  simpa [h_tokp_eq, TokpInv]
+              | thm =>
+                  exact feedToken_math_thm_delim_maintains_tokpInv s i tk arr pos label
+                    h_tokp h_wf h_scoped h_no_err h_decl h_open_false h_delim h_success
+            · have h_delim_false : tk.eqArray k.delim = false := by
+                cases h_val : tk.eqArray k.delim <;> simp [h_val] at h_delim ⊢
+              exact feedToken_math_continue_maintains_tokpInv s i tk arr ⟨k, pos, label⟩
+                h_tokp h_decl h_open_false h_delim_false h_success
+
+/-- Mode-dispatch wrapper: successful `feedToken` preserves `WellFormedDB`
+    in every token-parser mode. -/
+theorem feedToken_maintains_wf
+    (s : ParserState) (i : Nat) (tk : ByteSlice)
+    (h_wf : WellFormedDB s.db)
+    (h_no_err : s.db.error? = none)
+    (h_no_dup : s.db.config.allowDuplicateFloat = false)
+    (h_tokp_inv : TokpInv s.db s.tokp)
+    (h_success : (s.feedToken i tk).db.error? = none) :
+    WellFormedDB (s.feedToken i tk).db := by
+  cases h_tokp : s.tokp with
+  | start =>
+      exact feedToken_start_maintains_wf s i tk
+        h_tokp h_wf h_no_err h_success
+  | const =>
+      exact feedToken_const_maintains_wf s i tk
+        h_tokp h_wf h_no_err h_success
+  | var =>
+      exact feedToken_var_maintains_wf s i tk
+        h_tokp h_wf h_no_err h_success
+  | djvars arr =>
+      exact feedToken_djvars_maintains_wf s i tk arr
+        h_tokp h_wf h_success
+  | proof pr =>
+      exact feedToken_proof_maintains_wf s i tk pr
+        h_tokp h_wf h_no_err h_tokp_inv h_success
+  | comment p =>
+      by_cases h_close : tk.eqArray "$)".toAscii
+      · have h_db_eq : (s.feedToken i tk).db = s.db := by
+          simp [ParserState.feedToken, h_tokp, h_close]
+        simpa [h_db_eq] using h_wf
+      · by_cases h_open : tk.eqArray "$(".toAscii
+        · have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+            simp [ParserState.feedToken, h_tokp, h_close, h_open,
+              ParserState.mkError, ParserState.withDB, DB.mkError]
+          exact (h_bad h_success).elim
+        · have h_db_eq : (s.feedToken i tk).db = s.db := by
+            simp [ParserState.feedToken, h_tokp, h_close, h_open]
+          simpa [h_db_eq] using h_wf
+  | label pos lab =>
+      by_cases h_open : tk.eqArray "$(".toAscii
+      · have h_db_eq : (s.feedToken i tk).db = s.db := by
+          simp [ParserState.feedToken, h_tokp, h_open]
+        simpa [h_db_eq] using h_wf
+      · by_cases h_cmd : tk.len == 2 && tk[0]! == '$'.toUInt8
+        · by_cases h_f : tk[1]!.toChar = 'f'
+          · have h_db_eq : (s.feedToken i tk).db = s.db := by
+              simp [ParserState.feedToken, h_tokp, h_open, h_cmd, h_f]
+            simpa [h_db_eq] using h_wf
+          · by_cases h_e : tk[1]!.toChar = 'e'
+            · have h_db_eq : (s.feedToken i tk).db = s.db := by
+                simp [ParserState.feedToken, h_tokp, h_open, h_cmd, h_f, h_e]
+              simpa [h_db_eq] using h_wf
+            · by_cases h_a : tk[1]!.toChar = 'a'
+              · have h_db_eq : (s.feedToken i tk).db = s.db := by
+                  simp [ParserState.feedToken, h_tokp, h_open, h_cmd, h_f, h_e, h_a]
+                simpa [h_db_eq] using h_wf
+              · by_cases h_p : tk[1]!.toChar = 'p'
+                · have h_db_eq : (s.feedToken i tk).db = s.db := by
+                    simp [ParserState.feedToken, h_tokp, h_open, h_cmd, h_f, h_e, h_a, h_p]
+                  simpa [h_db_eq] using h_wf
+                · have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                    simp [ParserState.feedToken, h_tokp, h_open, h_cmd, h_f, h_e, h_a, h_p,
+                      ParserState.mkError, ParserState.withDB, DB.mkError]
+                  exact (h_bad h_success).elim
+        · have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+            simp [ParserState.feedToken, h_tokp, h_open, h_cmd,
+              ParserState.mkError, ParserState.withDB, DB.mkError]
+          exact (h_bad h_success).elim
+  | math arr p =>
+      cases p with
+      | mk k pos label =>
+          cases k with
+          | float =>
+              have h_non_thm : TokensKind.float ≠ TokensKind.thm := by
+                intro h_eq
+                cases h_eq
+              exact feedToken_math_nonthm_maintains_wf s i tk arr ⟨.float, pos, label⟩
+                h_tokp h_non_thm h_wf h_no_err h_no_dup h_success
+          | ess =>
+              have h_non_thm : TokensKind.ess ≠ TokensKind.thm := by
+                intro h_eq
+                cases h_eq
+              exact feedToken_math_nonthm_maintains_wf s i tk arr ⟨.ess, pos, label⟩
+                h_tokp h_non_thm h_wf h_no_err h_no_dup h_success
+          | ax =>
+              have h_non_thm : TokensKind.ax ≠ TokensKind.thm := by
+                intro h_eq
+                cases h_eq
+              exact feedToken_math_nonthm_maintains_wf s i tk arr ⟨.ax, pos, label⟩
+                h_tokp h_non_thm h_wf h_no_err h_no_dup h_success
+          | thm =>
+              by_cases h_open : tk.eqArray "$(".toAscii
+              · have h_db_eq : (s.feedToken i tk).db = s.db := by
+                  simp [ParserState.feedToken, h_tokp, h_open]
+                simpa [h_db_eq] using h_wf
+              · by_cases h_delim : tk.eqArray TokensKind.thm.delim
+                · have h_success_feedTokens :
+                    (s.feedTokens arr ⟨.thm, pos, label⟩).db.error? = none := by
+                    simpa [ParserState.feedToken, h_tokp, h_open, h_delim] using h_success
+                  have h_db_eq_feedTokens :
+                      (s.feedTokens arr ⟨.thm, pos, label⟩).db = s.db := by
+                    have h_first : arr.size > 0 ∧ !arr[0]!.isVar :=
+                      feedTokens_success_first_not_var s arr ⟨.thm, pos, label⟩ h_success_feedTokens
+                    have h_notvar : arr[0]!.isVar = false := by
+                      cases h_var : arr[0]!.isVar with
+                      | false => rfl
+                      | true =>
+                          have : False := by
+                            simpa [h_var] using h_first.2
+                          exact False.elim this
+                    have h_pos : 0 < arr.size := h_first.1
+                    have h_head : Formula.hasConstHead arr = true := by
+                      unfold Formula.hasConstHead
+                      cases h_sym : arr[0]! with
+                      | const _ =>
+                          simp [h_pos]
+                      | var _ =>
+                          have : False := by
+                            simp [Sym.isVar, h_sym] at h_notvar
+                          exact False.elim this
+                    cases h_trim : s.db.trimFrame' arr with
+                    | error msg =>
+                        have h_bad :
+                            (ParserState.withAt label (fun _ => s.mkError pos msg)).db.error? ≠ none := by
+                          simp [ParserState.withAt, ParserState.mkError, ParserState.withDB, DB.mkError]
+                        have h_success' :
+                            (ParserState.withAt label (fun _ => s.mkError pos msg)).db.error? = none := by
+                          simpa [ParserState.feedTokens, h_head, h_trim] using h_success_feedTokens
+                        exact (h_bad h_success').elim
+                    | ok fr =>
+                        by_cases h_interrupt : s.db.interrupt
+                        · have h_bad :
+                            (ParserState.withAt label (fun _ =>
+                              ParserState.withDB
+                                (fun db =>
+                                  { db with error? := some ⟨.thm pos label arr fr, default⟩ })
+                                s)).db.error? ≠ none := by
+                            simp [ParserState.withAt, ParserState.withDB]
+                          have h_success' :
+                              (ParserState.withAt label (fun _ =>
+                                ParserState.withDB
+                                  (fun db =>
+                                    { db with error? := some ⟨.thm pos label arr fr, default⟩ })
+                                  s)).db.error? = none := by
+                            simpa [ParserState.feedTokens, h_head, h_trim, h_interrupt] using h_success_feedTokens
+                          exact (h_bad h_success').elim
+                        · simp [ParserState.feedTokens, h_head, h_trim, h_interrupt,
+                            ParserState.resumeThm, ParserState.withAt, h_no_err]
+                  have h_db_eq : (s.feedToken i tk).db = s.db := by
+                    simpa [ParserState.feedToken, h_tokp, h_open, h_delim] using h_db_eq_feedTokens
+                  simpa [h_db_eq] using h_wf
+                · have h_db_eq : (s.feedToken i tk).db = s.db := by
+                    by_cases h_math_ok : (toMath tk).fst = true
+                    · let tk' := (toMath tk).snd
+                      cases h_find : s.db.find? tk' with
+                      | none =>
+                          have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                            simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+                              h_math_ok, tk', h_find, ParserState.mkError, ParserState.withDB, DB.mkError]
+                          exact (h_bad h_success).elim
+                      | some obj =>
+                          cases obj with
+                          | const _ =>
+                              simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+                                h_math_ok, tk', h_find, Bind.bind, Pure.pure]
+                          | var _ =>
+                              simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+                                h_math_ok, tk', h_find, Bind.bind, Pure.pure]
+                          | hyp _ _ _ =>
+                              have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                                simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+                                  h_math_ok, tk', h_find, ParserState.mkError, ParserState.withDB, DB.mkError]
+                              exact (h_bad h_success).elim
+                          | assert _ _ _ =>
+                              have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                                simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+                                  h_math_ok, tk', h_find, ParserState.mkError, ParserState.withDB, DB.mkError]
+                              exact (h_bad h_success).elim
+                    · have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                        simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+                          h_math_ok, ParserState.mkError, ParserState.withDB, DB.mkError]
+                      exact (h_bad h_success).elim
+                  simpa [h_db_eq] using h_wf
+
+/-- Mode-dispatch wrapper: successful `feedToken` preserves `WellScopedDBWithScopes`
+    in every token-parser mode. -/
+theorem feedToken_maintains_scopedWithScopes
+    (s : ParserState) (i : Nat) (tk : ByteSlice)
+    (h_wf : WellFormedDB s.db)
+    (h_scoped : WellScopedDBWithScopes s.db)
+    (h_ok : ScopesOk s.db)
+    (h_no_err : s.db.error? = none)
+    (h_no_dup : s.db.config.allowDuplicateFloat = false)
+    (h_tokp_inv : TokpInv s.db s.tokp)
+    (h_success : (s.feedToken i tk).db.error? = none) :
+    WellScopedDBWithScopes (s.feedToken i tk).db := by
+  cases h_tokp : s.tokp with
+  | start =>
+      exact feedToken_start_maintains_scopedWithScopes s i tk
+        h_tokp h_wf h_scoped h_ok h_success
+  | const =>
+      exact feedToken_const_maintains_scopedWithScopes s i tk
+        h_tokp h_wf h_scoped h_no_err h_success
+  | var =>
+      exact feedToken_var_maintains_scopedWithScopes s i tk
+        h_tokp h_wf h_scoped h_no_err h_success
+  | djvars arr =>
+      exact feedToken_djvars_maintains_scopedWithScopes s i tk arr
+        h_tokp h_wf h_scoped h_ok h_tokp_inv h_success
+  | proof pr =>
+      exact feedToken_proof_maintains_scopedWithScopes s i tk pr
+        h_tokp h_wf h_scoped h_ok h_no_err h_tokp_inv h_success
+  | comment p =>
+      by_cases h_close : tk.eqArray "$)".toAscii
+      · have h_db_eq : (s.feedToken i tk).db = s.db := by
+          simp [ParserState.feedToken, h_tokp, h_close]
+        simpa [h_db_eq] using h_scoped
+      · by_cases h_open : tk.eqArray "$(".toAscii
+        · have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+            simp [ParserState.feedToken, h_tokp, h_close, h_open,
+              ParserState.mkError, ParserState.withDB, DB.mkError]
+          exact (h_bad h_success).elim
+        · have h_db_eq : (s.feedToken i tk).db = s.db := by
+            simp [ParserState.feedToken, h_tokp, h_close, h_open]
+          simpa [h_db_eq] using h_scoped
+  | label pos lab =>
+      by_cases h_open : tk.eqArray "$(".toAscii
+      · have h_db_eq : (s.feedToken i tk).db = s.db := by
+          simp [ParserState.feedToken, h_tokp, h_open]
+        simpa [h_db_eq] using h_scoped
+      · by_cases h_cmd : tk.len == 2 && tk[0]! == '$'.toUInt8
+        · by_cases h_f : tk[1]!.toChar = 'f'
+          · have h_db_eq : (s.feedToken i tk).db = s.db := by
+              simp [ParserState.feedToken, h_tokp, h_open, h_cmd, h_f]
+            simpa [h_db_eq] using h_scoped
+          · by_cases h_e : tk[1]!.toChar = 'e'
+            · have h_db_eq : (s.feedToken i tk).db = s.db := by
+                simp [ParserState.feedToken, h_tokp, h_open, h_cmd, h_f, h_e]
+              simpa [h_db_eq] using h_scoped
+            · by_cases h_a : tk[1]!.toChar = 'a'
+              · have h_db_eq : (s.feedToken i tk).db = s.db := by
+                  simp [ParserState.feedToken, h_tokp, h_open, h_cmd, h_f, h_e, h_a]
+                simpa [h_db_eq] using h_scoped
+              · by_cases h_p : tk[1]!.toChar = 'p'
+                · have h_db_eq : (s.feedToken i tk).db = s.db := by
+                    simp [ParserState.feedToken, h_tokp, h_open, h_cmd, h_f, h_e, h_a, h_p]
+                  simpa [h_db_eq] using h_scoped
+                · have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                    simp [ParserState.feedToken, h_tokp, h_open, h_cmd, h_f, h_e, h_a, h_p,
+                      ParserState.mkError, ParserState.withDB, DB.mkError]
+                  exact (h_bad h_success).elim
+        · have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+            simp [ParserState.feedToken, h_tokp, h_open, h_cmd,
+              ParserState.mkError, ParserState.withDB, DB.mkError]
+          exact (h_bad h_success).elim
+  | math arr p =>
+      cases p with
+      | mk k pos label =>
+          cases k with
+          | float =>
+              have h_non_thm : TokensKind.float ≠ TokensKind.thm := by
+                intro h_eq
+                cases h_eq
+              have h_decl : FormulaSymbolsDeclared s.db arr := by
+                simpa [h_tokp, TokpInv] using h_tokp_inv
+              exact feedToken_math_nonthm_maintains_scopedWithScopes s i tk arr ⟨.float, pos, label⟩
+                h_tokp h_non_thm h_wf h_scoped h_ok h_no_err h_no_dup h_decl h_success
+          | ess =>
+              have h_non_thm : TokensKind.ess ≠ TokensKind.thm := by
+                intro h_eq
+                cases h_eq
+              have h_decl : FormulaSymbolsDeclared s.db arr := by
+                simpa [h_tokp, TokpInv] using h_tokp_inv
+              exact feedToken_math_nonthm_maintains_scopedWithScopes s i tk arr ⟨.ess, pos, label⟩
+                h_tokp h_non_thm h_wf h_scoped h_ok h_no_err h_no_dup h_decl h_success
+          | ax =>
+              have h_non_thm : TokensKind.ax ≠ TokensKind.thm := by
+                intro h_eq
+                cases h_eq
+              have h_decl : FormulaSymbolsDeclared s.db arr := by
+                simpa [h_tokp, TokpInv] using h_tokp_inv
+              exact feedToken_math_nonthm_maintains_scopedWithScopes s i tk arr ⟨.ax, pos, label⟩
+                h_tokp h_non_thm h_wf h_scoped h_ok h_no_err h_no_dup h_decl h_success
+          | thm =>
+              by_cases h_open : tk.eqArray "$(".toAscii
+              · have h_db_eq : (s.feedToken i tk).db = s.db := by
+                  simp [ParserState.feedToken, h_tokp, h_open]
+                simpa [h_db_eq] using h_scoped
+              · by_cases h_delim : tk.eqArray TokensKind.thm.delim
+                · have h_success_feedTokens :
+                    (s.feedTokens arr ⟨.thm, pos, label⟩).db.error? = none := by
+                    simpa [ParserState.feedToken, h_tokp, h_open, h_delim] using h_success
+                  have h_db_eq_feedTokens :
+                      (s.feedTokens arr ⟨.thm, pos, label⟩).db = s.db := by
+                    have h_first : arr.size > 0 ∧ !arr[0]!.isVar :=
+                      feedTokens_success_first_not_var s arr ⟨.thm, pos, label⟩ h_success_feedTokens
+                    have h_notvar : arr[0]!.isVar = false := by
+                      cases h_var : arr[0]!.isVar with
+                      | false => rfl
+                      | true =>
+                          have : False := by
+                            simpa [h_var] using h_first.2
+                          exact False.elim this
+                    have h_pos : 0 < arr.size := h_first.1
+                    have h_head : Formula.hasConstHead arr = true := by
+                      unfold Formula.hasConstHead
+                      cases h_sym : arr[0]! with
+                      | const _ =>
+                          simp [h_pos]
+                      | var _ =>
+                          have : False := by
+                            simp [Sym.isVar, h_sym] at h_notvar
+                          exact False.elim this
+                    cases h_trim : s.db.trimFrame' arr with
+                    | error msg =>
+                        have h_bad :
+                            (ParserState.withAt label (fun _ => s.mkError pos msg)).db.error? ≠ none := by
+                          simp [ParserState.withAt, ParserState.mkError, ParserState.withDB, DB.mkError]
+                        have h_success' :
+                            (ParserState.withAt label (fun _ => s.mkError pos msg)).db.error? = none := by
+                          simpa [ParserState.feedTokens, h_head, h_trim] using h_success_feedTokens
+                        exact (h_bad h_success').elim
+                    | ok fr =>
+                        by_cases h_interrupt : s.db.interrupt
+                        · have h_bad :
+                            (ParserState.withAt label (fun _ =>
+                              ParserState.withDB
+                                (fun db =>
+                                  { db with error? := some ⟨.thm pos label arr fr, default⟩ })
+                                s)).db.error? ≠ none := by
+                            simp [ParserState.withAt, ParserState.withDB]
+                          have h_success' :
+                              (ParserState.withAt label (fun _ =>
+                                ParserState.withDB
+                                  (fun db =>
+                                    { db with error? := some ⟨.thm pos label arr fr, default⟩ })
+                                  s)).db.error? = none := by
+                            simpa [ParserState.feedTokens, h_head, h_trim, h_interrupt] using h_success_feedTokens
+                          exact (h_bad h_success').elim
+                        · simp [ParserState.feedTokens, h_head, h_trim, h_interrupt,
+                            ParserState.resumeThm, ParserState.withAt, h_no_err]
+                  have h_db_eq : (s.feedToken i tk).db = s.db := by
+                    simpa [ParserState.feedToken, h_tokp, h_open, h_delim] using h_db_eq_feedTokens
+                  simpa [h_db_eq] using h_scoped
+                · have h_db_eq : (s.feedToken i tk).db = s.db := by
+                    by_cases h_math_ok : (toMath tk).fst = true
+                    · let tk' := (toMath tk).snd
+                      cases h_find : s.db.find? tk' with
+                      | none =>
+                          have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                            simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+                              h_math_ok, tk', h_find, ParserState.mkError, ParserState.withDB, DB.mkError]
+                          exact (h_bad h_success).elim
+                      | some obj =>
+                          cases obj with
+                          | const _ =>
+                              simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+                                h_math_ok, tk', h_find, Bind.bind, Pure.pure]
+                          | var _ =>
+                              simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+                                h_math_ok, tk', h_find, Bind.bind, Pure.pure]
+                          | hyp _ _ _ =>
+                              have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                                simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+                                  h_math_ok, tk', h_find, ParserState.mkError, ParserState.withDB, DB.mkError]
+                              exact (h_bad h_success).elim
+                          | assert _ _ _ =>
+                              have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                                simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+                                  h_math_ok, tk', h_find, ParserState.mkError, ParserState.withDB, DB.mkError]
+                              exact (h_bad h_success).elim
+                    · have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                        simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+                          h_math_ok, ParserState.mkError, ParserState.withDB, DB.mkError]
+                      exact (h_bad h_success).elim
+                  simpa [h_db_eq] using h_scoped
+
+/-- Mode-dispatch wrapper: successful `feedToken` preserves `ScopesOk`
+    in every token-parser mode. -/
+theorem feedToken_maintains_scopesOk
+    (s : ParserState) (i : Nat) (tk : ByteSlice)
+    (h_ok : ScopesOk s.db)
+    (h_no_err : s.db.error? = none)
+    (h_success : (s.feedToken i tk).db.error? = none) :
+    ScopesOk (s.feedToken i tk).db := by
+  cases h_tokp : s.tokp with
+  | start =>
+      exact feedToken_start_maintains_scopesOk s i tk h_tokp h_ok h_success
+  | const =>
+      exact feedToken_const_maintains_scopesOk s i tk h_tokp h_ok h_success
+  | var =>
+      exact feedToken_var_maintains_scopesOk s i tk h_tokp h_ok h_success
+  | djvars arr =>
+      exact feedToken_djvars_maintains_scopesOk s i tk arr h_tokp h_ok h_success
+  | proof pr =>
+      exact feedToken_proof_maintains_scopesOk s i tk pr h_tokp h_ok h_success
+  | comment p =>
+      by_cases h_close : tk.eqArray "$)".toAscii
+      · have h_db_eq : (s.feedToken i tk).db = s.db := by
+          simp [ParserState.feedToken, h_tokp, h_close]
+        simpa [h_db_eq] using h_ok
+      · by_cases h_open : tk.eqArray "$(".toAscii
+        · have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+            simp [ParserState.feedToken, h_tokp, h_close, h_open,
+              ParserState.mkError, ParserState.withDB, DB.mkError]
+          exact (h_bad h_success).elim
+        · have h_db_eq : (s.feedToken i tk).db = s.db := by
+            simp [ParserState.feedToken, h_tokp, h_close, h_open]
+          simpa [h_db_eq] using h_ok
+  | label pos lab =>
+      by_cases h_open : tk.eqArray "$(".toAscii
+      · have h_db_eq : (s.feedToken i tk).db = s.db := by
+          simp [ParserState.feedToken, h_tokp, h_open]
+        simpa [h_db_eq] using h_ok
+      · by_cases h_cmd : tk.len == 2 && tk[0]! == '$'.toUInt8
+        · by_cases h_f : tk[1]!.toChar = 'f'
+          · have h_db_eq : (s.feedToken i tk).db = s.db := by
+              simp [ParserState.feedToken, h_tokp, h_open, h_cmd, h_f]
+            simpa [h_db_eq] using h_ok
+          · by_cases h_e : tk[1]!.toChar = 'e'
+            · have h_db_eq : (s.feedToken i tk).db = s.db := by
+                simp [ParserState.feedToken, h_tokp, h_open, h_cmd, h_f, h_e]
+              simpa [h_db_eq] using h_ok
+            · by_cases h_a : tk[1]!.toChar = 'a'
+              · have h_db_eq : (s.feedToken i tk).db = s.db := by
+                  simp [ParserState.feedToken, h_tokp, h_open, h_cmd, h_f, h_e, h_a]
+                simpa [h_db_eq] using h_ok
+              · by_cases h_p : tk[1]!.toChar = 'p'
+                · have h_db_eq : (s.feedToken i tk).db = s.db := by
+                    simp [ParserState.feedToken, h_tokp, h_open, h_cmd, h_f, h_e, h_a, h_p]
+                  simpa [h_db_eq] using h_ok
+                · have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                    simp [ParserState.feedToken, h_tokp, h_open, h_cmd, h_f, h_e, h_a, h_p,
+                      ParserState.mkError, ParserState.withDB, DB.mkError]
+                  exact (h_bad h_success).elim
+        · have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+            simp [ParserState.feedToken, h_tokp, h_open, h_cmd,
+              ParserState.mkError, ParserState.withDB, DB.mkError]
+          exact (h_bad h_success).elim
+  | math arr p =>
+      cases p with
+      | mk k pos label =>
+          cases k with
+          | float =>
+              have h_non_thm : TokensKind.float ≠ TokensKind.thm := by
+                intro h_eq
+                cases h_eq
+              exact feedToken_math_nonthm_maintains_scopesOk s i tk arr ⟨.float, pos, label⟩
+                h_tokp h_non_thm h_ok h_success
+          | ess =>
+              have h_non_thm : TokensKind.ess ≠ TokensKind.thm := by
+                intro h_eq
+                cases h_eq
+              exact feedToken_math_nonthm_maintains_scopesOk s i tk arr ⟨.ess, pos, label⟩
+                h_tokp h_non_thm h_ok h_success
+          | ax =>
+              have h_non_thm : TokensKind.ax ≠ TokensKind.thm := by
+                intro h_eq
+                cases h_eq
+              exact feedToken_math_nonthm_maintains_scopesOk s i tk arr ⟨.ax, pos, label⟩
+                h_tokp h_non_thm h_ok h_success
+          | thm =>
+              by_cases h_open : tk.eqArray "$(".toAscii
+              · have h_db_eq : (s.feedToken i tk).db = s.db := by
+                  simp [ParserState.feedToken, h_tokp, h_open]
+                simpa [h_db_eq] using h_ok
+              · by_cases h_delim : tk.eqArray TokensKind.thm.delim
+                · have h_success_feedTokens :
+                    (s.feedTokens arr ⟨.thm, pos, label⟩).db.error? = none := by
+                    simpa [ParserState.feedToken, h_tokp, h_open, h_delim] using h_success
+                  have h_db_eq_feedTokens :
+                      (s.feedTokens arr ⟨.thm, pos, label⟩).db = s.db := by
+                    have h_first : arr.size > 0 ∧ !arr[0]!.isVar :=
+                      feedTokens_success_first_not_var s arr ⟨.thm, pos, label⟩ h_success_feedTokens
+                    have h_notvar : arr[0]!.isVar = false := by
+                      cases h_var : arr[0]!.isVar with
+                      | false => rfl
+                      | true =>
+                          have : False := by
+                            simpa [h_var] using h_first.2
+                          exact False.elim this
+                    have h_pos : 0 < arr.size := h_first.1
+                    have h_head : Formula.hasConstHead arr = true := by
+                      unfold Formula.hasConstHead
+                      cases h_sym : arr[0]! with
+                      | const _ =>
+                          simp [h_pos]
+                      | var _ =>
+                          have : False := by
+                            simp [Sym.isVar, h_sym] at h_notvar
+                          exact False.elim this
+                    cases h_trim : s.db.trimFrame' arr with
+                    | error msg =>
+                        have h_bad :
+                            (ParserState.withAt label (fun _ => s.mkError pos msg)).db.error? ≠ none := by
+                          simp [ParserState.withAt, ParserState.mkError, ParserState.withDB, DB.mkError]
+                        have h_success' :
+                            (ParserState.withAt label (fun _ => s.mkError pos msg)).db.error? = none := by
+                          simpa [ParserState.feedTokens, h_head, h_trim] using h_success_feedTokens
+                        exact (h_bad h_success').elim
+                    | ok fr =>
+                        by_cases h_interrupt : s.db.interrupt
+                        · have h_bad :
+                            (ParserState.withAt label (fun _ =>
+                              ParserState.withDB
+                                (fun db =>
+                                  { db with error? := some ⟨.thm pos label arr fr, default⟩ })
+                                s)).db.error? ≠ none := by
+                            simp [ParserState.withAt, ParserState.withDB]
+                          have h_success' :
+                              (ParserState.withAt label (fun _ =>
+                                ParserState.withDB
+                                  (fun db =>
+                                    { db with error? := some ⟨.thm pos label arr fr, default⟩ })
+                                  s)).db.error? = none := by
+                            simpa [ParserState.feedTokens, h_head, h_trim, h_interrupt] using h_success_feedTokens
+                          exact (h_bad h_success').elim
+                        · simp [ParserState.feedTokens, h_head, h_trim, h_interrupt,
+                            ParserState.resumeThm, ParserState.withAt, h_no_err]
+                  have h_db_eq : (s.feedToken i tk).db = s.db := by
+                    simpa [ParserState.feedToken, h_tokp, h_open, h_delim] using h_db_eq_feedTokens
+                  simpa [h_db_eq] using h_ok
+                · have h_db_eq : (s.feedToken i tk).db = s.db := by
+                    by_cases h_math_ok : (toMath tk).fst = true
+                    · let tk' := (toMath tk).snd
+                      cases h_find : s.db.find? tk' with
+                      | none =>
+                          have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                            simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+                              h_math_ok, tk', h_find, ParserState.mkError, ParserState.withDB, DB.mkError]
+                          exact (h_bad h_success).elim
+                      | some obj =>
+                          cases obj with
+                          | const _ =>
+                              simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+                                h_math_ok, tk', h_find, Bind.bind, Pure.pure]
+                          | var _ =>
+                              simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+                                h_math_ok, tk', h_find, Bind.bind, Pure.pure]
+                          | hyp _ _ _ =>
+                              have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                                simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+                                  h_math_ok, tk', h_find, ParserState.mkError, ParserState.withDB, DB.mkError]
+                              exact (h_bad h_success).elim
+                          | assert _ _ _ =>
+                              have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                                simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+                                  h_math_ok, tk', h_find, ParserState.mkError, ParserState.withDB, DB.mkError]
+                              exact (h_bad h_success).elim
+                    · have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                        simp [ParserState.feedToken, h_tokp, h_open, h_delim, ParserState.withMath,
+                          h_math_ok, ParserState.mkError, ParserState.withDB, DB.mkError]
+                      exact (h_bad h_success).elim
+                  simpa [h_db_eq] using h_ok
+
+theorem feedToken_maintains_stateInv
+    (s : ParserState) (pos : Nat) (tk : ByteSlice)
+    (h_inv : ParserStateInv s)
+    (h_no_err : s.db.error? = none)
+    (h_no_dup : s.db.config.allowDuplicateFloat = false)
+    (h_success : (s.feedToken pos tk).db.error? = none) :
+    ParserStateInv (s.feedToken pos tk) := by
+  rcases h_inv with ⟨h_wf, h_scoped, h_ok, h_tokp⟩
+  refine ⟨?_, ?_, ?_, ?_⟩
+  · exact feedToken_maintains_wf s pos tk h_wf h_no_err h_no_dup h_tokp h_success
+  · exact feedToken_maintains_scopedWithScopes s pos tk
+      h_wf h_scoped h_ok h_no_err h_no_dup h_tokp h_success
+  · exact feedToken_maintains_scopesOk s pos tk h_ok h_no_err h_success
+  · exact feedToken_maintains_tokpInv s pos tk
+      h_wf h_scoped h_ok h_no_err h_no_dup h_tokp h_success
+
+@[simp] theorem updateLine_tokp (s : ParserState) (i : Nat) (c : UInt8) :
+    (s.updateLine i c).tokp = s.tokp := by
+  unfold ParserState.updateLine
+  split <;> rfl
+
+/-- Successful `feed` preserves the full parser-state invariant. -/
+theorem feed_maintains_stateInv
+    (base : Nat) (arr : ByteArray) (i : Nat) (rs : ParserState.FeedState) (s : ParserState)
+    (h_inv : ParserStateInv s)
+    (h_no_err : s.db.error? = none)
+    (h_no_dup : s.db.config.allowDuplicateFloat = false)
+    (h_success : (s.feed base arr i rs).db.error? = none) :
+    ParserStateInv (s.feed base arr i rs) := by
+  refine Nat.rec
+    (motive := fun m =>
+      ∀ i rs (s : ParserState),
+        arr.size - i = m →
+        ParserStateInv s →
+        s.db.error? = none →
+        s.db.config.allowDuplicateFloat = false →
+        (s.feed base arr i rs).db.error? = none →
+        ParserStateInv (s.feed base arr i rs))
+    ?base ?step (arr.size - i) i rs s rfl h_inv h_no_err h_no_dup h_success
+  · intro i rs s hs h_inv _h_no_err _h_no_dup _h_success
+    have hi : ¬ i < arr.size := by
+      intro hi
+      have hpos : arr.size - i > 0 := Nat.sub_pos_of_lt hi
+      simpa [hs] using hpos
+    unfold ParserState.feed
+    simp [hi, ParserStateInv] at h_inv ⊢
+    exact h_inv
+  · intro m ih i rs s hs h_inv h_no_err h_no_dup h_success
+    have hi : i < arr.size := by
+      by_cases hi' : i < arr.size
+      · exact hi'
+      ·
+        have hz : arr.size - i = 0 := Nat.sub_eq_zero_of_le (Nat.le_of_not_gt hi')
+        have : False := by
+          have hs' := hs
+          simpa [hz] using hs'
+        exact False.elim this
+    have hs' : arr.size - (i + 1) = m := by
+      simp only [Nat.add_one, Nat.sub_succ, hs, Nat.pred_succ]
+    let c := arr[i]
+    by_cases h_ws : isWhitespace c
+    · cases rs with
+      | ws =>
+          let s1 : ParserState := s.updateLine (base + i) c
+          have h_inv1 : ParserStateInv s1 := by
+            simpa [ParserStateInv, s1] using h_inv
+          have h_no_err1 : s1.db.error? = none := by
+            simpa [s1] using h_no_err
+          have h_no_dup1 : s1.db.config.allowDuplicateFloat = false := by
+            simpa [s1] using h_no_dup
+          have h_success_rec : (s1.feed base arr (i + 1) .ws).db.error? = none := by
+            unfold ParserState.feed at h_success
+            have h_ws' : isWhitespace arr[i] = true := h_ws
+            simpa [hi, h_ws', s1] using h_success
+          have h_rec :=
+            ih (i + 1) .ws s1 hs' h_inv1 h_no_err1 h_no_dup1 h_success_rec
+          unfold ParserState.feed
+          have h_ws' : isWhitespace arr[i] = true := h_ws
+          simpa [hi, h_ws', s1] using h_rec
+      | token ot =>
+          cases ot with
+          | this off =>
+              let s0 := s.feedToken (base + off) (ByteSlice.mk arr off (i - off))
+              let s1 : ParserState := s0.updateLine (base + i) arr[i]
+              cases h_err : s1.db.error? with
+              | some intr =>
+                  have h_err0 : s0.db.error? = some intr := by
+                    simpa [s1] using h_err
+                  have h_bad : (s.feed base arr i (.token (.this off))).db.error? ≠ none := by
+                    unfold ParserState.feed
+                    have h_ws' : isWhitespace arr[i] = true := h_ws
+                    simp [hi, h_ws', s0, s1, h_err0]
+                  exact (h_bad h_success).elim
+              | none =>
+                  have h_tok_ok : s0.db.error? = none := by
+                    simpa [s1] using h_err
+                  have h_inv0 : ParserStateInv s0 := by
+                    exact feedToken_maintains_stateInv s (base + off)
+                      (ByteSlice.mk arr off (i - off)) h_inv h_no_err h_no_dup h_tok_ok
+                  have h_inv1 : ParserStateInv s1 := by
+                    simpa [ParserStateInv, s1] using h_inv0
+                  have h_no_err1 : s1.db.error? = none := by
+                    simpa [s1] using h_err
+                  have h_no_dup1 : s1.db.config.allowDuplicateFloat = false := by
+                    have h_no_dup0 : s0.db.config.allowDuplicateFloat = false := by
+                      simpa [s0, ParserState.feedToken_db_config] using h_no_dup
+                    simpa [s1] using h_no_dup0
+                  have h_success_rec : (s1.feed base arr (i + 1) .ws).db.error? = none := by
+                    unfold ParserState.feed at h_success
+                    have h_ws' : isWhitespace arr[i] = true := h_ws
+                    have h_err0 : s0.db.error? = none := by
+                      simpa [s1] using h_err
+                    simp [hi, h_ws', s0, s1, h_err0] at h_success
+                    exact h_success
+                  have h_rec := ih (i + 1) .ws s1 hs' h_inv1 h_no_err1 h_no_dup1 h_success_rec
+                  unfold ParserState.feed
+                  have h_ws' : isWhitespace arr[i] = true := h_ws
+                  have h_err0 : s0.db.error? = none := by
+                    simpa [s1] using h_err
+                  simpa [hi, h_ws', s0, s1, h_err0] using h_rec
+          | old base' off arr' =>
+              let s0 := s.feedToken (base' + off)
+                (ByteSlice.mk (arr.copySlice 0 arr' arr'.size i false) off (arr'.size - off + i))
+              let s1 : ParserState := s0.updateLine (base + i) arr[i]
+              cases h_err : s1.db.error? with
+              | some intr =>
+                  have h_err0 : s0.db.error? = some intr := by
+                    simpa [s1] using h_err
+                  have h_bad :
+                      (s.feed base arr i (.token (.old base' off arr'))).db.error? ≠ none := by
+                    unfold ParserState.feed
+                    have h_ws' : isWhitespace arr[i] = true := h_ws
+                    simp [hi, h_ws', s0, s1, h_err0]
+                  exact (h_bad h_success).elim
+              | none =>
+                  have h_tok_ok : s0.db.error? = none := by
+                    simpa [s1] using h_err
+                  have h_inv0 : ParserStateInv s0 := by
+                    exact feedToken_maintains_stateInv s (base' + off)
+                      (ByteSlice.mk (arr.copySlice 0 arr' arr'.size i false) off (arr'.size - off + i))
+                      h_inv h_no_err h_no_dup h_tok_ok
+                  have h_inv1 : ParserStateInv s1 := by
+                    simpa [ParserStateInv, s1] using h_inv0
+                  have h_no_err1 : s1.db.error? = none := by
+                    simpa [s1] using h_err
+                  have h_no_dup1 : s1.db.config.allowDuplicateFloat = false := by
+                    have h_no_dup0 : s0.db.config.allowDuplicateFloat = false := by
+                      simpa [s0, ParserState.feedToken_db_config] using h_no_dup
+                    simpa [s1] using h_no_dup0
+                  have h_success_rec : (s1.feed base arr (i + 1) .ws).db.error? = none := by
+                    unfold ParserState.feed at h_success
+                    have h_ws' : isWhitespace arr[i] = true := h_ws
+                    have h_err0 : s0.db.error? = none := by
+                      simpa [s1] using h_err
+                    simp [hi, h_ws', s0, s1, h_err0] at h_success
+                    exact h_success
+                  have h_rec := ih (i + 1) .ws s1 hs' h_inv1 h_no_err1 h_no_dup1 h_success_rec
+                  unfold ParserState.feed
+                  have h_ws' : isWhitespace arr[i] = true := h_ws
+                  have h_err0 : s0.db.error? = none := by
+                    simpa [s1] using h_err
+                  simpa [hi, h_ws', s0, s1, h_err0] using h_rec
+    · cases rs with
+      | ws =>
+          have h_success_rec : (s.feed base arr (i + 1) (.token (.this i))).db.error? = none := by
+            unfold ParserState.feed at h_success
+            have h_ws' : isWhitespace arr[i] = false := by
+              simpa [c] using h_ws
+            simpa [hi, h_ws'] using h_success
+          have h_rec := ih (i + 1) (.token (.this i)) s hs' h_inv h_no_err h_no_dup h_success_rec
+          unfold ParserState.feed
+          have h_ws' : isWhitespace arr[i] = false := by
+            simpa [c] using h_ws
+          simpa [hi, h_ws'] using h_rec
+      | token ot =>
+          have h_success_rec : (s.feed base arr (i + 1) (.token ot)).db.error? = none := by
+            unfold ParserState.feed at h_success
+            have h_ws' : isWhitespace arr[i] = false := by
+              simpa [c] using h_ws
+            simpa [hi, h_ws'] using h_success
+          have h_rec := ih (i + 1) (.token ot) s hs' h_inv h_no_err h_no_dup h_success_rec
+          unfold ParserState.feed
+          have h_ws' : isWhitespace arr[i] = false := by
+            simpa [c] using h_ws
+          simpa [hi, h_ws'] using h_rec
+
+/-- Successful `feed` preserves token-parser invariant. -/
+theorem feed_maintains_tokpInv
+    (base : Nat) (arr : ByteArray) (i : Nat) (rs : ParserState.FeedState) (s : ParserState)
+    (h_inv : ParserStateInv s)
+    (h_no_err : s.db.error? = none)
+    (h_no_dup : s.db.config.allowDuplicateFloat = false)
+    (h_success : (s.feed base arr i rs).db.error? = none) :
+    TokpInv (s.feed base arr i rs).db (s.feed base arr i rs).tokp := by
+  have h_inv' := feed_maintains_stateInv base arr i rs s h_inv h_no_err h_no_dup h_success
+  exact h_inv'.2.2.2
+
+/-- Successful `feedAll` preserves token-parser invariant. -/
+theorem feedAll_maintains_tokpInv
+    (s : ParserState) (base : Nat) (arr : ByteArray)
+    (h_inv : ParserStateInv s)
+    (h_no_err : s.db.error? = none)
+    (h_no_dup : s.db.config.allowDuplicateFloat = false)
+    (h_success : (s.feedAll base arr).db.error? = none) :
+    TokpInv (s.feedAll base arr).db (s.feedAll base arr).tokp := by
+  cases h_charp : s.charp with
+  | ws =>
+      simp [ParserState.feedAll, h_charp] at h_success ⊢
+      exact feed_maintains_tokpInv base arr 0 .ws s h_inv h_no_err h_no_dup h_success
+  | token base' tk =>
+      let s0 : ParserState := { s with charp := default }
+      have h_inv0 : ParserStateInv s0 := by
+        simpa [ParserStateInv, s0] using h_inv
+      have h_no_err0 : s0.db.error? = none := by
+        simpa [s0] using h_no_err
+      have h_no_dup0 : s0.db.config.allowDuplicateFloat = false := by
+        simpa [s0] using h_no_dup
+      have h_success0 :
+          (s0.feed base arr 0 (.token (.old base' tk.start tk.byteArray))).db.error? = none := by
+        simpa [ParserState.feedAll, h_charp, s0] using h_success
+      have h_tokp0 := feed_maintains_tokpInv base arr 0
+        (.token (.old base' tk.start tk.byteArray)) s0
+        h_inv0 h_no_err0 h_no_dup0 h_success0
+      simpa [ParserState.feedAll, h_charp, s0] using h_tokp0
+
+/-- Successful `feedAll` preserves the full parser-state invariant. -/
+theorem feedAll_maintains_stateInv
+    (s : ParserState) (base : Nat) (arr : ByteArray)
+    (h_inv : ParserStateInv s)
+    (h_no_err : s.db.error? = none)
+    (h_no_dup : s.db.config.allowDuplicateFloat = false)
+    (h_success : (s.feedAll base arr).db.error? = none) :
+    ParserStateInv (s.feedAll base arr) := by
+  cases h_charp : s.charp with
+  | ws =>
+      simp [ParserState.feedAll, h_charp] at h_success ⊢
+      exact feed_maintains_stateInv base arr 0 .ws s h_inv h_no_err h_no_dup h_success
+  | token base' tk =>
+      let s0 : ParserState := { s with charp := default }
+      have h_inv0 : ParserStateInv s0 := by
+        simpa [ParserStateInv, s0] using h_inv
+      have h_no_err0 : s0.db.error? = none := by
+        simpa [s0] using h_no_err
+      have h_no_dup0 : s0.db.config.allowDuplicateFloat = false := by
+        simpa [s0] using h_no_dup
+      have h_success0 :
+          (s0.feed base arr 0 (.token (.old base' tk.start tk.byteArray))).db.error? = none := by
+        simpa [ParserState.feedAll, h_charp, s0] using h_success
+      have h_inv_feed := feed_maintains_stateInv base arr 0
+        (.token (.old base' tk.start tk.byteArray)) s0
+        h_inv0 h_no_err0 h_no_dup0 h_success0
+      simpa [ParserState.feedAll, h_charp, s0] using h_inv_feed
+
+/-- If `done` succeeds, the pre-done DB cannot already be in an error state. -/
+theorem done_no_error_implies_db_no_error
+    (s : ParserState) (base : Nat)
+    (h_done : (s.done base).error? = none) :
+    s.db.error? = none := by
+  by_contra h_db_err
+  have h_db_err_some : s.db.error?.isSome = true := by
+    cases h : s.db.error? with
+    | none =>
+        exact (h_db_err h).elim
+    | some _ =>
+        simp [h]
+  have h_done_eq : s.done base = s.db := by
+    unfold ParserState.done
+    simp [h_db_err_some, DB.error, Bind.bind, Id.run, Pure.pure]
+  have h_db_none : s.db.error? = none := by
+    simpa [h_done_eq] using h_done
+  exact h_db_err h_db_none
+
+/-- If `done` succeeds from a state satisfying `ParserStateInv`, the resulting DB is well-scoped. -/
+theorem done_no_error_wellScoped_of_stateInv
+    (s : ParserState) (base : Nat)
+    (h_inv : ParserStateInv s)
+    (h_no_dup : s.db.config.allowDuplicateFloat = false)
+    (h_done : (s.done base).error? = none) :
+    WellScopedDB (s.done base) := by
+  have h_no_err : s.db.error? = none := done_no_error_implies_db_no_error s base h_done
+  have h_db_err_false : s.db.error = false := (error_false_iff_error?_none s.db).2 h_no_err
+  cases h_charp : s.charp with
+  | ws =>
+      cases h_tokp : s.tokp with
+      | start =>
+          by_cases h_scopes : s.db.scopes.size > 0
+          · exfalso
+            simp [ParserState.done, h_no_err, h_db_err_false, h_charp, h_tokp, h_scopes, DB.error,
+              Bind.bind, Id.run, Pure.pure, DB.mkError] at h_done
+          · have h_done_eq : s.done base = s.db := by
+              simp [ParserState.done, h_no_err, h_db_err_false, h_charp, h_tokp, h_scopes, DB.error,
+                Bind.bind, Id.run, Pure.pure]
+            simpa [h_done_eq] using h_inv.2.1.1
+      | comment p =>
+          exfalso
+          simp [ParserState.done, h_no_err, h_db_err_false, h_charp, h_tokp, DB.error,
+            Bind.bind, Id.run, Pure.pure, DB.mkError] at h_done
+      | const =>
+          exfalso
+          simp [ParserState.done, h_no_err, h_db_err_false, h_charp, h_tokp, DB.error,
+            Bind.bind, Id.run, Pure.pure, DB.mkError] at h_done
+      | var =>
+          exfalso
+          simp [ParserState.done, h_no_err, h_db_err_false, h_charp, h_tokp, DB.error,
+            Bind.bind, Id.run, Pure.pure, DB.mkError] at h_done
+      | djvars vars =>
+          exfalso
+          simp [ParserState.done, h_no_err, h_db_err_false, h_charp, h_tokp, DB.error,
+            Bind.bind, Id.run, Pure.pure, DB.mkError] at h_done
+      | math hs p =>
+          cases h_k : p.k <;> exfalso <;>
+            simp [ParserState.done, h_no_err, h_db_err_false, h_charp, h_tokp, h_k, DB.error,
+              Bind.bind, Id.run, Pure.pure, DB.mkError] at h_done
+      | label pos l =>
+          exfalso
+          simp [ParserState.done, h_no_err, h_db_err_false, h_charp, h_tokp, DB.error,
+            Bind.bind, Id.run, Pure.pure, DB.mkError] at h_done
+      | proof pr =>
+          exfalso
+          simp [ParserState.done, h_no_err, h_db_err_false, h_charp, h_tokp, DB.error,
+            Bind.bind, Id.run, Pure.pure, DB.mkError] at h_done
+  | token pos tk =>
+      have h_feed_ok : (s.feedToken pos tk.toSlice).db.error? = none := by
+        by_cases h_feed_some : (s.feedToken pos tk.toSlice).db.error?.isSome = true
+        · have h_feed_none : (s.feedToken pos tk.toSlice).db.error? = none := by
+            simpa [ParserState.done, h_no_err, h_db_err_false, h_charp, h_feed_some, DB.error,
+              Bind.bind, Id.run, Pure.pure] using h_done
+          have : False := by
+            simpa [h_feed_none] using h_feed_some
+          exact this.elim
+        · cases h_feed : (s.feedToken pos tk.toSlice).db.error? with
+          | none =>
+              exact rfl
+          | some _ =>
+              have : (s.feedToken pos tk.toSlice).db.error?.isSome = true := by
+                simp [h_feed]
+              exact (h_feed_some this).elim
+      have h_feed_err_false : (s.feedToken pos tk.toSlice).db.error = false :=
+        (error_false_iff_error?_none _).2 h_feed_ok
+      have h_inv_feed : ParserStateInv (s.feedToken pos tk.toSlice) := by
+        exact feedToken_maintains_stateInv s pos tk.toSlice h_inv h_no_err h_no_dup h_feed_ok
+      cases h_tokp : (s.feedToken pos tk.toSlice).tokp with
+      | start =>
+          by_cases h_scopes : (s.feedToken pos tk.toSlice).db.scopes.size > 0
+          · exfalso
+            simp [ParserState.done, h_no_err, h_db_err_false, h_feed_ok, h_feed_err_false, h_charp, h_tokp, h_scopes, DB.error,
+              Bind.bind, Id.run, Pure.pure, DB.mkError] at h_done
+          · have h_done_eq : s.done base = (s.feedToken pos tk.toSlice).db := by
+              simp [ParserState.done, h_no_err, h_db_err_false, h_feed_ok, h_feed_err_false, h_charp, h_tokp, h_scopes, DB.error,
+                Bind.bind, Id.run, Pure.pure]
+            simpa [h_done_eq] using h_inv_feed.2.1.1
+      | comment p =>
+          exfalso
+          simp [ParserState.done, h_no_err, h_db_err_false, h_feed_ok, h_feed_err_false, h_charp, h_tokp, DB.error,
+            Bind.bind, Id.run, Pure.pure, DB.mkError] at h_done
+      | const =>
+          exfalso
+          simp [ParserState.done, h_no_err, h_db_err_false, h_feed_ok, h_feed_err_false, h_charp, h_tokp, DB.error,
+            Bind.bind, Id.run, Pure.pure, DB.mkError] at h_done
+      | var =>
+          exfalso
+          simp [ParserState.done, h_no_err, h_db_err_false, h_feed_ok, h_feed_err_false, h_charp, h_tokp, DB.error,
+            Bind.bind, Id.run, Pure.pure, DB.mkError] at h_done
+      | djvars vars =>
+          exfalso
+          simp [ParserState.done, h_no_err, h_db_err_false, h_feed_ok, h_feed_err_false, h_charp, h_tokp, DB.error,
+            Bind.bind, Id.run, Pure.pure, DB.mkError] at h_done
+      | math hs p =>
+          cases h_k : p.k <;> exfalso <;>
+            simp [ParserState.done, h_no_err, h_db_err_false, h_feed_ok, h_feed_err_false, h_charp, h_tokp, h_k,
+              DB.error, Bind.bind, Id.run, Pure.pure, DB.mkError] at h_done
+      | label pos' l =>
+          exfalso
+          simp [ParserState.done, h_no_err, h_db_err_false, h_feed_ok, h_feed_err_false, h_charp, h_tokp, DB.error,
+            Bind.bind, Id.run, Pure.pure, DB.mkError] at h_done
+      | proof pr =>
+          exfalso
+          simp [ParserState.done, h_no_err, h_db_err_false, h_feed_ok, h_feed_err_false, h_charp, h_tokp, DB.error,
+            Bind.bind, Id.run, Pure.pure, DB.mkError] at h_done
+
+/-- Parser-core bridge: if `checkBytesCore` succeeds, its DB is well-scoped. -/
+theorem parserCore_construction_wellscoped
+    (bytes : ByteArray) :
+    (Verify.checkBytesCore bytes).error? = none →
+    WellScopedDB (Verify.checkBytesCore bytes) := by
+  intro h_core_ok
+  let initialDB : DB := { (default : DB) with config := ({ } : ModeConfig) }
+  let initialState : ParserState := { (default : ParserState) with db := initialDB }
+  let sFeed : ParserState := initialState.feedAll 0 bytes
+  have h_init_inv : ParserStateInv initialState := by
+    simpa [initialState, initialDB] using initState_inv ({ } : ModeConfig)
+  have h_no_err_init : initialState.db.error? = none := by
+    rfl
+  have h_no_dup_init : initialState.db.config.allowDuplicateFloat = false := by
+    simp [initialState, initialDB]
+  have h_done_ok : (sFeed.done bytes.size).error? = none := by
+    simpa [Verify.checkBytesCore, initialState, initialDB, sFeed] using h_core_ok
+  have h_feed_ok : sFeed.db.error? = none := by
+    exact done_no_error_implies_db_no_error sFeed bytes.size h_done_ok
+  have h_inv_feed : ParserStateInv sFeed := by
+    exact feedAll_maintains_stateInv initialState 0 bytes
+      h_init_inv h_no_err_init h_no_dup_init h_feed_ok
+  -- Use the dedicated feedAll Tokp invariant lifting instead of manual Tokp assumptions.
+  have _h_tokp_feed : TokpInv sFeed.db sFeed.tokp := by
+    exact feedAll_maintains_tokpInv initialState 0 bytes
+      h_init_inv h_no_err_init h_no_dup_init h_feed_ok
+  have h_no_dup_feed : sFeed.db.config.allowDuplicateFloat = false := by
+    simpa [sFeed, initialState, initialDB, ParserState.feedAll_db_config] using h_no_dup_init
+  have h_scoped_done : WellScopedDB (sFeed.done bytes.size) := by
+    exact done_no_error_wellScoped_of_stateInv sFeed bytes.size h_inv_feed h_no_dup_feed h_done_ok
+  simpa [Verify.checkBytesCore, initialState, initialDB, sFeed] using h_scoped_done
+
+/-- Parser-success bridge: `checkBytes` success implies a well-scoped DB. -/
+theorem parser_construction_wellscoped
+    (bytes : ByteArray) :
+    (Verify.checkBytes bytes).error? = none →
+    WellScopedDB (Verify.checkBytes bytes) := by
+  intro h_ok
+  have h_core_ok : (Verify.checkBytesCore bytes).error? = none := by
+    by_cases h_core : (Verify.checkBytesCore bytes).error? = none
+    · exact h_core
+    · simp [Verify.checkBytes, h_core] at h_ok
+  have h_no_dup_core : (Verify.checkBytesCore bytes).config.allowDuplicateFloat = false := by
+    simp [Verify.checkBytesCore_config]
+  have h_assert_core : (Verify.checkBytesCore bytes).assertDvVarsInFrame? = true := by
+    by_cases h_assert_core : (Verify.checkBytesCore bytes).assertDvVarsInFrame? = true
+    · exact h_assert_core
+    · have h_bad : False := by
+        by_cases h_wf_core : (Verify.checkBytesCore bytes).wellFormed? = true
+        · simp [Verify.checkBytes, h_core_ok, h_no_dup_core, h_wf_core, h_assert_core, DB.mkError] at h_ok
+        · simp [Verify.checkBytes, h_core_ok, h_no_dup_core, h_wf_core, h_assert_core, DB.mkError] at h_ok
+      exact h_bad.elim
+  have h_eq : Verify.checkBytes bytes = Verify.checkBytesCore bytes := by
+    by_cases h_wf_core : (Verify.checkBytesCore bytes).wellFormed? = true
+    · simp [Verify.checkBytes, h_core_ok, h_no_dup_core, h_wf_core, h_assert_core]
+    · have h_bad : False := by
+        simp [Verify.checkBytes, h_core_ok, h_no_dup_core, h_wf_core, h_assert_core, DB.mkError] at h_ok
+      exact h_bad.elim
+  have h_scoped_core : WellScopedDB (Verify.checkBytesCore bytes) :=
+    parserCore_construction_wellscoped bytes h_core_ok
+  simpa [h_eq] using h_scoped_core
+
 end ParserOps
 end Metamath
+

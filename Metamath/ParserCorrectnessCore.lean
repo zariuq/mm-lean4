@@ -20,3 +20,4 @@ abbrev DBExecution : Verify.DB → Verify.DB → Prop :=
   Metamath.ParserCorrectness.DBExecution
 
 end Metamath.ParserCorrectnessCore
+

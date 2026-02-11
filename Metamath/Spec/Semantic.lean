@@ -71,3 +71,4 @@ requirement enforces this - you cannot use an undeclared variable.
 -/
 
 end Metamath.Spec.Semantic
+

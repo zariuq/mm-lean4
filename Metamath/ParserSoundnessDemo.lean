@@ -147,3 +147,4 @@ Therefore: successful parsing (no final error) implies well-formed result.
 -/
 
 end Metamath.ParserSoundnessDemo
+

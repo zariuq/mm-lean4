@@ -229,3 +229,4 @@ theorem const_global_of_wellFormed_hyp {Γ : Database} {consts : ConstSet}
   | inr h_const => exact h_const
 
 end Metamath.Spec
+
