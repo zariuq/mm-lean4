@@ -75,7 +75,7 @@ def FloatDeclaredBefore (db : DB) (fr : Frame) (i : Nat) (v : String) : Prop :=
 /-- A frame is well-scoped if:
 1. Every essential hypothesis respects the frame's float variables
 2. Every variable in an essential hypothesis is declared by an earlier float
-3. DV pairs are ordered (v < w) and both variables are in the frame
+3. DV pairs are ordered (v < w) and both symbols are declared variables
 -/
 def WellScopedFrame (db : DB) (fr : Frame) : Prop :=
   (∀ i, i < fr.hyps.size →
@@ -86,8 +86,8 @@ def WellScopedFrame (db : DB) (fr : Frame) : Prop :=
     | _ => True) ∧
   (∀ v w, (v, w) ∈ fr.dj.toList →
     v < w ∧
-    v ∈ DB.frameFloatVars db fr ∧
-    w ∈ DB.frameFloatVars db fr)
+    db.isVar v = true ∧
+    db.isVar w = true)
 
 /-- All symbols in a formula are declared with the correct kind in the DB. -/
 def FormulaSymbolsDeclared (db : DB) (f : Formula) : Prop :=
@@ -882,5 +882,40 @@ theorem wellFormedDB_of_wellFormed?
       (List.all_eq_true).1 h_all (lbl, obj) h_mem
     exact wellFormedObj_of_wellFormedObj? h_obj
 
+theorem assertDvVarsInFrame_of_assertDvVarsInFrame?
+    {db : DB}
+    (h_ok : db.assertDvVarsInFrame? = true) :
+    ∀ lbl f fr name,
+      db.find? lbl = some (.assert f fr name) →
+      ∀ v w, (v, w) ∈ fr.dj.toList →
+        v ∈ DB.frameFloatVars db fr ∧
+        w ∈ DB.frameFloatVars db fr := by
+  intro lbl f fr name h_find v w h_mem
+  have h_all :
+      db.objects.toList.all
+        (fun kv =>
+          match kv.2 with
+          | .assert _ fr _ => db.frameDvVarsInFrame? fr
+          | _ => true) = true := by
+    simpa [DB.assertDvVarsInFrame?] using h_ok
+  have h_find' : db.objects[lbl]? = some (.assert f fr name) := by
+    simpa [DB.find?] using h_find
+  have h_obj_mem : (lbl, .assert f fr name) ∈ db.objects.toList := by
+    exact (Std.HashMap.mem_toList_iff_getElem?_eq_some).2 h_find'
+  have h_obj :
+      db.frameDvVarsInFrame? fr = true := by
+    exact (List.all_eq_true).1 h_all (lbl, .assert f fr name) h_obj_mem
+  have h_pair_bool :
+      decide (v ∈ DB.frameFloatVars db fr ∧ w ∈ DB.frameFloatVars db fr) = true := by
+    exact (List.all_eq_true).1 h_obj (v, w) h_mem
+  by_cases h_pair : v ∈ DB.frameFloatVars db fr ∧ w ∈ DB.frameFloatVars db fr
+  · exact h_pair
+  · have h_pair_false :
+        decide (v ∈ DB.frameFloatVars db fr ∧ w ∈ DB.frameFloatVars db fr) = false := by
+      simp [h_pair]
+    rw [h_pair_false] at h_pair_bool
+    cases h_pair_bool
+
 end WF
 end Metamath
+

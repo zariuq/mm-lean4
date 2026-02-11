@@ -88,3 +88,4 @@ To complete Phase 3:
 
 **Estimated remaining:** ~150-200 lines of Kernel.lean updates
 -/
+

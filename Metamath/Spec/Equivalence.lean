@@ -3559,3 +3559,4 @@ theorem operational_iff_semantic {Γ : Database} {consts : ConstSet} {fr : Frame
 -/
 
 end Metamath.Spec.Equivalence
+

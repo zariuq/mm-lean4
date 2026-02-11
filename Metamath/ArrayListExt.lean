@@ -830,3 +830,4 @@ theorem window_toList_map {α β} (a : Array α) (off len : Nat)
   simp [List.extract]
 
 end Array
+

@@ -2003,3 +2003,4 @@ theorem insertHyp_maintains_unique_floats (db : DB) (pos : Pos) (label : String)
       exact (h_ne rfl).elim
 
 end Metamath.DBCaseAnalysis
+

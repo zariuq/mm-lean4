@@ -1890,3 +1890,4 @@ theorem db_construction_induction
 end WellFormednessInduction
 
 end Metamath.ParserCorrectness
+

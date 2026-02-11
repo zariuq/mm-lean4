@@ -47,3 +47,4 @@ lean_exe «mm-lean4» where
 lean_exe validateDB where
   root := `Metamath.ValidateDB
   supportInterpreter := true
+

@@ -81,3 +81,4 @@ end ByteSliceT
 -- String.toAscii helper (was defined alongside ByteSlice)
 def String.toAscii (s : String) : ByteArray :=
   s.toByteArray
+

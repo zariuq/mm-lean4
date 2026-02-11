@@ -188,3 +188,4 @@ end Metamath
 /-- Main entry point for test executable -/
 def main : IO Unit :=
   Metamath.Tests.runAllTests
+

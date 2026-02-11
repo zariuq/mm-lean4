@@ -637,3 +637,4 @@ def Expr.ty (e) {axs c} [Typed axs c e] {Γ} : Provable axs Γ (c, e) := Typed.t
 -- Demo section archived to docs_archive/MarioDemo.md
 
 end Metamath
+

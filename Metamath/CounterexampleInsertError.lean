@@ -99,3 +99,4 @@ theorem insert_const_inner_preserves_error :
   simp [DB.mkError]
 
 end Metamath.CounterexampleInsertError
+
