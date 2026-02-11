@@ -27,6 +27,33 @@ To check proof gaps directly:
 rg -n "sorry" Metamath/
 ```
 
+## Correctness (summary)
+
+This project provides end‑to‑end correctness theorems for the Metamath verifier, and a
+formal diagnostic contract for parser errors.
+
+Core guarantees (with theorem anchors) are summarized in `docs/correctness.md`, including:
+
+- Parser‑origin acceptance ⇔ spec provability (`Metamath/KernelClean.lean`):
+  - `verify_parser_accepts_of_spec_provable`
+  - `verify_parser_sound_of_impl_acceptance` / `_equiv`
+- Kernel soundness / completeness:
+  - `verify_impl_sound`
+  - `verify_impl_complete`
+- Parser error semantics for all codes:
+  - `RuleSemanticViolation` / `RuleClauseSemanticViolation`
+  - `checkBytes_parseErrorCode?_ruleClauseSemantic_sound`
+
+Diagnostic taxonomy (codes → messages → clauses → predicates) is listed in
+`docs/ErrorCodes.md`. The verifier reports the first error; include I/O failures are
+classified as environment errors rather than spec violations. Different verifier modes
+(`exe`, `knife`, `permissive`) are explicitly treated as different specs.
+
+Compatibility and reproduction:
+
+- `lake build`
+- `metamath-test/run-testsuite-all` (see `metamath-test` repo)
+
 ## Build
 
 ```bash
