@@ -48,7 +48,7 @@ theorem dbWithError_strict_inner : (!dbWithError.config.allowConstInnerScope && 
 -/
 theorem insert_const_inner_different_error :
     (dbWithError.insert {line := 0, col := 0} "c" (.const)).error? ≠ dbWithError.error? := by
-  unfold dbWithError DB.insert DB.mkError DB.error
+  unfold dbWithError DB.insert DB.mkErrorFromEvidence DB.mkErrorWithEvidence DB.error
   -- After unfolding insert, we can see:
   -- 1. const scope check calls mkError with "$c must be in outermost block..."
   -- 2. Then checks if error=true (which it is after mkError), and returns that DB
@@ -57,7 +57,7 @@ theorem insert_const_inner_different_error :
   simp
   -- After simp, we should have a goal that reduces to String inequality
   -- The error messages "c must be in outermost block" ≠ "previous error"
-  native_decide
+  decide
 
 /-- The key counterexample: insert on const in inner scope changes the DB
 
@@ -96,7 +96,7 @@ theorem insert_const_inner_preserves_error :
   -- This is exactly what insert_error_propagates proves
   unfold dbWithError
   unfold DB.insert DB.error
-  simp [DB.mkError]
+  simp [DB.mkErrorFromEvidence]
 
 end Metamath.CounterexampleInsertError
 

@@ -89,7 +89,7 @@ theorem insert_error_propagates (db : DB) (pos : Pos) (label : String) (obj : St
       -- Since db'.error = true (by mkError_sets_error), it returns db'
       -- So result is db'.error which is true
       have h' : (db.mkError pos "$c must be in outermost block (spec Section 4.2.8)").error = true :=
-        mkError_sets_error _ _ _
+        mkError_sets_error db pos _
       unfold DB.error at h' ⊢
       simp only
       exact h'
@@ -279,7 +279,7 @@ theorem insert_duplicate_error (db : DB) (pos : Pos) (label : String) (obj : Str
     rename_i c h_obj_const
     split
     · -- Scope error
-      exact DBLemmas.mkError_sets_error _ _ _
+      exact DBLemmas.mkError_sets_error db pos _
     · -- No scope error, proceed to error check
       by_cases h_err : db.error
       · -- db.error = true
@@ -294,7 +294,7 @@ theorem insert_duplicate_error (db : DB) (pos : Pos) (label : String) (obj : Str
         simp [h_some, h_obj_const]
         -- ok is false for const (obj is const, o is anything)
         -- Need to case on o to reduce the ok computation
-        cases o <;> (unfold DB.error; exact DBLemmas.mkError_sets_error _ _ _)
+        cases o <;> (unfold DB.error; exact DBLemmas.mkError_sets_error db pos _)
   · -- Case: obj label is not .const (var/hyp/assert)
     by_cases h_err : db.error
     · -- db.error = true
@@ -332,7 +332,7 @@ theorem insert_duplicate_error (db : DB) (pos : Pos) (label : String) (obj : Str
           · simp [h_obj] at h_ok  -- assert: impossible
         · -- ok = false: mkError
           unfold DB.error
-          exact DBLemmas.mkError_sets_error _ _ _
+          exact DBLemmas.mkError_sets_error db pos _
       · -- o = .hyp
         simp [h_some, DB.error]
       · -- o = .assert

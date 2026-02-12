@@ -57,7 +57,7 @@ theorem insert_preserves_find?_ne
   cases h_obj : obj label with
   | const c =>
       by_cases h_scope : !db.config.allowConstInnerScope && db.scopes.size > 0
-      · simp [h_scope, DB.mkError, DB.error, DB.find?]
+      · simp [h_scope, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence, DB.error, DB.find?]
       · simp [h_scope]
         by_cases h_err : db.error
         · simp [h_err, DB.find?]
@@ -70,7 +70,7 @@ theorem insert_preserves_find?_ne
                 simp [Std.HashMap.getElem?_insert, h_eq]
               simpa [h_find, DB.find?] using h_other
           | some val =>
-              cases val <;> simp [DB.mkError, DB.find?]
+              cases val <;> simp [DB.mkErrorFromEvidence, DB.mkErrorWithEvidence, DB.find?]
   | var v =>
       by_cases h_err : db.error
       · simp [h_err, DB.find?]
@@ -82,7 +82,7 @@ theorem insert_preserves_find?_ne
               simp [Std.HashMap.getElem?_insert, h_eq]
             simpa [h_find, DB.find?] using h_other
         | some val =>
-            cases val <;> simp [DB.mkError, DB.find?]
+            cases val <;> simp [DB.mkErrorFromEvidence, DB.mkErrorWithEvidence, DB.find?]
   | hyp ess f lbl =>
       by_cases h_err : db.error
       · simp [h_err, DB.find?]
@@ -94,7 +94,7 @@ theorem insert_preserves_find?_ne
               simp [Std.HashMap.getElem?_insert, h_eq]
             simpa [h_find, DB.find?] using h_other
         | some val =>
-            cases val <;> simp [DB.mkError, DB.find?]
+            cases val <;> simp [DB.mkErrorFromEvidence, DB.mkErrorWithEvidence, DB.find?]
   | assert f fr lbl =>
       by_cases h_err : db.error
       · simp [h_err, DB.find?]
@@ -106,7 +106,7 @@ theorem insert_preserves_find?_ne
               simp [Std.HashMap.getElem?_insert, h_eq]
             simpa [h_find, DB.find?] using h_other
         | some val =>
-            cases val <;> simp [DB.mkError, DB.find?]
+            cases val <;> simp [DB.mkErrorFromEvidence, DB.mkErrorWithEvidence, DB.find?]
 
 theorem isConst_preserved_by_insert
     (db : DB) (pos : Pos) (label c : String) (obj : String → Object)
@@ -265,15 +265,19 @@ theorem error_false_iff_error?_none (db : DB) : db.error = false ↔ db.error? =
 /-- insert preserves error state (if input has error, output has error) -/
 theorem insert_preserves_error (db : DB) (pos : Pos) (label : String) (obj : String → Object) :
   db.error = true → (db.insert pos label obj).error = true := by
-  intro h
+  intro h_err
   unfold DB.insert
-  -- Split on what obj label is
-  split
-  · -- Case: obj label is .const
-    split
-    · simp
-    · simp [h]
-  · simp [h]
+  cases h_obj : obj label with
+  | const c =>
+      by_cases h_scope : !db.config.allowConstInnerScope && db.scopes.size > 0
+      · simp [h_obj, h_scope, DB.error, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence]
+      · simp [h_obj, h_scope, h_err]
+  | var v =>
+      simp [h_obj, h_err]
+  | hyp ess f lbl =>
+      simp [h_obj, h_err]
+  | assert f fr lbl =>
+      simp [h_obj, h_err]
 
 /-- pushScope preserves error state -/
 theorem pushScope_preserves_error (db : DB) :
@@ -346,9 +350,10 @@ theorem insert_new_object_updates
     (h_no_err_before : db.error? = none)
     (h_no_err_after : (db.insert pos l obj).error? = none) :
     (db.insert pos l obj).objects = db.objects.insert l (obj l) := by
-  unfold DB.insert DB.error DB.mkError at *
-  -- Case split on obj l
-  split <;> split <;> simp_all
+  have h_no_prior_err : db.error = false := (error_false_iff_error?_none db).2 h_no_err_before
+  have h_no_err : (db.insert pos l obj).error = false :=
+    (error_false_iff_error?_none (db.insert pos l obj)).2 h_no_err_after
+  exact DB.insert_no_dup_objects db pos l obj h_no_prior_err h_no_find h_no_err
 
 /-- When insert succeeds (no error after), the objects map was updated.
     Note: This doesn't hold when inserting a var that already exists as a var
@@ -361,97 +366,109 @@ theorem insert_success_objects_updated
     (h_var_labels_match_names : ∀ lbl v, db.find? lbl = some (.var v) → v = lbl)
     (h_obj_var_names_match : ∀ lbl v, obj lbl = .var v → v = lbl) :
     (db.insert pos l obj).objects = db.objects.insert l (obj l) := by
-  -- Key insight: if insert succeeds (no error after) and we exclude var dup case,
-  -- then we must have hit the "new object" branch where db.find? l = none
+  have h_no_prior_err : db.error = false := (error_false_iff_error?_none db).2 h_no_err_before
+  have h_no_err : (db.insert pos l obj).error = false :=
+    (error_false_iff_error?_none (db.insert pos l obj)).2 h_no_err_after
   by_cases h_find : db.find? l = none
-  · -- Case: db.find? l = none, use helper
-    exact insert_new_object_updates db pos l obj h_find h_no_err_before h_no_err_after
-  · -- Case: db.find? l ≠ none, so ∃ o, db.find? l = some o
-    -- By h_not_var_dup, it cannot be that both o and obj l are vars
-    -- Therefore, ok = false, so mkError is called
-    -- But this contradicts h_no_err_after
-    -- This case is impossible!
+  · exact DB.insert_no_dup_objects db pos l obj h_no_prior_err h_find h_no_err
+  · -- Existing object: the only non-error path is var-var, excluded by h_not_var_dup
     exfalso
-
-    -- First, extract the object o
-    have h_exists : ∃ o, db.find? l = some o := by
-      cases h_eq : db.find? l with
-      | none => contradiction
-      | some o => exact ⟨o, rfl⟩
-
-    rcases h_exists with ⟨o, h_o⟩
-
-    -- Now unfold insert and show it calls mkError or contradicts h_not_var_dup
-    unfold DB.insert DB.error DB.mkError at h_no_err_after
-    simp only at h_no_err_after
-
-    -- The key insight: After unfolding with h_o (found existing object),
-    -- the only way to avoid mkError is if ok=true (both are vars)
-    -- But h_not_var_dup excludes this case!
-    -- So every branch leads to contradiction
-
-    -- We need to show: h_no_err_after implies ok=true, which contradicts h_not_var_dup
-    -- Or: ok=false, which means mkError was called, contradicting h_no_err_after
-
-    -- Direct approach: The match on o and obj l determines ok
-    -- If ok=true, then both must be .var, so we can extract them and contradict h_not_var_dup
-    -- Let's case on what o and obj l are
-
-    cases o with
-    | const c_o =>
-        -- o = .const c_o, so ok = false (line 291: | _ => false)
-        -- Therefore mkError is called, contradiction
-        split at h_no_err_after <;> split at h_no_err_after <;> simp_all
-    | var v_o =>
-        -- o = .var v_o, so ok depends on whether obj l is also a var
+    cases h_o : db.find? l with
+    | none => contradiction
+    | some o =>
+      cases o with
+      | var v_o =>
         cases h_obj : obj l with
-        | const c_l =>
-            -- obj l = .const c_l, so ok = false, mkError called
-            split at h_no_err_after <;> split at h_no_err_after <;> simp_all
         | var v_l =>
-            -- Both are vars! ok = true, so no mkError
-            -- But this contradicts h_not_var_dup
-            -- We have h_o : db.find? l = some (Object.var v_o)
-            -- And h_obj : obj l = Object.var v_l
-            --
-            -- The key insight: we can use v_l to build the contradiction!
-            -- h_not_var_dup says: ¬(∃ v, obj l = .var v ∧ db.find? l = some (.var v))
-            -- We have obj l = .var v_l (from h_obj)
-            -- If we can show db.find? l = some (.var v_l), we contradict h_not_var_dup
-            --
-            -- From h_o we have: db.find? l = some (.var v_o)
-            -- We need v_o = v_l
-            --
-            -- But wait! Do we actually need v_o = v_l?
-            -- Let me try using v_l DIRECTLY and see what happens:
-            -- From DB invariant: vars in DB have label = name
-            have h_vo_is_l : v_o = l := h_var_labels_match_names l v_o h_o
-
-            -- From obj invariant: vars constructed by obj have label = name
-            have h_vl_is_l : v_l = l := h_obj_var_names_match l v_l h_obj
-
-            -- Therefore v_o = v_l
-            have h_vo_eq_vl : v_o = v_l := by
-              rw [h_vo_is_l, h_vl_is_l]
-
-            -- Now we can contradict h_not_var_dup
-            have : ∃ v, obj l = .var v ∧ db.find? l = some (.var v) := by
-              refine ⟨v_l, h_obj, ?_⟩
-              rw [← h_vo_eq_vl]
-              exact h_o
-            exact h_not_var_dup this
+          have h_vo_is_l : v_o = l := h_var_labels_match_names l v_o h_o
+          have h_vl_is_l : v_l = l := h_obj_var_names_match l v_l h_obj
+          have h_vo_eq_vl : v_o = v_l := by
+            rw [h_vo_is_l, h_vl_is_l]
+          have : ∃ v, obj l = .var v ∧ db.find? l = some (.var v) := by
+            refine ⟨v_l, h_obj, ?_⟩
+            simpa [h_vo_eq_vl] using h_o
+          exact h_not_var_dup this
+        | const c_l =>
+          have h_err : (db.insert pos l obj).error? ≠ none := by
+            unfold DB.insert
+            by_cases h_scope : !db.config.allowConstInnerScope && db.scopes.size > 0
+            · simpa [h_obj, h_scope] using
+                (DB.mkErrorFromEvidence_error? (s := db) pos (.scopeDecl .constMustBeOutermost))
+            · simpa [h_obj, h_scope, h_no_prior_err, h_o] using
+                (DB.mkErrorFromEvidence_error? (s := db) pos (.scopeDecl (.duplicateSymbolOrAssert l)))
+          exact h_err (by simpa using h_no_err_after)
         | hyp ess f_l lbl =>
-            -- obj l = .hyp, so ok = false, mkError called
-            split at h_no_err_after <;> split at h_no_err_after <;> simp_all
+          have h_err : (db.insert pos l obj).error? ≠ none := by
+            unfold DB.insert
+            simpa [h_obj, h_no_prior_err, h_o] using
+              (DB.mkErrorFromEvidence_error? (s := db) pos (.scopeDecl (.duplicateSymbolOrAssert l)))
+          exact h_err (by simpa using h_no_err_after)
         | assert fmla fr_l name =>
-            -- obj l = .assert, so ok = false, mkError called
-            split at h_no_err_after <;> split at h_no_err_after <;> simp_all
-    | hyp ess_o f_o lbl_o =>
-        -- o = .hyp, so ok = false, mkError called
-        split at h_no_err_after <;> split at h_no_err_after <;> simp_all
-    | assert fmla_o fr_o name_o =>
-        -- o = .assert, so ok = false, mkError called
-        split at h_no_err_after <;> split at h_no_err_after <;> simp_all
+          have h_err : (db.insert pos l obj).error? ≠ none := by
+            unfold DB.insert
+            simpa [h_obj, h_no_prior_err, h_o] using
+              (DB.mkErrorFromEvidence_error? (s := db) pos (.scopeDecl (.duplicateSymbolOrAssert l)))
+          exact h_err (by simpa using h_no_err_after)
+      | const c_o =>
+        have h_err : (db.insert pos l obj).error? ≠ none := by
+          unfold DB.insert
+          cases h_obj : obj l with
+          | const c =>
+            by_cases h_scope : !db.config.allowConstInnerScope && db.scopes.size > 0
+            · simpa [h_obj, h_scope] using
+                (DB.mkErrorFromEvidence_error? (s := db) pos (.scopeDecl .constMustBeOutermost))
+            · simpa [h_obj, h_scope, h_no_prior_err, h_o] using
+                (DB.mkErrorFromEvidence_error? (s := db) pos (.scopeDecl (.duplicateSymbolOrAssert l)))
+          | var v =>
+            simpa [h_obj, h_no_prior_err, h_o] using
+              (DB.mkErrorFromEvidence_error? (s := db) pos (.scopeDecl (.duplicateSymbolOrAssert l)))
+          | hyp ess f lbl =>
+            simpa [h_obj, h_no_prior_err, h_o] using
+              (DB.mkErrorFromEvidence_error? (s := db) pos (.scopeDecl (.duplicateSymbolOrAssert l)))
+          | assert f fr name =>
+            simpa [h_obj, h_no_prior_err, h_o] using
+              (DB.mkErrorFromEvidence_error? (s := db) pos (.scopeDecl (.duplicateSymbolOrAssert l)))
+        exact h_err (by simpa using h_no_err_after)
+      | hyp ess_o f_o lbl_o =>
+        have h_err : (db.insert pos l obj).error? ≠ none := by
+          unfold DB.insert
+          cases h_obj : obj l with
+          | const c =>
+            by_cases h_scope : !db.config.allowConstInnerScope && db.scopes.size > 0
+            · simpa [h_obj, h_scope] using
+                (DB.mkErrorFromEvidence_error? (s := db) pos (.scopeDecl .constMustBeOutermost))
+            · simpa [h_obj, h_scope, h_no_prior_err, h_o] using
+                (DB.mkErrorFromEvidence_error? (s := db) pos (.scopeDecl (.duplicateSymbolOrAssert l)))
+          | var v =>
+            simpa [h_obj, h_no_prior_err, h_o] using
+              (DB.mkErrorFromEvidence_error? (s := db) pos (.scopeDecl (.duplicateSymbolOrAssert l)))
+          | hyp ess f lbl =>
+            simpa [h_obj, h_no_prior_err, h_o] using
+              (DB.mkErrorFromEvidence_error? (s := db) pos (.scopeDecl (.duplicateSymbolOrAssert l)))
+          | assert f fr name =>
+            simpa [h_obj, h_no_prior_err, h_o] using
+              (DB.mkErrorFromEvidence_error? (s := db) pos (.scopeDecl (.duplicateSymbolOrAssert l)))
+        exact h_err (by simpa using h_no_err_after)
+      | assert fmla_o fr_o name_o =>
+        have h_err : (db.insert pos l obj).error? ≠ none := by
+          unfold DB.insert
+          cases h_obj : obj l with
+          | const c =>
+            by_cases h_scope : !db.config.allowConstInnerScope && db.scopes.size > 0
+            · simpa [h_obj, h_scope] using
+                (DB.mkErrorFromEvidence_error? (s := db) pos (.scopeDecl .constMustBeOutermost))
+            · simpa [h_obj, h_scope, h_no_prior_err, h_o] using
+                (DB.mkErrorFromEvidence_error? (s := db) pos (.scopeDecl (.duplicateSymbolOrAssert l)))
+          | var v =>
+            simpa [h_obj, h_no_prior_err, h_o] using
+              (DB.mkErrorFromEvidence_error? (s := db) pos (.scopeDecl (.duplicateSymbolOrAssert l)))
+          | hyp ess f lbl =>
+            simpa [h_obj, h_no_prior_err, h_o] using
+              (DB.mkErrorFromEvidence_error? (s := db) pos (.scopeDecl (.duplicateSymbolOrAssert l)))
+          | assert f fr name =>
+            simpa [h_obj, h_no_prior_err, h_o] using
+              (DB.mkErrorFromEvidence_error? (s := db) pos (.scopeDecl (.duplicateSymbolOrAssert l)))
+        exact h_err (by simpa using h_no_err_after)
 
 /-- When insert succeeds, looking up the inserted key gives the inserted object -/
 theorem insert_success_find?_self
@@ -550,7 +567,7 @@ theorem insertHyp_preserves_error (db : DB) (pos : Pos) (label : String) (ess : 
     unfold DB.insertHypChecks
     by_cases h_head : f.hasConstHead
     · simp [h_head, h_err]
-    · simp [h_head]
+    · simp [h_head, DB.error, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence]
   simp [h_checks]
 
 /-- insertAxiom preserves error state -/
@@ -559,10 +576,8 @@ theorem insertAxiom_preserves_error (db : DB) (pos : Pos) (label : String) (fmla
   intro h
   unfold DB.insertAxiom
   by_cases h_head : fmla.hasConstHead
-  · -- head check passes, db unchanged
-    simp [h_head, h]
-  · -- head check fails, mkError sets error
-    simp [h_head]
+  · simp [h_head, h]
+  · simp [h_head, DB.error, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence]
 
 /-- THE KEY PROPERTY: Parser stops on first error
 
@@ -760,9 +775,8 @@ theorem insert_preserves_others (db : DB) (pos : Pos) (label label' : String) (o
   cases h_obj : obj label with
   | const c =>
       by_cases h_scope : !db.config.allowConstInnerScope && db.scopes.size > 0
-      · -- Const scope check fails: mkError, objects unchanged.
-        simp [h_scope]
-        simp [DB.find?, DB.mkError]
+      · -- Const scope check fails: mkErrorFromEvidence, objects unchanged.
+        simp [h_obj, h_scope, DB.error, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence, DB.find?]
       · -- Const scope check passes: normal insert.
         simp [h_scope, h_no_err, h_not_found', DB.find?]
         exact HashMap.find?_insert_ne db.objects label label' (Object.const c) h_ne
@@ -791,10 +805,10 @@ theorem insert_duplicate_error (db : DB) (pos : Pos) (label : String) (obj : Str
   cases h_obj : obj label with
   | const c =>
       by_cases h_scope : !db.config.allowConstInnerScope && db.scopes.size > 0
-      · -- Const scope check fails: mkError
-        simp [h_scope]
+      · -- Const scope check fails: mkErrorFromEvidence
+        simp [h_obj, h_scope, DB.error, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence]
       · -- Const scope check passes, duplicate triggers mkError
-        cases existing <;> simp [h_scope, h_no_err', h_exists, DB.error, DB.mkError]
+        cases existing <;> simp [h_scope, h_no_err', h_exists, DB.error, DB.mkErrorFromEvidence]
   | var v =>
       cases existing with
       | var v' =>
@@ -802,15 +816,15 @@ theorem insert_duplicate_error (db : DB) (pos : Pos) (label : String) (obj : Str
           apply h_not_var_redef
           exact ⟨v, v', h_obj, rfl⟩
       | const c =>
-          simp [h_no_err', h_exists, DB.error, DB.mkError]
+          simp [h_no_err', h_exists, DB.error, DB.mkErrorFromEvidence]
       | hyp ess f lbl =>
-          simp [h_no_err', h_exists, DB.error, DB.mkError]
+          simp [h_no_err', h_exists, DB.error, DB.mkErrorFromEvidence]
       | assert f fr lbl =>
-          simp [h_no_err', h_exists, DB.error, DB.mkError]
+          simp [h_no_err', h_exists, DB.error, DB.mkErrorFromEvidence]
   | hyp ess f lbl =>
-      cases existing <;> simp [h_no_err', h_exists, DB.error, DB.mkError]
+      cases existing <;> simp [h_no_err', h_exists, DB.error, DB.mkErrorFromEvidence]
   | assert f fr lbl =>
-      cases existing <;> simp [h_no_err', h_exists, DB.error, DB.mkError]
+      cases existing <;> simp [h_no_err', h_exists, DB.error, DB.mkErrorFromEvidence]
 
 /-! ## Layer 4-continued: Frame Operations - insertHyp
 
@@ -886,8 +900,11 @@ theorem insertHyp_rejects_duplicate_float
     simp [Sym.value, h1_new]
   have h_dup' : db.floatVarOccursInFrame f[1]!.value = true := by
     simpa [h_new_val] using h_dup
+
   have h_check_err : (DB.insertHypChecks db pos false f).error = true := by
-    simp [DB.insertHypChecks, h_head, h_shape, h_size_ge, h_dup', h_no_err, h_perm]
+    have h_no_err_isSome : db.error?.isSome = false := by
+      simpa [DB.error_def] using h_no_err
+    simp [DB.insertHypChecks, DB.error, h_head, h_shape, h_size_ge, h_dup', h_perm, h_no_err_isSome]
   simp [DB.insertHyp, h_check_err]
 
 /-- insertHyp succeeds when no duplicate exists -/
@@ -1702,7 +1719,7 @@ theorem structure_preserving_maintains_wf
       | none =>
           have : False := by
             have h_err : (DB.popScope pos db).error? ≠ none := by
-              simp [DB.popScope, DB.mkError, h_scope]
+              simpa [DB.popScope, h_scope]
             exact h_err (by simpa [DB.popScope, h_scope] using h_no_err_after)
           exact this.elim
       | some sc =>
