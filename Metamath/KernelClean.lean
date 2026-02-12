@@ -5101,11 +5101,9 @@ theorem dv_check_sound
     | true =>
         rfl
     | false =>
-        have h_ok' :
-            Verify.DB.dvCheck vars djTarget djSource σ_impl =
-              Except.error "disjoint variable violation" := by
-          simp [Verify.DB.dvCheck, h_ok_bool]
-        cases (h_ok'.symm.trans h_ok)
+        have : False := by
+          simpa [Verify.DB.dvCheck, h_ok_bool] using h_ok
+        exact False.elim this
   have h_all : djSource.toList.all (fun (v1, v2) =>
       match σ_impl[v1]?, σ_impl[v2]? with
       | some e1, some e2 =>
@@ -7817,9 +7815,17 @@ theorem stepAssert_preserves_frame_heap'
       · simp [h_syms_ok] at h_step
         rcases (Except.bind_ok_iff).1 h_step with ⟨subst, h_check, h_rest⟩
         rcases (Except.bind_ok_iff).1 h_rest with ⟨_, h_dv, h_rest2⟩
-        rcases (Except.bind_ok_iff).1 h_rest2 with ⟨concl, h_subst, h_pure⟩
-        cases h_pure
-        exact ⟨rfl, rfl⟩
+        cases h_subst : Verify.Formula.subst subst f with
+        | error err =>
+            have h_contra :
+                (Except.error (ProofCheckFail.proofCheck ProofCheckError.typeErrorInSubstitution) : Except ProofCheckFail Verify.ProofState) = Except.ok pr' := by
+              simpa [Functor.map, Except.map, h_subst] using h_rest2
+            cases h_contra
+        | ok concl =>
+            simp [h_subst] at h_rest2
+            injection h_rest2 with h_pr'
+            subst h_pr'
+            exact ⟨rfl, rfl⟩
       · simp [h_syms_ok] at h_step
     · simp [h_head] at h_step
   · simp [h_hyp_size] at h_step
@@ -8570,22 +8576,7 @@ theorem stepAssert_preserves_frame_heap
   (f : Verify.Formula) (fr : Verify.Frame) :
   Verify.DB.stepAssert db pr f fr = Except.ok pr' →
   pr'.frame = pr.frame ∧ pr'.heap = pr.heap := by
-  intro h_step
-  unfold Verify.DB.stepAssert at h_step
-  by_cases h_hyp_size : fr.hyps.size ≤ pr.stack.size
-  · simp [h_hyp_size] at h_step
-    by_cases h_head : f.hasConstHead
-    · simp [h_head] at h_step
-      by_cases h_syms_ok : Verify.DB.formulaSymsRespectFrame db f fr
-      · simp [h_syms_ok] at h_step
-        rcases (Except.bind_ok_iff).1 h_step with ⟨subst, h_check, h_rest⟩
-        rcases (Except.bind_ok_iff).1 h_rest with ⟨_, h_dv, h_rest2⟩
-        rcases (Except.bind_ok_iff).1 h_rest2 with ⟨concl, h_subst, h_pure⟩
-        cases h_pure
-        exact ⟨rfl, rfl⟩
-      · simp [h_syms_ok] at h_step
-    · simp [h_head] at h_step
-  · simp [h_hyp_size] at h_step
+  exact stepAssert_preserves_frame_heap' db pr pr' f fr
 
 theorem stepProof_preserves_frame_heap
   (db : Verify.DB) (pr pr' : Verify.ProofState) (n : Nat) :

@@ -12,7 +12,7 @@ open Metamath.ParserCorrectness
 /-- Helper: db.insert for .hyp implies freshness -/
 theorem insert_hyp_implies_fresh
     (db : DB) (pos : Pos) (l : String) (ess : Bool) (f : Formula)
-    (h_ok : (db.insert pos l (.hyp ess f)).error? = none) :
+    (h_ok : (db.insert pos l (Object.hyp ess f)).error? = none) :
     db.find? l = none := by
   by_cases h_find : db.find? l = none
   · exact h_find
@@ -31,15 +31,18 @@ theorem insert_hyp_implies_fresh
               simp [h_err] at h_err''
             exact this.elim
         | false =>
-            cases o with
-            | const _ =>
-                simp [DB.insert, h_err, h_find', DB.mkError] at h_ok
-            | var _ =>
-                simp [DB.insert, h_err, h_find', DB.mkError] at h_ok
-            | hyp _ _ _ =>
-                simp [DB.insert, h_err, h_find', DB.mkError] at h_ok
-            | assert _ _ _ =>
-                simp [DB.insert, h_err, h_find', DB.mkError] at h_ok
+            exfalso
+            have h_not_var_redef : ¬∃ v v', (Object.hyp ess f) l = Object.var v ∧ o = Object.var v' := by
+              intro h
+              rcases h with ⟨v, v', h_obj, _⟩
+              cases h_obj
+            have h_err_insert : (db.insert pos l (Object.hyp ess f)).error = true :=
+              Metamath.ParserCorrectness.insert_duplicate_error db pos l (Object.hyp ess f) o h_err h_find' h_not_var_redef
+            have h_no_err_insert : (db.insert pos l (Object.hyp ess f)).error = false :=
+              (Metamath.ParserBasics.no_error_iff _).1 h_ok
+            have h_contra := h_no_err_insert
+            rw [h_err_insert] at h_contra
+            cases h_contra
 
 private theorem insertHypChecks_preserves_objects
     (db : DB) (pos : Pos) (ess : Bool) (f : Formula) :
@@ -61,8 +64,8 @@ theorem feedTokens_validates_float
     | false =>
         have : False := by
           have h_success' := h_success
-          simp [ParserState.feedTokens, ParserState.withAt, ParserState.mkError, ParserState.withDB,
-            DB.mkError, h_head] at h_success'
+          simp [ParserState.feedTokens, ParserState.withAt, ParserState.mkErrorFromEvidence, ParserState.withDB,
+            DB.mkErrorFromEvidence, DB.mkErrorWithEvidence, DB.error, h_head] at h_success'
         exact this.elim
   have h_shape : Formula.isFloatShape arr = true := by
     cases h_shape : Formula.isFloatShape arr with
@@ -70,8 +73,8 @@ theorem feedTokens_validates_float
     | false =>
         have : False := by
           have h_success' := h_success
-          simp [ParserState.feedTokens, ParserState.withAt, ParserState.mkError, ParserState.withDB,
-            DB.mkError, h_head, h_shape] at h_success'
+          simp [ParserState.feedTokens, ParserState.withAt, ParserState.mkErrorFromEvidence, ParserState.withDB,
+            DB.mkErrorFromEvidence, DB.mkErrorWithEvidence, DB.error, h_head, h_shape] at h_success'
         exact this.elim
 
   -- Unfold the shape check to extract the concrete float structure.
@@ -119,12 +122,12 @@ theorem insertHyp_ensures_fresh_db
           simp [h_err] at h_err_false'
         exact this.elim
     | false => rfl
-  have h_insert_ok : (db_after.insert pos l (.hyp ess f)).error? = none := by
-    cases h_ins_err : (db_after.insert pos l (.hyp ess f)).error with
+  have h_insert_ok : (db_after.insert pos l (Object.hyp ess f)).error? = none := by
+    cases h_ins_err : (db_after.insert pos l (Object.hyp ess f)).error with
     | true =>
         have h_success' := h_success
         simp [DB.insertHyp, db_after, h_check_err, h_ins_err] at h_success'
-        have h_ins_err_false : (db_after.insert pos l (.hyp ess f)).error = false :=
+        have h_ins_err_false : (db_after.insert pos l (Object.hyp ess f)).error = false :=
           (Metamath.ParserBasics.no_error_iff _).1 h_success'
         have : False := by
           have h_ins_err_false' := h_ins_err_false
@@ -154,8 +157,8 @@ theorem feedTokens_validates_formula
         | false =>
             have : False := by
               have h_success' := h_success
-              simp [ParserState.feedTokens, ParserState.withAt, ParserState.mkError, ParserState.withDB,
-                DB.mkError, h_head] at h_success'
+              simp [ParserState.feedTokens, ParserState.withAt, ParserState.mkErrorFromEvidence, ParserState.withDB,
+                DB.mkErrorFromEvidence, DB.mkErrorWithEvidence, DB.error, h_head] at h_success'
             exact this.elim
       exact wellFormedFormula_of_hasConstHead h_head
 
