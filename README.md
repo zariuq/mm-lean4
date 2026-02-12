@@ -32,7 +32,7 @@ rg -n "sorry" Metamath/
 This project provides end‑to‑end correctness theorems for the Metamath verifier, and a
 formal diagnostic contract for parser errors.
 
-Core guarantees (with theorem anchors) are summarized in `docs/correctness.md`, including:
+Core guarantees (with theorem anchors) are summarized in `docs/correctness.md`, and the diagnostics schema is documented in `docs/DiagnosticsContract.md`, including:
 
 - Parser‑origin acceptance ⇔ spec provability (`Metamath/KernelClean.lean`):
   - `verify_parser_accepts_of_spec_provable`
@@ -48,6 +48,10 @@ Diagnostic taxonomy (codes → messages → clauses → predicates) is listed in
 `docs/ErrorCodes.md`. The verifier reports the first error; include I/O failures are
 classified as environment errors rather than spec violations. Different verifier modes
 (`exe`, `knife`, `permissive`) are explicitly treated as different specs.
+
+Review boundary:
+- IO include expansion is a preprocessing layer (`scanIncludes`/`expandIncludes`/`check`).
+- Verified semantic diagnostics are on the byte-level parser core (`checkBytesCore`/`checkBytes`).
 
 Compatibility and reproduction:
 

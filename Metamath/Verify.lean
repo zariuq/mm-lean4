@@ -451,6 +451,9 @@ inductive ParseErrorCode
   | hypothesisNotFound
   | outOfOrderHypothesesInFrame
   deriving DecidableEq, Repr, Inhabited
+/-- Reviewer-facing alias: verifier diagnostics include parse and proof-check phases. -/
+abbrev VerifyErrorCode := ParseErrorCode
+
 
 /-- Metamath-spec clause anchors used by parser diagnostics. -/
 inductive SpecClause
@@ -531,27 +534,131 @@ namespace ParseErrorCode
   | .hypothesisNotFound => "hypothesis '<label>' not found"
   | .outOfOrderHypothesesInFrame => "out of order hypotheses in frame"
 
-/-- Codes that are permitted to be emitted with `codeOnly` evidence. -/
-def codeOnlyAllowed : ParseErrorCode → Bool
-  | .unclosedBlock => true
-  | .unclosedComment => true
-  | .unclosedConst => true
-  | .unclosedVar => true
-  | .unclosedDjvars => true
-  | .unclosedFloat => true
-  | .unclosedEss => true
-  | .unclosedAx => true
-  | .unclosedThm => true
-  | .unclosedProof => true
-  | _ => false
 
-theorem codeOnlyAllowed_cases (code : ParseErrorCode) :
-    ParseErrorCode.codeOnlyAllowed code = true →
-    code = .unclosedBlock ∨ code = .unclosedComment ∨ code = .unclosedConst ∨
-    code = .unclosedVar ∨ code = .unclosedDjvars ∨ code = .unclosedFloat ∨
-    code = .unclosedEss ∨ code = .unclosedAx ∨ code = .unclosedThm ∨
-    code = .unclosedProof := by
-  cases code <;> simp [ParseErrorCode.codeOnlyAllowed]
+/-- Stable numeric ID for each parse error code. -/
+def toNat : ParseErrorCode → Nat
+  | .cantSaveEmptyStack => 0
+  | .unclosedBlock => 1
+  | .unclosedComment => 2
+  | .unclosedConst => 3
+  | .unclosedVar => 4
+  | .unclosedDjvars => 5
+  | .unclosedFloat => 6
+  | .unclosedEss => 7
+  | .unclosedAx => 8
+  | .unclosedThm => 9
+  | .notACommand => 10
+  | .unclosedProof => 11
+  | .cantPopGlobalScope => 12
+  | .constMustBeOutermost => 13
+  | .duplicateSymbolOrAssert => 14
+  | .firstSymbolNotConstant => 15
+  | .hypothesisSymbolsNotInFrame => 16
+  | .expectedConstantAndVariable => 17
+  | .variableAlreadyHasFloatHyp => 18
+  | .stackFormulaNoConstantHead => 19
+  | .hypothesisNoConstantHead => 20
+  | .typeErrorInSubstitution => 21
+  | .badTypecodeInSubstitution => 22
+  | .duplicateFloatVariable => 23
+  | .disjointVariableViolation => 24
+  | .assertionNoConstantHead => 25
+  | .assertionVarsNotInFrame => 26
+  | .stackUnderflow => 27
+  | .proofBackrefIndexOutOfRange => 28
+  | .invalidLabel => 29
+  | .invalidMathString => 30
+  | .duplicateDisjointVariable => 31
+  | .tokenNotInScope => 32
+  | .tokenNotVariable => 33
+  | .unknownStepQuestionRejected => 34
+  | .topLevelEssentialNotAllowed => 35
+  | .proofParseError => 36
+  | .theoremMoreThanOneStackElement => 37
+  | .theoremClaimMismatch => 38
+  | .nestedCommentDelimiter => 39
+  | .tokenNotConstantOrVariable => 40
+  | .unknownStatementType => 41
+  | .internalIllFormedDatabaseAfterParse => 42
+  | .includeCycleDetected => 43
+  | .includeInInnerScope => 44
+  | .includeInsideStatement => 45
+  | .includeExtractedEmptyPath => 46
+  | .includeEmptyPathBeforeNormalization => 47
+  | .includePathEmptyAfterNormalization => 48
+  | .includeReadFailure => 49
+  | .hypothesisNotInDatabaseScope => 50
+  | .statementNotFound => 51
+  | .mandatoryHypothesisNotFoundInDatabase => 52
+  | .hypothesisNotFound => 53
+  | .outOfOrderHypothesesInFrame => 54
+
+/-- Decode a stable numeric ID into a parse error code. -/
+def ofNat? : Nat → Option ParseErrorCode
+  | 0 => some .cantSaveEmptyStack
+  | 1 => some .unclosedBlock
+  | 2 => some .unclosedComment
+  | 3 => some .unclosedConst
+  | 4 => some .unclosedVar
+  | 5 => some .unclosedDjvars
+  | 6 => some .unclosedFloat
+  | 7 => some .unclosedEss
+  | 8 => some .unclosedAx
+  | 9 => some .unclosedThm
+  | 10 => some .notACommand
+  | 11 => some .unclosedProof
+  | 12 => some .cantPopGlobalScope
+  | 13 => some .constMustBeOutermost
+  | 14 => some .duplicateSymbolOrAssert
+  | 15 => some .firstSymbolNotConstant
+  | 16 => some .hypothesisSymbolsNotInFrame
+  | 17 => some .expectedConstantAndVariable
+  | 18 => some .variableAlreadyHasFloatHyp
+  | 19 => some .stackFormulaNoConstantHead
+  | 20 => some .hypothesisNoConstantHead
+  | 21 => some .typeErrorInSubstitution
+  | 22 => some .badTypecodeInSubstitution
+  | 23 => some .duplicateFloatVariable
+  | 24 => some .disjointVariableViolation
+  | 25 => some .assertionNoConstantHead
+  | 26 => some .assertionVarsNotInFrame
+  | 27 => some .stackUnderflow
+  | 28 => some .proofBackrefIndexOutOfRange
+  | 29 => some .invalidLabel
+  | 30 => some .invalidMathString
+  | 31 => some .duplicateDisjointVariable
+  | 32 => some .tokenNotInScope
+  | 33 => some .tokenNotVariable
+  | 34 => some .unknownStepQuestionRejected
+  | 35 => some .topLevelEssentialNotAllowed
+  | 36 => some .proofParseError
+  | 37 => some .theoremMoreThanOneStackElement
+  | 38 => some .theoremClaimMismatch
+  | 39 => some .nestedCommentDelimiter
+  | 40 => some .tokenNotConstantOrVariable
+  | 41 => some .unknownStatementType
+  | 42 => some .internalIllFormedDatabaseAfterParse
+  | 43 => some .includeCycleDetected
+  | 44 => some .includeInInnerScope
+  | 45 => some .includeInsideStatement
+  | 46 => some .includeExtractedEmptyPath
+  | 47 => some .includeEmptyPathBeforeNormalization
+  | 48 => some .includePathEmptyAfterNormalization
+  | 49 => some .includeReadFailure
+  | 50 => some .hypothesisNotInDatabaseScope
+  | 51 => some .statementNotFound
+  | 52 => some .mandatoryHypothesisNotFoundInDatabase
+  | 53 => some .hypothesisNotFound
+  | 54 => some .outOfOrderHypothesesInFrame
+  | _ => none
+
+@[simp] theorem ofNat?_toNat (code : ParseErrorCode) :
+    ofNat? (toNat code) = some code := by
+  cases code <;> rfl
+
+@[simp] theorem message_ofNat?_toNat (code : ParseErrorCode) :
+    (ofNat? (toNat code)).map message = some (message code) := by
+  simp
 
 /-- Primary Metamath-spec clause associated to each parser error code. -/
 def specClause : ParseErrorCode → SpecClause
@@ -620,7 +727,47 @@ def specClause? (code : ParseErrorCode) : Option SpecClause :=
 
 end ParseErrorCode
 
+/-- Typed done/EOF closure errors emitted by `ParserState.done`. -/
+inductive DoneModeError where
+  | unclosedBlock
+  | unclosedComment
+  | unclosedConst
+  | unclosedVar
+  | unclosedDjvars
+  | unclosedFloat
+  | unclosedEss
+  | unclosedAx
+  | unclosedThm
+  | unclosedProof
+  deriving DecidableEq, Repr, Inhabited
 
+namespace DoneModeError
+
+@[simp] def code : DoneModeError → ParseErrorCode
+  | .unclosedBlock => .unclosedBlock
+  | .unclosedComment => .unclosedComment
+  | .unclosedConst => .unclosedConst
+  | .unclosedVar => .unclosedVar
+  | .unclosedDjvars => .unclosedDjvars
+  | .unclosedFloat => .unclosedFloat
+  | .unclosedEss => .unclosedEss
+  | .unclosedAx => .unclosedAx
+  | .unclosedThm => .unclosedThm
+  | .unclosedProof => .unclosedProof
+
+@[simp] def message : DoneModeError → String
+  | .unclosedBlock => ParseErrorCode.message .unclosedBlock
+  | .unclosedComment => ParseErrorCode.message .unclosedComment
+  | .unclosedConst => ParseErrorCode.message .unclosedConst
+  | .unclosedVar => ParseErrorCode.message .unclosedVar
+  | .unclosedDjvars => ParseErrorCode.message .unclosedDjvars
+  | .unclosedFloat => ParseErrorCode.message .unclosedFloat
+  | .unclosedEss => ParseErrorCode.message .unclosedEss
+  | .unclosedAx => ParseErrorCode.message .unclosedAx
+  | .unclosedThm => ParseErrorCode.message .unclosedThm
+  | .unclosedProof => ParseErrorCode.message .unclosedProof
+
+end DoneModeError
 
 /-- Structured payload for token/statement form errors. -/
 inductive TokenFormError where
@@ -660,10 +807,10 @@ inductive ScopeDeclError where
   | expectedConstantAndVariable
   | variableAlreadyHasFloatHyp (v : String)
   | duplicateDisjointVariable (sym : String)
-  | tokenNotInScope (sym : String)
+  | tokenNotInScope (sym : String) (isVarWitness : Bool) (activeInScopeWitness : Bool)
   | tokenNotVariable (sym : String)
-  | tokenNotConstantOrVariable (sym : String)
-  | topLevelEssentialNotAllowed
+  | tokenNotConstantOrVariable (sym : String) (isSymWitness : Bool)
+  | topLevelEssentialNotAllowed (rejectToplevelEssWitness : Bool) (scopeDepthWitness : Nat)
   deriving DecidableEq, Repr, Inhabited
 
 namespace ScopeDeclError
@@ -678,10 +825,13 @@ def code : ScopeDeclError → ParseErrorCode
   | .expectedConstantAndVariable => .expectedConstantAndVariable
   | .variableAlreadyHasFloatHyp _ => .variableAlreadyHasFloatHyp
   | .duplicateDisjointVariable _ => .duplicateDisjointVariable
-  | .tokenNotInScope _ => .tokenNotInScope
+  | .tokenNotInScope _ true false => .tokenNotInScope
+  | .tokenNotInScope _ _ _ => .internalIllFormedDatabaseAfterParse
   | .tokenNotVariable _ => .tokenNotVariable
-  | .tokenNotConstantOrVariable _ => .tokenNotConstantOrVariable
-  | .topLevelEssentialNotAllowed => .topLevelEssentialNotAllowed
+  | .tokenNotConstantOrVariable _ false => .tokenNotConstantOrVariable
+  | .tokenNotConstantOrVariable _ _ => .internalIllFormedDatabaseAfterParse
+  | .topLevelEssentialNotAllowed true 0 => .topLevelEssentialNotAllowed
+  | .topLevelEssentialNotAllowed _ _ => .internalIllFormedDatabaseAfterParse
 
 def message : ScopeDeclError → String
   | .cantPopGlobalScope => "can't pop global scope"
@@ -693,10 +843,10 @@ def message : ScopeDeclError → String
   | .expectedConstantAndVariable => "expected a constant and a variable"
   | .variableAlreadyHasFloatHyp v => "variable '" ++ v ++ "' already has $f hypothesis"
   | .duplicateDisjointVariable sym => "duplicate disjoint variable '" ++ sym ++ "'"
-  | .tokenNotInScope sym => "symbol '" ++ sym ++ "' not in scope"
+  | .tokenNotInScope sym _ _ => "symbol '" ++ sym ++ "' not in scope"
   | .tokenNotVariable sym => "symbol '" ++ sym ++ "' is not a variable"
-  | .tokenNotConstantOrVariable sym => "symbol '" ++ sym ++ "' is not a constant or variable"
-  | .topLevelEssentialNotAllowed => "top-level $e not allowed (config requires $e inside blocks)"
+  | .tokenNotConstantOrVariable sym _ => "symbol '" ++ sym ++ "' is not a constant or variable"
+  | .topLevelEssentialNotAllowed _ _ => "top-level $e not allowed (config requires $e inside blocks)"
 
 end ScopeDeclError
 
@@ -793,8 +943,8 @@ end CompressedSaveError
 /-- Structured payload for include errors. -/
 inductive IncludeError where
   | cycleDetected (path : String)
-  | inInnerScope (pos : Nat) (scopeDepth : Nat)
-  | insideStatement (pos : Nat)
+  | inInnerScope (pos : Nat) (scopeDepth : Nat) (inStatement : Bool) (allowIncludeInnerScopeWitness : Bool)
+  | insideStatement (pos : Nat) (scopeDepth : Nat) (inStatement : Bool) (allowTokenSplicingWitness : Bool)
   | extractedEmptyPath (startPos endPos file : String)
   | emptyPathBeforeNormalization (file : String)
   | pathEmptyAfterNormalization (origPath file : String)
@@ -805,8 +955,16 @@ namespace IncludeError
 
 def code : IncludeError → ParseErrorCode
   | .cycleDetected _ => .includeCycleDetected
-  | .inInnerScope _ _ => .includeInInnerScope
-  | .insideStatement _ => .includeInsideStatement
+  | .inInnerScope _ scopeDepth _ allowIncludeInnerScopeWitness =>
+      if allowIncludeInnerScopeWitness = false ∧ (scopeDepth > 0) = true then
+        .includeInInnerScope
+      else
+        .internalIllFormedDatabaseAfterParse
+  | .insideStatement _ _ inStatement allowTokenSplicingWitness =>
+      if allowTokenSplicingWitness = false ∧ inStatement = true then
+        .includeInsideStatement
+      else
+        .internalIllFormedDatabaseAfterParse
   | .extractedEmptyPath _ _ _ => .includeExtractedEmptyPath
   | .emptyPathBeforeNormalization _ => .includeEmptyPathBeforeNormalization
   | .pathEmptyAfterNormalization _ _ => .includePathEmptyAfterNormalization
@@ -815,9 +973,9 @@ def code : IncludeError → ParseErrorCode
 def message : IncludeError → String
   | .cycleDetected path =>
       "include cycle detected: '" ++ path ++ "' is already being processed"
-  | .inInnerScope _ _ =>
+  | .inInnerScope _ _ _ _ =>
       "include in inner scope (config requires outermost scope only, spec §4.1.2)"
-  | .insideStatement _ =>
+  | .insideStatement _ _ _ _ =>
       "include inside statement (config forbids token splicing, spec §4.1.2)"
   | .extractedEmptyPath startPos endPos file =>
       "extracted empty path from position " ++ startPos ++ " to " ++ endPos ++ " in " ++ file
@@ -831,13 +989,117 @@ def message : IncludeError → String
 
 end IncludeError
 
+/-- Gate checks for include directives (spec §4.1.2 policy constraints). -/
+def includeDirectiveViolation? (config : ModeConfig) (scopeDepth : Nat) (inStatement : Bool)
+    (pos : Nat) : Option IncludeError :=
+  if !config.allowIncludeInnerScope && scopeDepth > 0 then
+    some (.inInnerScope pos scopeDepth inStatement config.allowIncludeInnerScope)
+  else if !config.allowTokenSplicing && inStatement then
+    some (.insideStatement pos scopeDepth inStatement config.allowTokenSplicing)
+  else
+    none
+
+theorem includeDirectiveViolation?_inInnerScope_iff
+    (config : ModeConfig) (scopeDepth : Nat) (inStatement : Bool) (pos : Nat) :
+    includeDirectiveViolation? config scopeDepth inStatement pos = some (.inInnerScope pos scopeDepth inStatement config.allowIncludeInnerScope) ↔
+      (!config.allowIncludeInnerScope && scopeDepth > 0) = true := by
+  unfold includeDirectiveViolation?
+  by_cases h_inner : (!config.allowIncludeInnerScope && scopeDepth > 0) = true
+  · simp [h_inner]
+  · simp [h_inner]
+
+theorem includeDirectiveViolation?_insideStatement_iff
+    (config : ModeConfig) (scopeDepth : Nat) (inStatement : Bool) (pos : Nat) :
+    includeDirectiveViolation? config scopeDepth inStatement pos = some (.insideStatement pos scopeDepth inStatement config.allowTokenSplicing) ↔
+      (!config.allowIncludeInnerScope && scopeDepth > 0) = false ∧
+      (!config.allowTokenSplicing && inStatement) = true := by
+  unfold includeDirectiveViolation?
+  by_cases h_inner : (!config.allowIncludeInnerScope && scopeDepth > 0) = true
+  · simp [h_inner]
+  · by_cases h_stmt : (!config.allowTokenSplicing && inStatement) = true
+    · simp [h_inner, h_stmt]
+    · simp [h_inner, h_stmt]
+
+
+theorem includeDirectiveViolation?_inInnerScope_implies_scopeDepth_pos
+    (config : ModeConfig) (scopeDepth : Nat) (inStatement : Bool) (pos : Nat) :
+    includeDirectiveViolation? config scopeDepth inStatement pos = some (.inInnerScope pos scopeDepth inStatement config.allowIncludeInnerScope) →
+      (scopeDepth > 0) = true := by
+  intro h_inner
+  have h_gate :=
+    (includeDirectiveViolation?_inInnerScope_iff config scopeDepth inStatement pos).1 h_inner
+  have h_parts : (!config.allowIncludeInnerScope = true) ∧ ((scopeDepth > 0) = true) := by
+    simpa [Bool.and_eq_true] using h_gate
+  exact h_parts.2
+
+theorem includeDirectiveViolation?_inInnerScope_implies_allowIncludeInnerScope_false
+    (config : ModeConfig) (scopeDepth : Nat) (inStatement : Bool) (pos : Nat) :
+    includeDirectiveViolation? config scopeDepth inStatement pos = some (.inInnerScope pos scopeDepth inStatement config.allowIncludeInnerScope) →
+      config.allowIncludeInnerScope = false := by
+  intro h_inner
+  have h_gate :=
+    (includeDirectiveViolation?_inInnerScope_iff config scopeDepth inStatement pos).1 h_inner
+  have h_parts : (!config.allowIncludeInnerScope = true) ∧ ((scopeDepth > 0) = true) := by
+    simpa [Bool.and_eq_true] using h_gate
+  by_cases h_allow : config.allowIncludeInnerScope
+  · have : False := by
+      simpa [h_allow] using h_parts.1
+    exact False.elim this
+  · simpa [h_allow]
+
+theorem includeDirectiveViolation?_insideStatement_implies_inStatement_true
+    (config : ModeConfig) (scopeDepth : Nat) (inStatement : Bool) (pos : Nat) :
+    includeDirectiveViolation? config scopeDepth inStatement pos = some (.insideStatement pos scopeDepth inStatement config.allowTokenSplicing) →
+      inStatement = true := by
+  intro h_stmt
+  have h_gate :=
+    (includeDirectiveViolation?_insideStatement_iff config scopeDepth inStatement pos).1 h_stmt
+  have h_parts : (!config.allowTokenSplicing = true) ∧ (inStatement = true) := by
+    simpa [Bool.and_eq_true] using h_gate.2
+  exact h_parts.2
+
+theorem includeDirectiveViolation?_insideStatement_implies_allowTokenSplicing_false
+    (config : ModeConfig) (scopeDepth : Nat) (inStatement : Bool) (pos : Nat) :
+    includeDirectiveViolation? config scopeDepth inStatement pos = some (.insideStatement pos scopeDepth inStatement config.allowTokenSplicing) →
+      config.allowTokenSplicing = false := by
+  intro h_stmt
+  have h_gate :=
+    (includeDirectiveViolation?_insideStatement_iff config scopeDepth inStatement pos).1 h_stmt
+  have h_parts : (!config.allowTokenSplicing = true) ∧ (inStatement = true) := by
+    simpa [Bool.and_eq_true] using h_gate.2
+  by_cases h_allow : config.allowTokenSplicing
+  · have : False := by
+      simpa [h_allow] using h_parts.1
+    exact False.elim this
+  · simpa [h_allow]
+
+theorem includeDirectiveViolation?_inInnerScope_implies_guardFacts
+    (config : ModeConfig) (scopeDepth : Nat) (inStatement : Bool) (pos : Nat) :
+    includeDirectiveViolation? config scopeDepth inStatement pos = some (.inInnerScope pos scopeDepth inStatement config.allowIncludeInnerScope) →
+      config.allowIncludeInnerScope = false ∧ (scopeDepth > 0) = true := by
+  intro h_inner
+  exact ⟨
+    includeDirectiveViolation?_inInnerScope_implies_allowIncludeInnerScope_false config scopeDepth inStatement pos h_inner,
+    includeDirectiveViolation?_inInnerScope_implies_scopeDepth_pos config scopeDepth inStatement pos h_inner
+  ⟩
+
+theorem includeDirectiveViolation?_insideStatement_implies_guardFacts
+    (config : ModeConfig) (scopeDepth : Nat) (inStatement : Bool) (pos : Nat) :
+    includeDirectiveViolation? config scopeDepth inStatement pos = some (.insideStatement pos scopeDepth inStatement config.allowTokenSplicing) →
+      config.allowTokenSplicing = false ∧ inStatement = true := by
+  intro h_stmt
+  exact ⟨
+    includeDirectiveViolation?_insideStatement_implies_allowTokenSplicing_false config scopeDepth inStatement pos h_stmt,
+    includeDirectiveViolation?_insideStatement_implies_inStatement_true config scopeDepth inStatement pos h_stmt
+  ⟩
+
 structure Interrupt where
   e : Error
   idx : Nat
 
 /-- Structured evidence for parser errors (used for semantic inversion). -/
 inductive ErrorEvidence where
-  | codeOnly (code : ParseErrorCode)
+  | doneMode (err : DoneModeError)
   | tokenForm (err : TokenFormError)
   | scopeDecl (err : ScopeDeclError)
   | includeErr (err : IncludeError)
@@ -850,7 +1112,7 @@ inductive ErrorEvidence where
 namespace ErrorEvidence
 
 def code : ErrorEvidence → ParseErrorCode
-  | codeOnly code => code
+  | doneMode err => DoneModeError.code err
   | tokenForm err => TokenFormError.code err
   | scopeDecl err => ScopeDeclError.code err
   | .includeErr err => IncludeError.code err
@@ -858,9 +1120,8 @@ def code : ErrorEvidence → ParseErrorCode
   | theoremFinality err => TheoremFinalityError.code err
   | compressedSave err => CompressedSaveError.code err
   | internalGate _ _ _ => .internalIllFormedDatabaseAfterParse
-
 def message : ErrorEvidence → String
-  | codeOnly code => ParseErrorCode.message code
+  | doneMode err => DoneModeError.message err
   | tokenForm err => TokenFormError.message err
   | scopeDecl err => ScopeDeclError.message err
   | .includeErr err => IncludeError.message err
@@ -870,7 +1131,6 @@ def message : ErrorEvidence → String
   | internalGate _ _ _ => ParseErrorCode.message .internalIllFormedDatabaseAfterParse
 
 def allowed : ErrorEvidence → Prop
-  | codeOnly code => ParseErrorCode.codeOnlyAllowed code = true
   | _ => True
 
 end ErrorEvidence
@@ -924,8 +1184,13 @@ namespace DB
 /-- Default config is zar (all defaults) -/
 @[simp] theorem default_config : (default : DB).config = {} := rfl
 
+/-- Legacy/raw error constructor.
+It now records an explicit internal fallback evidence tag so decoded classification
+stays total even on non-structured call sites. -/
 def mkError (s : DB) (pos : Pos) (msg : String) : DB :=
-  { s with error? := some ⟨.error pos msg, default⟩, errorEvidence? := none }
+  { s with
+      error? := some ⟨.error pos msg, default⟩
+      errorEvidence? := some (.internalGate false false false) }
 
 /-- Error constructor that records structured evidence alongside the message. -/
 def mkErrorWithEvidence (s : DB) (pos : Pos) (msg : String) (ev : ErrorEvidence) : DB :=
@@ -935,9 +1200,9 @@ def mkErrorWithEvidence (s : DB) (pos : Pos) (msg : String) (ev : ErrorEvidence)
 def mkErrorFromEvidence (s : DB) (pos : Pos) (ev : ErrorEvidence) : DB :=
   s.mkErrorWithEvidence pos (ErrorEvidence.message ev) ev
 
-/-- Parser-specific error constructor with stable code-to-message mapping. -/
-def mkParseError (s : DB) (pos : Pos) (code : ParseErrorCode) : DB :=
-  s.mkErrorFromEvidence pos (.codeOnly code)
+/-- Parser-specific done/EOF error constructor with stable code mapping. -/
+def mkParseError (s : DB) (pos : Pos) (err : DoneModeError) : DB :=
+  s.mkErrorFromEvidence pos (.doneMode err)
 
 @[simp] theorem mkError_config (s : DB) (pos : Pos) (msg : String) :
     (s.mkError pos msg).config = s.config := rfl
@@ -948,12 +1213,15 @@ def mkParseError (s : DB) (pos : Pos) (code : ParseErrorCode) : DB :=
 @[simp] theorem mkError_error?_isSome (s : DB) (pos : Pos) (msg : String) :
     (s.mkError pos msg).error?.isSome = true := rfl
 
-@[simp] theorem mkParseError_config (s : DB) (pos : Pos) (code : ParseErrorCode) :
-    (s.mkParseError pos code).config = s.config := by
+@[simp] theorem mkError_errorEvidence? (s : DB) (pos : Pos) (msg : String) :
+    (s.mkError pos msg).errorEvidence? = some (.internalGate false false false) := rfl
+
+@[simp] theorem mkParseError_config (s : DB) (pos : Pos) (err : DoneModeError) :
+    (s.mkParseError pos err).config = s.config := by
   simp [mkParseError, mkErrorFromEvidence, mkErrorWithEvidence]
 
-@[simp] theorem mkParseError_error?_isSome (s : DB) (pos : Pos) (code : ParseErrorCode) :
-    (s.mkParseError pos code).error?.isSome = true := by
+@[simp] theorem mkParseError_error?_isSome (s : DB) (pos : Pos) (err : DoneModeError) :
+    (s.mkParseError pos err).error?.isSome = true := by
   simp [mkParseError, mkErrorFromEvidence, mkErrorWithEvidence]
 
 @[simp] theorem mkErrorWithEvidence_config (s : DB) (pos : Pos) (msg : String) (ev : ErrorEvidence) :
@@ -1015,8 +1283,8 @@ def mkParseError (s : DB) (pos : Pos) (code : ParseErrorCode) : DB :=
     (s.mkErrorFromEvidence pos ev).error = true := by
   simp [mkErrorFromEvidence, DB.error, mkErrorWithEvidence]
 
-@[simp] theorem mkParseError_errorEvidence? (s : DB) (pos : Pos) (code : ParseErrorCode) :
-    (s.mkParseError pos code).errorEvidence? = some (.codeOnly code) := by
+@[simp] theorem mkParseError_errorEvidence? (s : DB) (pos : Pos) (err : DoneModeError) :
+    (s.mkParseError pos err).errorEvidence? = some (.doneMode err) := by
   simp [mkParseError, mkErrorFromEvidence, mkErrorWithEvidence]
 
 /-- Decode parser error code (when present) from the DB interrupt payload. -/
@@ -1024,12 +1292,15 @@ def parseErrorCode? (s : DB) : Option ParseErrorCode :=
   match s.error? with
   | some ⟨.error _ _, _⟩ =>
       match s.errorEvidence? with
-      | some (.codeOnly code) =>
-          if ParseErrorCode.codeOnlyAllowed code then some code else none
+      | some (.doneMode err) => some err.code
       | some ev => some ev.code
       | none => none
   | _ => none
 
+theorem parseErrorCode?_eq_none_of_error?_none (s : DB)
+    (h_no_err : s.error? = none) :
+    s.parseErrorCode? = none := by
+  simp [DB.parseErrorCode?, h_no_err]
 
 /-- Declarative parser-level violation witness for a decoded parser error code. -/
 def ParserSpecViolation (s : DB) (code : ParseErrorCode) : Prop :=
@@ -1105,6 +1376,35 @@ def Sec4_2_4_DjvarsDuplicateViolation (s : DB) : Prop :=
 /-- Metamath book §4.2.4 predicate for `$d` variable scope violations. -/
 def Sec4_2_4_DjvarsScopeViolation (s : DB) : Prop :=
   s.TokenNotInScopeViolation
+
+/-- Payload witness for `.invalidLabel` carrying the concrete rejected token. -/
+def InvalidLabelPayloadWitness (s : DB) : Prop :=
+  ∃ label, s.errorEvidence? = some (.tokenForm (.invalidLabel label))
+
+/-- Payload witness for `.topLevelEssentialNotAllowed` carrying strict-mode gate values. -/
+def TopLevelEssentialPayloadWitness (s : DB) : Prop :=
+  s.errorEvidence? = some (.scopeDecl (.topLevelEssentialNotAllowed true 0))
+
+/-- Payload witness for `.tokenNotInScope` carrying symbol + gate booleans. -/
+def TokenNotInScopePayloadWitness (s : DB) : Prop :=
+  ∃ sym,
+    s.errorEvidence? = some (.scopeDecl (.tokenNotInScope sym true false))
+
+/-- Payload witness for `.tokenNotConstantOrVariable` carrying symbol + gate boolean. -/
+def TokenNotConstantOrVariablePayloadWitness (s : DB) : Prop :=
+  ∃ sym,
+    s.errorEvidence? = some (.scopeDecl (.tokenNotConstantOrVariable sym false))
+
+/-- Payload witness for `.includeInInnerScope` carrying position + scope + in-statement. -/
+def IncludeInInnerScopePayloadWitness (s : DB) : Prop :=
+  ∃ pos depth inStatement,
+    s.errorEvidence? = some (.includeErr (.inInnerScope pos depth inStatement false)) ∧
+    (depth > 0) = true
+
+/-- Payload witness for `.includeInsideStatement` carrying position + scope + in-statement. -/
+def IncludeInsideStatementPayloadWitness (s : DB) : Prop :=
+  ∃ pos scopeDepth,
+    s.errorEvidence? = some (.includeErr (.insideStatement pos scopeDepth true false))
 
 /-- Code-indexed bundle for high-value parser-error shape evidence. -/
 def HighValueShapeViolation (s : DB) (code : ParseErrorCode) : Prop :=
@@ -1211,7 +1511,10 @@ def RuleSemanticViolation (s : DB) (code : ParseErrorCode) : Prop :=
   | .hypothesisNotFound => s.ProofCheckViolation .hypothesisNotFound
   | .theoremMoreThanOneStackElement => s.TheoremFinalityViolation .theoremMoreThanOneStackElement
   | .theoremClaimMismatch => s.TheoremFinalityViolation .theoremClaimMismatch
-  | .internalIllFormedDatabaseAfterParse => s.InternalConsistencyViolation
+  | .internalIllFormedDatabaseAfterParse =>
+      s.ScopeDeclViolation .internalIllFormedDatabaseAfterParse ∨
+      s.IncludeViolation .internalIllFormedDatabaseAfterParse ∨
+      s.InternalConsistencyViolation
 
 /-- Rule semantic predicate paired with the code's mapped spec clause. -/
 def RuleClauseSemanticViolation (s : DB) (code : ParseErrorCode) : Prop :=
@@ -1244,17 +1547,10 @@ theorem parseErrorCode?_sound (s : DB) (code : ParseErrorCode) :
                   simp [h_err, h_ev] at h_code
               | some ev =>
                   cases ev with
-                  | codeOnly code' =>
-                      -- parseErrorCode? only returns for allowed code-only entries
-                      have h_code' : code' = code := by
-                        cases h_allowed : ParseErrorCode.codeOnlyAllowed code' with
-                        | false =>
-                            have : (none : Option ParseErrorCode) = some code := by
-                              simpa [h_err, h_ev, h_allowed] using h_code
-                            cases this
-                        | true =>
-                            simpa [h_err, h_ev, h_allowed] using h_code
-                      refine ⟨pos, msg, idx, .codeOnly code', ?_, ?_, ?_⟩
+                  | doneMode err =>
+                      have h_code' : DoneModeError.code err = code := by
+                        simpa [DB.parseErrorCode?, h_err, h_ev] using h_code
+                      refine ⟨pos, msg, idx, .doneMode err, ?_, ?_, ?_⟩
                       · simpa [h_err]
                       · exact h_ev
                       · simpa [ErrorEvidence.code] using h_code'
@@ -1327,26 +1623,7 @@ theorem parseErrorCode?_allCodePayloadShape_sound
   have h_code_ev : s.parseErrorCode? = some ev.code := by
     simpa [h_code'] using h_code
   have h_allowed : ErrorEvidence.allowed ev := by
-    cases ev with
-    | codeOnly code' =>
-        -- `parseErrorCode?` only returns code-only entries when the code is allowed.
-        unfold DB.parseErrorCode? at h_code_ev
-        simp [h_err, h_ev] at h_code_ev
-        -- h_code_ev : (if codeOnlyAllowed code' then some code' else none) = some code'
-        cases h : ParseErrorCode.codeOnlyAllowed code' with
-        | false =>
-            have : (none : Option ParseErrorCode) = some code' := by
-              simpa [h] using h_code_ev
-            cases this
-        | true =>
-            simpa [ErrorEvidence.allowed] using h
-    | tokenForm _ => simp [ErrorEvidence.allowed]
-    | scopeDecl _ => simp [ErrorEvidence.allowed]
-    | includeErr _ => simp [ErrorEvidence.allowed]
-    | proofCheck _ => simp [ErrorEvidence.allowed]
-    | theoremFinality _ => simp [ErrorEvidence.allowed]
-    | compressedSave _ => simp [ErrorEvidence.allowed]
-    | internalGate _ _ _ => simp [ErrorEvidence.allowed]
+    simp [ErrorEvidence.allowed]
   exact ⟨pos, msg, idx, ev, h_err, h_ev, h_code', h_allowed⟩
 
 /-- Clause witness derivable directly from all-code payload-shape witness. -/
@@ -1357,23 +1634,10 @@ theorem allCodePayloadShape_implies_specClauseViolation
   intro h_shape
   rcases h_shape with ⟨pos, msg, idx, ev, h_err, h_ev, h_code, h_allowed⟩
   refine ⟨code, ?_, rfl⟩
-  unfold DB.parseErrorCode?
-  cases ev with
-  | codeOnly code' =>
-      have h_allowed' : ParseErrorCode.codeOnlyAllowed code' = true := by
-        simpa [ErrorEvidence.allowed] using h_allowed
-      have h_code' : code' = code := by
-        simpa [ErrorEvidence.code] using h_code
-      clear h_code
-      subst code
-      simp [h_err, h_ev, h_allowed']
-  | tokenForm _ => simp [h_err, h_ev, h_code, h_allowed]
-  | scopeDecl _ => simp [h_err, h_ev, h_code, h_allowed]
-  | includeErr _ => simp [h_err, h_ev, h_code, h_allowed]
-  | proofCheck _ => simp [h_err, h_ev, h_code, h_allowed]
-  | theoremFinality _ => simp [h_err, h_ev, h_code, h_allowed]
-  | compressedSave _ => simp [h_err, h_ev, h_code, h_allowed]
-  | internalGate _ _ _ => simp [h_err, h_ev, h_code, h_allowed]
+  have h_parse : s.parseErrorCode? = some code := by
+    unfold DB.parseErrorCode?
+    cases ev <;> simpa [h_err, h_ev, ErrorEvidence.code] using h_code
+  exact h_parse
 
 /-- All-code semantic soundness:
 decoded parser code carries a semantic witness for that code. -/
@@ -1447,64 +1711,12 @@ theorem parseErrorCode?_ruleSemantic_sound
   have h_code_ev : s.parseErrorCode? = some ev.code := by
     simpa [h_code'] using h_code
   cases ev with
-  | codeOnly code' =>
-      -- In the code-only case, the reported code is exactly `code'`.
-      have h_code_eq : code = code' := by
+  | doneMode err =>
+      have h_code_eq : code = DoneModeError.code err := by
         simpa [ErrorEvidence.code] using Eq.symm h_code'
       subst code
-
-      -- parseErrorCode? only returns codeOnly if the code is allowed
-      have h_allowed : ParseErrorCode.codeOnlyAllowed code' = true := by
-        cases h : ParseErrorCode.codeOnlyAllowed code' with
-        | false =>
-            have h_contra := h_code_ev
-            unfold DB.parseErrorCode? at h_contra
-            simp [h_err, h_ev, h] at h_contra
-        | true =>
-            simpa using h
-
-      -- For allowed codes, RuleSemanticViolation reduces to DoneModeViolation.
-      rcases ParseErrorCode.codeOnlyAllowed_cases code' h_allowed with
-        h_block
-        | h_comment
-        | h_const
-        | h_var
-        | h_dj
-        | h_float
-        | h_ess
-        | h_ax
-        | h_thm
-        | h_proof
-      · subst h_block
-        have h_sem := parseErrorCode?_allCodeSemantic_sound s .unclosedBlock h_code_ev
-        simpa [DB.RuleSemanticViolation, DB.DoneModeViolation] using h_sem
-      · subst h_comment
-        have h_sem := parseErrorCode?_allCodeSemantic_sound s .unclosedComment h_code_ev
-        simpa [DB.RuleSemanticViolation, DB.DoneModeViolation] using h_sem
-      · subst h_const
-        have h_sem := parseErrorCode?_allCodeSemantic_sound s .unclosedConst h_code_ev
-        simpa [DB.RuleSemanticViolation, DB.DoneModeViolation] using h_sem
-      · subst h_var
-        have h_sem := parseErrorCode?_allCodeSemantic_sound s .unclosedVar h_code_ev
-        simpa [DB.RuleSemanticViolation, DB.DoneModeViolation] using h_sem
-      · subst h_dj
-        have h_sem := parseErrorCode?_allCodeSemantic_sound s .unclosedDjvars h_code_ev
-        simpa [DB.RuleSemanticViolation, DB.DoneModeViolation] using h_sem
-      · subst h_float
-        have h_sem := parseErrorCode?_allCodeSemantic_sound s .unclosedFloat h_code_ev
-        simpa [DB.RuleSemanticViolation, DB.DoneModeViolation] using h_sem
-      · subst h_ess
-        have h_sem := parseErrorCode?_allCodeSemantic_sound s .unclosedEss h_code_ev
-        simpa [DB.RuleSemanticViolation, DB.DoneModeViolation] using h_sem
-      · subst h_ax
-        have h_sem := parseErrorCode?_allCodeSemantic_sound s .unclosedAx h_code_ev
-        simpa [DB.RuleSemanticViolation, DB.DoneModeViolation] using h_sem
-      · subst h_thm
-        have h_sem := parseErrorCode?_allCodeSemantic_sound s .unclosedThm h_code_ev
-        simpa [DB.RuleSemanticViolation, DB.DoneModeViolation] using h_sem
-      · subst h_proof
-        have h_sem := parseErrorCode?_allCodeSemantic_sound s .unclosedProof h_code_ev
-        simpa [DB.RuleSemanticViolation, DB.DoneModeViolation] using h_sem
+      have h_sem := parseErrorCode?_allCodeSemantic_sound s (DoneModeError.code err) h_code_ev
+      cases err <;> simpa [DB.RuleSemanticViolation, DB.DoneModeViolation, DoneModeError.code] using h_sem
   | tokenForm err =>
       have h_code_eq : code = TokenFormError.code err := by
         simpa [ErrorEvidence.code] using Eq.symm h_code'
@@ -1519,7 +1731,83 @@ theorem parseErrorCode?_ruleSemantic_sound
       subst code
       have h_sc : s.ScopeDeclViolation (ScopeDeclError.code err) := ⟨err, h_ev, rfl⟩
       have h_rule : s.RuleSemanticViolation (ScopeDeclError.code err) := by
-        cases err <;> simpa [DB.RuleSemanticViolation] using h_sc
+        cases h_code_sc : ScopeDeclError.code err with
+        | internalIllFormedDatabaseAfterParse =>
+            have h_sc_internal : s.ScopeDeclViolation .internalIllFormedDatabaseAfterParse := by
+              simpa [h_code_sc] using h_sc
+            exact Or.inl h_sc_internal
+        | cantPopGlobalScope =>
+            have h_sc' : s.ScopeDeclViolation .cantPopGlobalScope := by
+              simpa [h_code_sc] using h_sc
+            simpa [DB.RuleSemanticViolation] using h_sc'
+        | constMustBeOutermost =>
+            have h_sc' : s.ScopeDeclViolation .constMustBeOutermost := by
+              simpa [h_code_sc] using h_sc
+            simpa [DB.RuleSemanticViolation] using h_sc'
+        | duplicateSymbolOrAssert =>
+            have h_sc' : s.ScopeDeclViolation .duplicateSymbolOrAssert := by
+              simpa [h_code_sc] using h_sc
+            simpa [DB.RuleSemanticViolation] using h_sc'
+        | firstSymbolNotConstant =>
+            have h_sc' : s.ScopeDeclViolation .firstSymbolNotConstant := by
+              simpa [h_code_sc] using h_sc
+            simpa [DB.RuleSemanticViolation] using h_sc'
+        | hypothesisSymbolsNotInFrame =>
+            have h_sc' : s.ScopeDeclViolation .hypothesisSymbolsNotInFrame := by
+              simpa [h_code_sc] using h_sc
+            simpa [DB.RuleSemanticViolation] using h_sc'
+        | outOfOrderHypothesesInFrame =>
+            have h_sc' : s.ScopeDeclViolation .outOfOrderHypothesesInFrame := by
+              simpa [h_code_sc] using h_sc
+            simpa [DB.RuleSemanticViolation] using h_sc'
+        | expectedConstantAndVariable =>
+            have h_sc' : s.ScopeDeclViolation .expectedConstantAndVariable := by
+              simpa [h_code_sc] using h_sc
+            simpa [DB.RuleSemanticViolation] using h_sc'
+        | variableAlreadyHasFloatHyp =>
+            have h_sc' : s.ScopeDeclViolation .variableAlreadyHasFloatHyp := by
+              simpa [h_code_sc] using h_sc
+            simpa [DB.RuleSemanticViolation] using h_sc'
+        | duplicateDisjointVariable =>
+            have h_sc' : s.ScopeDeclViolation .duplicateDisjointVariable := by
+              simpa [h_code_sc] using h_sc
+            simpa [DB.RuleSemanticViolation] using h_sc'
+        | tokenNotVariable =>
+            have h_sc' : s.ScopeDeclViolation .tokenNotVariable := by
+              simpa [h_code_sc] using h_sc
+            simpa [DB.RuleSemanticViolation] using h_sc'
+        | tokenNotInScope =>
+            have h_sc' : s.ScopeDeclViolation .tokenNotInScope := by
+              simpa [h_code_sc] using h_sc
+            simpa [DB.RuleSemanticViolation] using h_sc'
+        | tokenNotConstantOrVariable =>
+            have h_sc' : s.ScopeDeclViolation .tokenNotConstantOrVariable := by
+              simpa [h_code_sc] using h_sc
+            simpa [DB.RuleSemanticViolation] using h_sc'
+        | topLevelEssentialNotAllowed =>
+            have h_sc' : s.ScopeDeclViolation .topLevelEssentialNotAllowed := by
+              simpa [h_code_sc] using h_sc
+            simpa [DB.RuleSemanticViolation] using h_sc'
+        | _ =>
+            have : False := by
+              cases err with
+              | cantPopGlobalScope => simp [ScopeDeclError.code] at h_code_sc
+              | constMustBeOutermost => simp [ScopeDeclError.code] at h_code_sc
+              | duplicateSymbolOrAssert l => simp [ScopeDeclError.code] at h_code_sc
+              | firstSymbolNotConstant => simp [ScopeDeclError.code] at h_code_sc
+              | hypothesisSymbolsNotInFrame => simp [ScopeDeclError.code] at h_code_sc
+              | outOfOrderHypothesesInFrame => simp [ScopeDeclError.code] at h_code_sc
+              | expectedConstantAndVariable => simp [ScopeDeclError.code] at h_code_sc
+              | variableAlreadyHasFloatHyp v => simp [ScopeDeclError.code] at h_code_sc
+              | duplicateDisjointVariable sym => simp [ScopeDeclError.code] at h_code_sc
+              | tokenNotInScope sym isVarWitness activeInScopeWitness =>
+                  cases isVarWitness <;> cases activeInScopeWitness <;> simp [ScopeDeclError.code] at h_code_sc
+              | tokenNotVariable sym => simp [ScopeDeclError.code] at h_code_sc
+              | tokenNotConstantOrVariable sym isSymWitness =>
+                  cases isSymWitness <;> simp [ScopeDeclError.code] at h_code_sc
+              | topLevelEssentialNotAllowed rejectToplevelEssWitness scopeDepthWitness =>
+                  cases rejectToplevelEssWitness <;> cases scopeDepthWitness <;> simp [ScopeDeclError.code] at h_code_sc
+            exact False.elim this
       exact h_rule
   | includeErr err =>
       have h_code_eq : code = IncludeError.code err := by
@@ -1527,7 +1815,61 @@ theorem parseErrorCode?_ruleSemantic_sound
       subst code
       have h_inc : s.IncludeViolation (IncludeError.code err) := ⟨err, h_ev, rfl⟩
       have h_rule : s.RuleSemanticViolation (IncludeError.code err) := by
-        cases err <;> simpa [DB.RuleSemanticViolation] using h_inc
+        cases h_code_inc : IncludeError.code err with
+        | internalIllFormedDatabaseAfterParse =>
+            have h_inc_internal : s.IncludeViolation .internalIllFormedDatabaseAfterParse := by
+              simpa [h_code_inc] using h_inc
+            exact Or.inr (Or.inl h_inc_internal)
+        | includeCycleDetected =>
+            have h_inc' : s.IncludeViolation .includeCycleDetected := by
+              simpa [h_code_inc] using h_inc
+            simpa [DB.RuleSemanticViolation] using h_inc'
+        | includeInInnerScope =>
+            have h_inc' : s.IncludeViolation .includeInInnerScope := by
+              simpa [h_code_inc] using h_inc
+            simpa [DB.RuleSemanticViolation] using h_inc'
+        | includeInsideStatement =>
+            have h_inc' : s.IncludeViolation .includeInsideStatement := by
+              simpa [h_code_inc] using h_inc
+            simpa [DB.RuleSemanticViolation] using h_inc'
+        | includeExtractedEmptyPath =>
+            have h_inc' : s.IncludeViolation .includeExtractedEmptyPath := by
+              simpa [h_code_inc] using h_inc
+            simpa [DB.RuleSemanticViolation] using h_inc'
+        | includeEmptyPathBeforeNormalization =>
+            have h_inc' : s.IncludeViolation .includeEmptyPathBeforeNormalization := by
+              simpa [h_code_inc] using h_inc
+            simpa [DB.RuleSemanticViolation] using h_inc'
+        | includePathEmptyAfterNormalization =>
+            have h_inc' : s.IncludeViolation .includePathEmptyAfterNormalization := by
+              simpa [h_code_inc] using h_inc
+            simpa [DB.RuleSemanticViolation] using h_inc'
+        | includeReadFailure =>
+            have h_inc' : s.IncludeViolation .includeReadFailure := by
+              simpa [h_code_inc] using h_inc
+            simpa [DB.RuleSemanticViolation, DB.IncludeReadFailureViolation] using h_inc'
+        | _ =>
+            have : False := by
+              cases err with
+              | cycleDetected path =>
+                  simp [IncludeError.code] at h_code_inc
+              | inInnerScope pos scopeDepth inStatement allowIncludeInnerScopeWitness =>
+                  by_cases h_cond : allowIncludeInnerScopeWitness = false ∧ 0 < scopeDepth
+                  · simp [IncludeError.code, h_cond] at h_code_inc
+                  · simp [IncludeError.code, h_cond] at h_code_inc
+              | insideStatement pos scopeDepth inStatement allowTokenSplicingWitness =>
+                  by_cases h_cond : allowTokenSplicingWitness = false ∧ inStatement = true
+                  · simp [IncludeError.code, h_cond] at h_code_inc
+                  · simp [IncludeError.code, h_cond] at h_code_inc
+              | extractedEmptyPath startPos endPos file =>
+                  simp [IncludeError.code] at h_code_inc
+              | emptyPathBeforeNormalization file =>
+                  simp [IncludeError.code] at h_code_inc
+              | pathEmptyAfterNormalization origPath file =>
+                  simp [IncludeError.code] at h_code_inc
+              | readFailure name path err =>
+                  simp [IncludeError.code] at h_code_inc
+            exact False.elim this
       exact h_rule
   | proofCheck err =>
       have h_code_eq : code = ProofCheckError.code err := by
@@ -1558,7 +1900,213 @@ theorem parseErrorCode?_ruleSemantic_sound
         simpa [ErrorEvidence.code] using Eq.symm h_code'
       subst code
       have h_ic : s.InternalConsistencyViolation := ⟨allowDup, wf, dv, h_ev⟩
-      simpa [DB.RuleSemanticViolation] using h_ic
+      exact Or.inr (Or.inr h_ic)
+
+/-- Inversion: decoded `.invalidLabel` carries the rejected label payload. -/
+theorem parseErrorCode?_invalidLabel_payload_inversion
+    (s : DB) :
+    s.parseErrorCode? = some .invalidLabel →
+    s.InvalidLabelPayloadWitness := by
+  intro h_code
+  have h_rule := parseErrorCode?_ruleSemantic_sound s .invalidLabel h_code
+  rcases h_rule with ⟨err, h_ev, h_err_code⟩
+  cases err with
+  | notACommand lab => cases h_err_code
+  | invalidLabel lab => exact ⟨lab, by simpa using h_ev⟩
+  | invalidMathString tok => cases h_err_code
+  | unknownStatementType ty => cases h_err_code
+  | nestedCommentDelimiter => cases h_err_code
+
+/-- Inversion: decoded `.topLevelEssentialNotAllowed` carries scope-decl payload. -/
+theorem parseErrorCode?_topLevelEssentialNotAllowed_payload_inversion
+    (s : DB) :
+    s.parseErrorCode? = some .topLevelEssentialNotAllowed →
+    s.TopLevelEssentialPayloadWitness := by
+  intro h_code
+  have h_rule := parseErrorCode?_ruleSemantic_sound s .topLevelEssentialNotAllowed h_code
+  rcases h_rule with ⟨err, h_ev, h_err_code⟩
+  cases err with
+  | cantPopGlobalScope => cases h_err_code
+  | constMustBeOutermost => cases h_err_code
+  | duplicateSymbolOrAssert l => cases h_err_code
+  | firstSymbolNotConstant => cases h_err_code
+  | hypothesisSymbolsNotInFrame => cases h_err_code
+  | expectedConstantAndVariable => cases h_err_code
+  | variableAlreadyHasFloatHyp v => cases h_err_code
+  | duplicateDisjointVariable sym => cases h_err_code
+  | tokenNotInScope sym isVarWitness activeInScopeWitness =>
+      cases isVarWitness <;> cases activeInScopeWitness <;>
+        simp [ScopeDeclError.code] at h_err_code
+  | tokenNotVariable sym => cases h_err_code
+  | tokenNotConstantOrVariable sym isSymWitness =>
+      cases isSymWitness <;> simp [ScopeDeclError.code] at h_err_code
+  | topLevelEssentialNotAllowed rejectToplevelEssWitness scopeDepthWitness =>
+      cases rejectToplevelEssWitness <;> cases scopeDepthWitness <;>
+        simp [ScopeDeclError.code] at h_err_code <;>
+        simpa using h_ev
+  | outOfOrderHypothesesInFrame => cases h_err_code
+
+/-- Inversion: decoded `.tokenNotInScope` carries scope-decl symbol payload. -/
+theorem parseErrorCode?_tokenNotInScope_payload_inversion
+    (s : DB) :
+    s.parseErrorCode? = some .tokenNotInScope →
+    s.TokenNotInScopePayloadWitness := by
+  intro h_code
+  have h_rule := parseErrorCode?_ruleSemantic_sound s .tokenNotInScope h_code
+  rcases h_rule with ⟨err, h_ev, h_err_code⟩
+  cases err with
+  | cantPopGlobalScope => cases h_err_code
+  | constMustBeOutermost => cases h_err_code
+  | duplicateSymbolOrAssert l => cases h_err_code
+  | firstSymbolNotConstant => cases h_err_code
+  | hypothesisSymbolsNotInFrame => cases h_err_code
+  | expectedConstantAndVariable => cases h_err_code
+  | variableAlreadyHasFloatHyp v => cases h_err_code
+  | duplicateDisjointVariable sym => cases h_err_code
+  | tokenNotInScope sym isVarWitness activeInScopeWitness =>
+      cases isVarWitness <;> cases activeInScopeWitness <;>
+        simp [ScopeDeclError.code] at h_err_code <;>
+        exact ⟨sym, by simpa using h_ev⟩
+  | tokenNotVariable sym => cases h_err_code
+  | tokenNotConstantOrVariable sym isSymWitness =>
+      cases isSymWitness <;> simp [ScopeDeclError.code] at h_err_code
+  | topLevelEssentialNotAllowed rejectToplevelEssWitness scopeDepthWitness =>
+      cases rejectToplevelEssWitness <;> cases scopeDepthWitness <;>
+        simp [ScopeDeclError.code] at h_err_code
+  | outOfOrderHypothesesInFrame => cases h_err_code
+
+/-- Inversion: decoded `.tokenNotConstantOrVariable` carries scope-decl symbol payload. -/
+theorem parseErrorCode?_tokenNotConstantOrVariable_payload_inversion
+    (s : DB) :
+    s.parseErrorCode? = some .tokenNotConstantOrVariable →
+    s.TokenNotConstantOrVariablePayloadWitness := by
+  intro h_code
+  have h_rule := parseErrorCode?_ruleSemantic_sound s .tokenNotConstantOrVariable h_code
+  rcases h_rule with ⟨err, h_ev, h_err_code⟩
+  cases err with
+  | cantPopGlobalScope => cases h_err_code
+  | constMustBeOutermost => cases h_err_code
+  | duplicateSymbolOrAssert l => cases h_err_code
+  | firstSymbolNotConstant => cases h_err_code
+  | hypothesisSymbolsNotInFrame => cases h_err_code
+  | expectedConstantAndVariable => cases h_err_code
+  | variableAlreadyHasFloatHyp v => cases h_err_code
+  | duplicateDisjointVariable sym => cases h_err_code
+  | tokenNotInScope sym isVarWitness activeInScopeWitness =>
+      cases isVarWitness <;> cases activeInScopeWitness <;> simp [ScopeDeclError.code] at h_err_code
+  | tokenNotVariable sym => cases h_err_code
+  | tokenNotConstantOrVariable sym isSymWitness =>
+      cases isSymWitness <;>
+        simp [ScopeDeclError.code] at h_err_code <;>
+        exact ⟨sym, by simpa using h_ev⟩
+  | topLevelEssentialNotAllowed rejectToplevelEssWitness scopeDepthWitness =>
+      cases rejectToplevelEssWitness <;> cases scopeDepthWitness <;> simp [ScopeDeclError.code] at h_err_code
+  | outOfOrderHypothesesInFrame => cases h_err_code
+
+/-- Inversion: decoded `.includeInInnerScope` carries include payload with position+depth. -/
+theorem parseErrorCode?_includeInInnerScope_payload_inversion
+    (s : DB) :
+    s.parseErrorCode? = some .includeInInnerScope →
+    s.IncludeInInnerScopePayloadWitness := by
+  intro h_code
+  have h_rule := parseErrorCode?_ruleSemantic_sound s .includeInInnerScope h_code
+  rcases h_rule with ⟨err, h_ev, h_err_code⟩
+  cases err with
+  | cycleDetected path => cases h_err_code
+  | inInnerScope pos depth inStatement allowIncludeInnerScopeWitness =>
+      have h_parts : allowIncludeInnerScopeWitness = false ∧ depth ≠ 0 := by
+        simpa [IncludeError.code, Nat.pos_iff_ne_zero] using h_err_code
+      have h_allow : allowIncludeInnerScopeWitness = false := h_parts.1
+      have h_depth_pos : (depth > 0) = true := by
+        cases depth with
+        | zero => cases (h_parts.2 rfl)
+        | succ n => simp
+      subst allowIncludeInnerScopeWitness
+      exact ⟨pos, depth, inStatement, by simpa using h_ev, h_depth_pos⟩
+  | insideStatement pos scopeDepth inStatement allowTokenSplicingWitness =>
+      by_cases h_cond : (allowTokenSplicingWitness = false ∧ inStatement = true)
+      · simp [IncludeError.code, h_cond] at h_err_code
+      · simp [IncludeError.code, h_cond] at h_err_code
+  | extractedEmptyPath startPos endPos file => cases h_err_code
+  | emptyPathBeforeNormalization file => cases h_err_code
+  | pathEmptyAfterNormalization origPath file => cases h_err_code
+  | readFailure name path err => cases h_err_code
+
+/-- Inversion: decoded `.includeInsideStatement` carries include position payload. -/
+theorem parseErrorCode?_includeInsideStatement_payload_inversion
+    (s : DB) :
+    s.parseErrorCode? = some .includeInsideStatement →
+    s.IncludeInsideStatementPayloadWitness := by
+  intro h_code
+  have h_rule := parseErrorCode?_ruleSemantic_sound s .includeInsideStatement h_code
+  rcases h_rule with ⟨err, h_ev, h_err_code⟩
+  cases err with
+  | cycleDetected path => cases h_err_code
+  | inInnerScope pos depth inStatement allowIncludeInnerScopeWitness =>
+      have : False := by
+        by_cases h_cond : allowIncludeInnerScopeWitness = false ∧ 0 < depth
+        · simp [IncludeError.code, h_cond] at h_err_code
+        · simp [IncludeError.code, h_cond] at h_err_code
+      exact False.elim this
+  | insideStatement pos scopeDepth inStatement allowTokenSplicingWitness =>
+      have h_gate :
+          (allowTokenSplicingWitness = false ∧ inStatement = true) = true := by
+        simpa [IncludeError.code] using h_err_code
+      have h_parts : allowTokenSplicingWitness = false ∧ inStatement = true := by
+        simpa [Bool.and_eq_true] using h_gate
+      have h_allow : allowTokenSplicingWitness = false := h_parts.1
+      have h_stmt : inStatement = true := h_parts.2
+      subst allowTokenSplicingWitness
+      subst inStatement
+      exact ⟨pos, scopeDepth, by simpa using h_ev⟩
+  | extractedEmptyPath startPos endPos file => cases h_err_code
+  | emptyPathBeforeNormalization file => cases h_err_code
+  | pathEmptyAfterNormalization origPath file => cases h_err_code
+  | readFailure name path err => cases h_err_code
+
+/-- Direct include inversion: decoded `.includeInInnerScope` yields guard facts. -/
+theorem parseErrorCode?_includeInInnerScope_guardFacts
+    (s : DB) :
+    s.parseErrorCode? = some .includeInInnerScope →
+    ∃ pos depth inStatement,
+      s.errorEvidence? = some (.includeErr (.inInnerScope pos depth inStatement false)) ∧
+      depth ≠ 0 := by
+  intro h_code
+  rcases parseErrorCode?_includeInInnerScope_payload_inversion (s := s) h_code with
+    ⟨pos, depth, inStatement, h_ev, h_depth_pos⟩
+  exact ⟨pos, depth, inStatement, h_ev, by
+    simpa [Nat.pos_iff_ne_zero] using h_depth_pos⟩
+
+/-- Direct include inversion: decoded `.includeInsideStatement` yields guard facts. -/
+theorem parseErrorCode?_includeInsideStatement_guardFacts
+    (s : DB) :
+    s.parseErrorCode? = some .includeInsideStatement →
+    ∃ pos scopeDepth,
+      s.errorEvidence? = some (.includeErr (.insideStatement pos scopeDepth true false)) := by
+  intro h_code
+  exact parseErrorCode?_includeInsideStatement_payload_inversion (s := s) h_code
+
+/-- Backward-compatible alias for include-in-inner-scope guard facts. -/
+theorem parseErrorCode?_includeInInnerScope_guardFacts_of_gateWitness
+    (s : DB) :
+    s.parseErrorCode? = some .includeInInnerScope →
+    ∃ pos depth inStatement,
+      s.errorEvidence? = some (.includeErr (.inInnerScope pos depth inStatement false)) ∧
+      (depth > 0) = true := by
+  intro h_code
+  rcases parseErrorCode?_includeInInnerScope_guardFacts (s := s) h_code with
+    ⟨pos, depth, inStatement, h_ev, h_depth_ne_zero⟩
+  exact ⟨pos, depth, inStatement, h_ev, by
+    simpa [Nat.pos_iff_ne_zero] using h_depth_ne_zero⟩
+
+/-- Backward-compatible alias for include-inside-statement guard facts. -/
+theorem parseErrorCode?_includeInsideStatement_guardFacts_of_gateWitness
+    (s : DB) :
+    s.parseErrorCode? = some .includeInsideStatement →
+    ∃ pos scopeDepth,
+      s.errorEvidence? = some (.includeErr (.insideStatement pos scopeDepth true false)) := by
+  intro h_code
+  exact parseErrorCode?_includeInsideStatement_guardFacts (s := s) h_code
 
 /-- Canonical parser rule+clause semantic soundness for any decoded code. -/
 theorem parseErrorCode?_ruleClauseSemantic_sound
@@ -1623,6 +2171,90 @@ def isSym (db : DB) (tk : String) : Bool :=
   | some (.const _) => true
   | some (.var _) => true
   | _ => false
+
+/-- Scope gate for math/formula symbols: reject non-const/non-var symbols. -/
+def mathSymbolViolation? (db : DB) (tk : String) : Option ScopeDeclError :=
+  if db.isSym tk then none else some (.tokenNotConstantOrVariable tk false)
+
+theorem mathSymbolViolation?_tokenNotConstantOrVariable_iff
+    (db : DB) (tk : String) :
+    db.mathSymbolViolation? tk = some (.tokenNotConstantOrVariable tk false) ↔
+      db.isSym tk = false := by
+  unfold mathSymbolViolation?
+  by_cases h_sym : db.isSym tk
+  · simp [h_sym]
+  · simp [h_sym]
+
+theorem mathSymbolViolation?_tokenNotConstantOrVariable_implies_isSym_false
+    (db : DB) (tk : String) :
+    db.mathSymbolViolation? tk = some (.tokenNotConstantOrVariable tk false) →
+      db.isSym tk = false := by
+  intro h
+  exact (mathSymbolViolation?_tokenNotConstantOrVariable_iff db tk).1 h
+
+@[simp] theorem mathSymbolViolation?_of_find_none
+    (db : DB) (tk : String)
+    (h_find : db.find? tk = none) :
+    db.mathSymbolViolation? tk = some (.tokenNotConstantOrVariable tk false) := by
+  have h_sym : db.isSym tk = false := by
+    unfold DB.isSym
+    simp [h_find]
+  exact (mathSymbolViolation?_tokenNotConstantOrVariable_iff db tk).2 h_sym
+
+@[simp] theorem mathSymbolViolation?_of_find_hyp
+    (db : DB) (tk : String) (fvar : Bool) (fmla : Formula) (lbl : String)
+    (h_find : db.find? tk = some (.hyp fvar fmla lbl)) :
+    db.mathSymbolViolation? tk = some (.tokenNotConstantOrVariable tk false) := by
+  have h_sym : db.isSym tk = false := by
+    unfold DB.isSym
+    simp [h_find]
+  exact (mathSymbolViolation?_tokenNotConstantOrVariable_iff db tk).2 h_sym
+
+@[simp] theorem mathSymbolViolation?_of_find_assert
+    (db : DB) (tk : String) (fmla : Formula) (fr : Frame) (lbl : String)
+    (h_find : db.find? tk = some (.assert fmla fr lbl)) :
+    db.mathSymbolViolation? tk = some (.tokenNotConstantOrVariable tk false) := by
+  have h_sym : db.isSym tk = false := by
+    unfold DB.isSym
+    simp [h_find]
+  exact (mathSymbolViolation?_tokenNotConstantOrVariable_iff db tk).2 h_sym
+
+
+/-- Scope gate for `$d` symbols: variable must exist and be active in current frame. -/
+def djvarsScopeViolation? (db : DB) (tk : String) : Option ScopeDeclError :=
+  if !db.isVar tk then
+    some (.tokenNotVariable tk)
+  else if !db.activeVarInScope tk then
+    some (.tokenNotInScope tk true false)
+  else
+    none
+
+theorem djvarsScopeViolation?_tokenNotVariable_iff
+    (db : DB) (tk : String) :
+    db.djvarsScopeViolation? tk = some (.tokenNotVariable tk) ↔
+      db.isVar tk = false := by
+  unfold djvarsScopeViolation?
+  by_cases h_var : db.isVar tk
+  · simp [h_var]
+  · simp [h_var]
+
+theorem djvarsScopeViolation?_tokenNotInScope_iff
+    (db : DB) (tk : String) :
+    db.djvarsScopeViolation? tk = some (.tokenNotInScope tk true false) ↔
+      db.isVar tk = true ∧ db.activeVarInScope tk = false := by
+  unfold djvarsScopeViolation?
+  by_cases h_var : db.isVar tk
+  · by_cases h_active : db.activeVarInScope tk
+    · simp [h_var, h_active]
+    · simp [h_var, h_active]
+  · simp [h_var]
+
+theorem djvarsScopeViolation?_tokenNotInScope_implies_gate
+    (db : DB) (tk : String) :
+    db.djvarsScopeViolation? tk = some (.tokenNotInScope tk true false) →
+      db.isVar tk = true ∧ db.activeVarInScope tk = false := by
+  intro h
+  exact (djvarsScopeViolation?_tokenNotInScope_iff db tk).1 h
 
 @[inline] def withFrame (f : Frame → Frame) (db : DB) : DB :=
   { db with frame := f db.frame }
@@ -2261,7 +2893,6 @@ def mkErrorFromEvidence (s : ParserState) (pos : Pos) (ev : ErrorEvidence) : Par
 
 def mkErrorAt (s : ParserState) (pos : Pos) (l msg : String) : ParserState :=
   s.mkError pos s!"at {l}: {msg}"
-
 @[simp] theorem mkErrorAt_db_config (s : ParserState) (pos : Pos) (l msg : String) :
     (s.mkErrorAt pos l msg).db.config = s.db.config := by
   simp [ParserState.mkErrorAt]
@@ -2297,6 +2928,18 @@ def withAt (l : String) (f : Unit → ParserState) : ParserState :=
       | mk e idx =>
           cases e <;> simp [h_err, ParserState.withDB]
 
+@[simp] theorem withAt_parseErrorCode? (l : String) (f : Unit → ParserState) :
+    (ParserState.withAt l f).db.parseErrorCode? = (f ()).db.parseErrorCode? := by
+  unfold ParserState.withAt
+  generalize hs : f () = s0
+  cases h_err : s0.db.error? with
+  | none =>
+      simp [h_err, DB.parseErrorCode?]
+  | some intr =>
+      cases intr with
+      | mk e idx =>
+          cases e <;> simp [h_err, ParserState.withDB, DB.parseErrorCode?]
+
 def label (s : ParserState) (pos : Pos) (tk : ByteSlice) : ParserState :=
   let (ok, tk) := toLabel tk
   if ok then { s with tokp := .label pos tk }
@@ -2307,6 +2950,22 @@ def label (s : ParserState) (pos : Pos) (tk : ByteSlice) : ParserState :=
   unfold ParserState.label
   -- Split on the if condition (ok = true)
   split <;> split <;> simp [ParserState.mkErrorFromEvidence_db_config]
+
+
+theorem label_invalidLabel_errorCode_implies_toLabel_false
+    (s : ParserState) (pos : Pos) (tk : ByteSlice)
+    (h_no_err : s.db.error? = none) :
+    (s.label pos tk).db.parseErrorCode? = some .invalidLabel →
+      (toLabel tk).fst = false := by
+  intro h_code
+  unfold ParserState.label at h_code
+  cases h_lbl : toLabel tk with
+  | mk ok lbl =>
+      cases h_ok : ok with
+      | true =>
+          simp [h_lbl, h_ok, h_no_err, DB.parseErrorCode?] at h_code
+      | false =>
+          simpa [h_lbl, h_ok]
 
 def withMath (s : ParserState) (pos : Pos) (tk : ByteSlice)
     (f : ParserState → String → ParserState) : ParserState :=
@@ -2381,18 +3040,21 @@ termination_by arr.size - i
       simpa [h_cfg] using ih (i + 1) _ hs'
 
 def djvars_loop (arr : Array String) (s : ParserState) (pos : Pos) (tk : String) : ParserState :=
-  if s.db.isVar tk then
-    djvars_loop_aux arr s pos tk 0
-  else
-    s.mkErrorFromEvidence pos (.scopeDecl (.tokenNotVariable tk))
+  match s.db.djvarsScopeViolation? tk with
+  | some err =>
+      s.mkErrorFromEvidence pos (.scopeDecl err)
+  | none =>
+      djvars_loop_aux arr s pos tk 0
 
 @[simp] theorem djvars_loop_db_config (arr : Array String) (s : ParserState)
     (pos : Pos) (tk : String) :
     (djvars_loop arr s pos tk).db.config = s.db.config := by
   unfold djvars_loop
-  by_cases h_var : s.db.isVar tk
-  · simp [h_var, djvars_loop_aux_db_config]
-  · simp [h_var, ParserState.mkErrorFromEvidence_db_config]
+  cases h_gate : s.db.djvarsScopeViolation? tk with
+  | none =>
+      simp [h_gate, djvars_loop_aux_db_config]
+  | some err =>
+      simp [h_gate, ParserState.mkErrorFromEvidence_db_config]
 
 def sym (s : ParserState) (pos : Pos) (tk : ByteSlice) (f : String → Object) : ParserState :=
   if tk.eqArray "$.".toAscii then
@@ -2479,6 +3141,61 @@ def applyCompressedActions (db : DB) (pr : ProofState) (acts : List CompressedAc
           pure (pr.push pr.fmla)
     ) pr
 
+/-- Scope/config gate for rejecting top-level $e in strict modes. -/
+def topLevelEssViolation? (db : DB) : Option ScopeDeclError :=
+  if db.config.rejectToplevelEss && db.scopes.size == 0 then
+    some (.topLevelEssentialNotAllowed db.config.rejectToplevelEss db.scopes.size)
+  else
+    none
+
+theorem topLevelEssViolation?_eq_some_topLevelEssentialNotAllowed_iff
+    (db : DB) :
+    topLevelEssViolation? db = some (.topLevelEssentialNotAllowed db.config.rejectToplevelEss db.scopes.size) ↔
+      (db.config.rejectToplevelEss && db.scopes.size == 0) = true := by
+  unfold topLevelEssViolation?
+  by_cases h : (db.config.rejectToplevelEss && db.scopes.size == 0) = true
+  · simp [h]
+  · simp [h]
+
+theorem topLevelEssViolation?_implies_gateFacts
+    (db : DB) :
+    topLevelEssViolation? db = some (.topLevelEssentialNotAllowed db.config.rejectToplevelEss db.scopes.size) →
+      db.config.rejectToplevelEss = true ∧ db.scopes.size = 0 := by
+  intro h_top
+  have h_gate := (topLevelEssViolation?_eq_some_topLevelEssentialNotAllowed_iff db).1 h_top
+  have h_parts : (db.config.rejectToplevelEss = true) ∧ ((db.scopes.size == 0) = true) := by
+    simpa [Bool.and_eq_true] using h_gate
+  have h_scope : db.scopes.size = 0 := by
+    simpa using h_parts.2
+  exact ⟨h_parts.1, h_scope⟩
+
+
+/-- Direct scope inversion: decoded `.tokenNotConstantOrVariable` yields lifted scope payload. -/
+theorem DB.parseErrorCode?_tokenNotConstantOrVariable_gateWitness_of_mathGate
+    (s : DB) :
+    DB.parseErrorCode? s = some .tokenNotConstantOrVariable ->
+    ∃ sym,
+      s.errorEvidence? = some (.scopeDecl (.tokenNotConstantOrVariable sym false)) := by
+  intro h_code
+  exact DB.parseErrorCode?_tokenNotConstantOrVariable_payload_inversion (s := s) h_code
+
+/-- Direct scope inversion: decoded `.tokenNotInScope` yields lifted scope payload. -/
+theorem DB.parseErrorCode?_tokenNotInScope_gateWitness_of_djvarsGate
+    (s : DB) :
+    DB.parseErrorCode? s = some .tokenNotInScope ->
+    ∃ sym,
+      s.errorEvidence? = some (.scopeDecl (.tokenNotInScope sym true false)) := by
+  intro h_code
+  exact DB.parseErrorCode?_tokenNotInScope_payload_inversion (s := s) h_code
+
+/-- Direct scope inversion: decoded `.topLevelEssentialNotAllowed` yields lifted strict-mode payload. -/
+theorem DB.parseErrorCode?_topLevelEssentialNotAllowed_gateFacts_of_topLevelGate
+    (s : DB) :
+    DB.parseErrorCode? s = some .topLevelEssentialNotAllowed ->
+    s.errorEvidence? = some (.scopeDecl (.topLevelEssentialNotAllowed true 0)) := by
+  intro h_code
+  exact DB.parseErrorCode?_topLevelEssentialNotAllowed_payload_inversion (s := s) h_code
+
 def feedTokens (s : ParserState) (arr : Array Sym) : TokensParser → ParserState
   | ⟨k, pos, l⟩ => withAt l fun _ => Id.run do
     unless Formula.hasConstHead arr do
@@ -2492,10 +3209,12 @@ def feedTokens (s : ParserState) (arr : Array Sym) : TokensParser → ParserStat
     | .ess =>
       -- Knife mode rejects top-level $e (stricter policy)
       -- Test: metamath-test/tests/unit/test67_toplevel_essential.mm
-      if s.db.config.rejectToplevelEss && s.db.scopes.size == 0 then
-        return s.mkErrorFromEvidence pos (.scopeDecl .topLevelEssentialNotAllowed)
-      let s := s.withDB fun db => db.insertHyp pos l true arr
-      pure { s with tokp := .start }
+      match topLevelEssViolation? s.db with
+      | some err =>
+          return s.mkErrorFromEvidence pos (.scopeDecl err)
+      | none =>
+          let s := s.withDB fun db => db.insertHyp pos l true arr
+          pure { s with tokp := .start }
     | .ax =>
       let s := s.withDB fun db => db.insertAxiom pos l arr
       pure { s with tokp := .start }
@@ -2655,7 +3374,11 @@ def feedToken (s : ParserState) (pos : Nat) (tk : ByteSlice) : ParserState :=
           | some (.const _) => Sym.const tk
           | some (.var _) => Sym.var tk
           | _ =>
-            return s.mkErrorFromEvidence pos (.scopeDecl (.tokenNotConstantOrVariable tk))
+            match s.db.mathSymbolViolation? tk with
+            | some err =>
+              return s.mkErrorFromEvidence pos (.scopeDecl err)
+            | none =>
+              return s.mkErrorFromEvidence pos (.scopeDecl (.tokenNotConstantOrVariable tk false))
           { s with tokp := .math (arr.push tk) p }
     | .label pos lab =>
       if tk.len == 2 && tk[0]! == '$'.toUInt8 then
@@ -2725,12 +3448,22 @@ def feedToken (s : ParserState) (pos : Nat) (tk : ByteSlice) : ParserState :=
         · simp [ParserState.feedTokens_db_config]  -- delimiter ends math
         · -- Continue math: withMath + Id.run do
           apply ParserState.withMath_db_config
-          intro tk'
+          intro tk1
           simp only [Id.run, Pure.pure, Bind.bind]
-          split
-          · rfl  -- h_1: const case
-          · rfl  -- h_2: var case
-          · simp [ParserState.mkErrorFromEvidence_db_config]  -- h_3: error case
+          cases h_find : s.db.find? tk1 with
+          | none =>
+              cases h_gate : s.db.mathSymbolViolation? tk1 <;>
+                simp [h_find, h_gate, ParserState.mkErrorFromEvidence_db_config]
+          | some obj =>
+              cases obj with
+              | const _ => simp [h_find]
+              | var _ => simp [h_find]
+              | hyp _ _ _ =>
+                  cases h_gate : s.db.mathSymbolViolation? tk1 <;>
+                    simp [h_find, h_gate, ParserState.mkErrorFromEvidence_db_config]
+              | assert _ _ _ =>
+                  cases h_gate : s.db.mathSymbolViolation? tk1 <;>
+                    simp [h_find, h_gate, ParserState.mkErrorFromEvidence_db_config]
   | label pos' lab =>
       simp only []
       split
@@ -2978,7 +3711,7 @@ theorem done_errorCode_if_djvars_ws
     (h_tokp : s.tokp = .djvars vars) :
     (s.done base).parseErrorCode? = some .unclosedDjvars := by
   simp [ParserState.done, h_charp, h_no_err, h_tokp, DB.parseErrorCode?, DB.mkParseError,
-    DB.mkErrorFromEvidence, DB.mkErrorWithEvidence, DB.error, Id.run, ParseErrorCode.codeOnlyAllowed]
+    DB.mkErrorFromEvidence, DB.mkErrorWithEvidence, DB.error, Id.run]
 
 /-- If parsing ends in `$d` mode after flushing a pending token, code is `unclosedDjvars`. -/
 theorem done_errorCode_if_djvars_token
@@ -2989,8 +3722,7 @@ theorem done_errorCode_if_djvars_token
     (h_tokp : (s.feedToken pos tk.toSlice).tokp = .djvars vars) :
     (s.done base).parseErrorCode? = some .unclosedDjvars := by
   simp [ParserState.done, h_charp, h_no_err, h_feed_no_err, h_tokp, DB.parseErrorCode?,
-    DB.mkParseError, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence, DB.error, Id.run,
-    ParseErrorCode.codeOnlyAllowed]
+    DB.mkParseError, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence, DB.error, Id.run]
 
 /-- `done` preserves any existing parser error code (first parser error wins). -/
 theorem done_preserves_existing_parseErrorCode
@@ -3040,17 +3772,17 @@ theorem done_parseErrorCode?_ws
       | .proof _ => some .unclosedProof := by
   unfold ParserState.done
   simp [h_charp, h_no_err, DB.error, DB.parseErrorCode?, DB.mkParseError, DB.mkErrorFromEvidence,
-    DB.mkErrorWithEvidence, Id.run, ParseErrorCode.codeOnlyAllowed]
+    DB.mkErrorWithEvidence, Id.run]
   cases h_tokp : s.tokp <;>
     simp [h_tokp, DB.parseErrorCode?, DB.mkParseError, DB.mkErrorFromEvidence,
-      DB.mkErrorWithEvidence, ParseErrorCode.codeOnlyAllowed]
+      DB.mkErrorWithEvidence]
   case start =>
     by_cases h_scope : 0 < s.db.scopes.size
-    · simp [h_scope, ParseErrorCode.codeOnlyAllowed]
+    · simp [h_scope]
     · simp [h_scope, h_no_err]
   case math a p =>
     cases h_k : p.k <;>
-      simp [h_k, ParseErrorCode.codeOnlyAllowed]
+      simp [h_k]
   case label pos lab =>
     simp [ErrorEvidence.code, TokenFormError.code]
 
@@ -3079,17 +3811,17 @@ theorem done_parseErrorCode?_token
       | TokenParser.proof _ => some .unclosedProof := by
   unfold ParserState.done
   simp [h_charp, h_no_err, h_feed_no_err, DB.error, DB.parseErrorCode?, DB.mkParseError,
-    DB.mkErrorFromEvidence, DB.mkErrorWithEvidence, Id.run, ParseErrorCode.codeOnlyAllowed]
+    DB.mkErrorFromEvidence, DB.mkErrorWithEvidence, Id.run]
   cases h_tokp : (s.feedToken pos tk.toSlice).tokp <;>
     simp [h_tokp, DB.parseErrorCode?, DB.mkParseError, DB.mkErrorFromEvidence,
-      DB.mkErrorWithEvidence, ParseErrorCode.codeOnlyAllowed]
+      DB.mkErrorWithEvidence]
   case start =>
     by_cases h_scope : 0 < (s.feedToken pos tk.toSlice).db.scopes.size
-    · simp [h_scope, ParseErrorCode.codeOnlyAllowed]
+    · simp [h_scope]
     · simp [h_scope, h_feed_no_err]
   case math a p =>
     cases h_k : p.k <;>
-      simp [h_k, ParseErrorCode.codeOnlyAllowed]
+      simp [h_k]
   case label pos lab =>
     simp [ErrorEvidence.code, TokenFormError.code]
 
@@ -3362,6 +4094,154 @@ theorem checkBytes_parseErrorCode?_semantic_sound
   intro h_code
   exact DB.parseErrorCode?_semantic_sound (s := checkBytes arr config) code h_code
 
+theorem checkBytes_parseErrorCode?_includeInInnerScope_guardFacts
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .includeInInnerScope →
+    ∃ pos depth inStatement,
+      (checkBytes arr config).errorEvidence? = some (.includeErr (.inInnerScope pos depth inStatement false)) ∧
+      depth ≠ 0 := by
+  intro h_code
+  exact DB.parseErrorCode?_includeInInnerScope_guardFacts
+    (s := checkBytes arr config) h_code
+
+theorem checkBytes_parseErrorCode?_includeInsideStatement_guardFacts
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .includeInsideStatement →
+    ∃ pos scopeDepth,
+      (checkBytes arr config).errorEvidence? = some (.includeErr (.insideStatement pos scopeDepth true false)) := by
+  intro h_code
+  exact DB.parseErrorCode?_includeInsideStatement_guardFacts
+    (s := checkBytes arr config) h_code
+
+/-- Backward-compatible alias for include-in-inner-scope checkBytes guard facts. -/
+theorem checkBytes_parseErrorCode?_includeInInnerScope_guardFacts_of_gateWitness
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .includeInInnerScope →
+    ∃ pos depth inStatement,
+      (checkBytes arr config).errorEvidence? = some (.includeErr (.inInnerScope pos depth inStatement false)) ∧
+      (depth > 0) = true := by
+  intro h_code
+  rcases checkBytes_parseErrorCode?_includeInInnerScope_guardFacts arr config h_code with
+    ⟨pos, depth, inStatement, h_ev, h_depth_ne_zero⟩
+  exact ⟨pos, depth, inStatement, h_ev, by
+    simpa [Nat.pos_iff_ne_zero] using h_depth_ne_zero⟩
+
+/-- Backward-compatible alias for include-inside-statement checkBytes guard facts. -/
+theorem checkBytes_parseErrorCode?_includeInsideStatement_guardFacts_of_gateWitness
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .includeInsideStatement →
+    ∃ pos scopeDepth,
+      (checkBytes arr config).errorEvidence? = some (.includeErr (.insideStatement pos scopeDepth true false)) := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_includeInsideStatement_guardFacts arr config h_code
+
+
+theorem DB.parseErrorCode?_tokenNotConstantOrVariable_guardFacts
+    (s : DB) :
+    DB.parseErrorCode? s = some .tokenNotConstantOrVariable ->
+    ∃ sym,
+      s.errorEvidence? = some (.scopeDecl (.tokenNotConstantOrVariable sym false)) := by
+  intro h_code
+  exact ParserState.DB.parseErrorCode?_tokenNotConstantOrVariable_gateWitness_of_mathGate s h_code
+
+theorem DB.parseErrorCode?_tokenNotInScope_guardFacts
+    (s : DB) :
+    DB.parseErrorCode? s = some .tokenNotInScope ->
+    ∃ sym,
+      s.errorEvidence? = some (.scopeDecl (.tokenNotInScope sym true false)) := by
+  intro h_code
+  exact ParserState.DB.parseErrorCode?_tokenNotInScope_gateWitness_of_djvarsGate s h_code
+
+theorem DB.parseErrorCode?_topLevelEssentialNotAllowed_guardFacts
+    (s : DB) :
+    DB.parseErrorCode? s = some .topLevelEssentialNotAllowed ->
+    s.errorEvidence? = some (.scopeDecl (.topLevelEssentialNotAllowed true 0)) := by
+  intro h_code
+  exact ParserState.DB.parseErrorCode?_topLevelEssentialNotAllowed_gateFacts_of_topLevelGate s h_code
+
+theorem checkBytes_parseErrorCode?_tokenNotConstantOrVariable_guardFacts
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .tokenNotConstantOrVariable ->
+    ∃ sym,
+      (checkBytes arr config).errorEvidence? =
+        some (.scopeDecl (.tokenNotConstantOrVariable sym false)) := by
+  intro h_code
+  exact DB.parseErrorCode?_tokenNotConstantOrVariable_guardFacts
+    (s := checkBytes arr config) h_code
+
+theorem checkBytes_parseErrorCode?_tokenNotInScope_guardFacts
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .tokenNotInScope ->
+    ∃ sym,
+      (checkBytes arr config).errorEvidence? =
+        some (.scopeDecl (.tokenNotInScope sym true false)) := by
+  intro h_code
+  exact DB.parseErrorCode?_tokenNotInScope_guardFacts
+    (s := checkBytes arr config) h_code
+
+theorem checkBytes_parseErrorCode?_topLevelEssentialNotAllowed_guardFacts
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .topLevelEssentialNotAllowed ->
+    (checkBytes arr config).errorEvidence? =
+      some (.scopeDecl (.topLevelEssentialNotAllowed true 0)) := by
+  intro h_code
+  exact DB.parseErrorCode?_topLevelEssentialNotAllowed_guardFacts
+    (s := checkBytes arr config) h_code
+
+/-- Backward-compatible alias for token-not-const/var guard facts. -/
+theorem DB.parseErrorCode?_tokenNotConstantOrVariable_gateWitness_of_mathGate
+    (s : DB) :
+    DB.parseErrorCode? s = some .tokenNotConstantOrVariable ->
+    ∃ sym,
+      s.errorEvidence? = some (.scopeDecl (.tokenNotConstantOrVariable sym false)) := by
+  intro h_code
+  exact DB.parseErrorCode?_tokenNotConstantOrVariable_guardFacts (s := s) h_code
+
+/-- Backward-compatible alias for token-not-in-scope guard facts. -/
+theorem DB.parseErrorCode?_tokenNotInScope_gateWitness_of_djvarsGate
+    (s : DB) :
+    DB.parseErrorCode? s = some .tokenNotInScope ->
+    ∃ sym,
+      s.errorEvidence? = some (.scopeDecl (.tokenNotInScope sym true false)) := by
+  intro h_code
+  exact DB.parseErrorCode?_tokenNotInScope_guardFacts (s := s) h_code
+
+/-- Backward-compatible alias for top-level `$e` guard facts. -/
+theorem DB.parseErrorCode?_topLevelEssentialNotAllowed_gateFacts_of_topLevelGate
+    (s : DB) :
+    DB.parseErrorCode? s = some .topLevelEssentialNotAllowed ->
+    s.errorEvidence? = some (.scopeDecl (.topLevelEssentialNotAllowed true 0)) := by
+  intro h_code
+  exact DB.parseErrorCode?_topLevelEssentialNotAllowed_guardFacts (s := s) h_code
+
+/-- Backward-compatible alias for checkBytes token-not-const/var guard facts. -/
+theorem checkBytes_parseErrorCode?_tokenNotConstantOrVariable_gateWitness_of_mathGate
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .tokenNotConstantOrVariable ->
+    ∃ sym,
+      (checkBytes arr config).errorEvidence? =
+        some (.scopeDecl (.tokenNotConstantOrVariable sym false)) := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_tokenNotConstantOrVariable_guardFacts arr config h_code
+
+/-- Backward-compatible alias for checkBytes token-not-in-scope guard facts. -/
+theorem checkBytes_parseErrorCode?_tokenNotInScope_gateWitness_of_djvarsGate
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .tokenNotInScope ->
+    ∃ sym,
+      (checkBytes arr config).errorEvidence? =
+        some (.scopeDecl (.tokenNotInScope sym true false)) := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_tokenNotInScope_guardFacts arr config h_code
+
+/-- Backward-compatible alias for checkBytes top-level `$e` guard facts. -/
+theorem checkBytes_parseErrorCode?_topLevelEssentialNotAllowed_gateFacts_of_topLevelGate
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .topLevelEssentialNotAllowed ->
+    (checkBytes arr config).errorEvidence? =
+      some (.scopeDecl (.topLevelEssentialNotAllowed true 0)) := by
+  intro h_code
+  exact checkBytes_parseErrorCode?_topLevelEssentialNotAllowed_guardFacts arr config h_code
 /-- Parser-level soundness at the byte-stream entrypoint. -/
 theorem checkBytes_parseErrorCode?_sound
     (arr : ByteArray) (config : ModeConfig) (code : ParseErrorCode) :
@@ -3369,6 +4249,16 @@ theorem checkBytes_parseErrorCode?_sound
     (checkBytes arr config).ParserSpecViolation code := by
   intro h_code
   exact (checkBytes_parseErrorCode?_semantic_sound arr config code h_code).1
+
+/-- Any decoded `checkBytes` parser code carries concrete error evidence. -/
+theorem checkBytes_parseErrorCode?_has_evidence
+    (arr : ByteArray) (config : ModeConfig) (code : ParseErrorCode) :
+    (checkBytes arr config).parseErrorCode? = some code →
+    ∃ ev, (checkBytes arr config).errorEvidence? = some ev := by
+  intro h_code
+  rcases checkBytes_parseErrorCode?_sound arr config code h_code with
+    ⟨pos, msg, idx, ev, h_err, h_ev, h_ev_code⟩
+  exact ⟨ev, h_ev⟩
 
 /-- `checkBytes` clause-level soundness from decoded code + code-to-clause mapping. -/
 theorem checkBytes_parseErrorCode?_clause_sound
@@ -3389,24 +4279,53 @@ theorem checkBytes_parseErrorCode?_specClause_sound
   intro h_code
   exact (checkBytes_parseErrorCode?_semantic_sound arr config code h_code).2.1
 
-/-- `checkBytes` all-code payload-shape soundness:
-decoded parser code carries normalized payload-shape evidence for every constructor. -/
-theorem checkBytes_parseErrorCode?_allCodePayloadShape_sound
-    (arr : ByteArray) (config : ModeConfig) (code : ParseErrorCode) :
-    (checkBytes arr config).parseErrorCode? = some code →
-    (checkBytes arr config).AllCodePayloadShapeViolation code := by
+theorem checkBytes_parseErrorCode?_invalidLabel_payload_inversion
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .invalidLabel →
+    (checkBytes arr config).InvalidLabelPayloadWitness := by
   intro h_code
-  exact DB.parseErrorCode?_allCodePayloadShape_sound (s := checkBytes arr config) code h_code
+  exact DB.parseErrorCode?_invalidLabel_payload_inversion
+    (s := checkBytes arr config) h_code
 
-/-- `checkBytes` all-code semantic payload-shape soundness:
-decoded parser code carries semantic message-shape evidence for every constructor. -/
-theorem checkBytes_parseErrorCode?_allCodeSemantic_sound
-    (arr : ByteArray) (config : ModeConfig) (code : ParseErrorCode) :
-    (checkBytes arr config).parseErrorCode? = some code →
-    (checkBytes arr config).AllCodeSemanticViolation code := by
+theorem checkBytes_parseErrorCode?_topLevelEssentialNotAllowed_payload_inversion
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .topLevelEssentialNotAllowed →
+    (checkBytes arr config).TopLevelEssentialPayloadWitness := by
   intro h_code
-  exact DB.parseErrorCode?_allCodeSemantic_sound (s := checkBytes arr config) code h_code
+  exact DB.parseErrorCode?_topLevelEssentialNotAllowed_payload_inversion
+    (s := checkBytes arr config) h_code
 
+theorem checkBytes_parseErrorCode?_tokenNotInScope_payload_inversion
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .tokenNotInScope →
+    (checkBytes arr config).TokenNotInScopePayloadWitness := by
+  intro h_code
+  exact DB.parseErrorCode?_tokenNotInScope_payload_inversion
+    (s := checkBytes arr config) h_code
+
+theorem checkBytes_parseErrorCode?_tokenNotConstantOrVariable_payload_inversion
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .tokenNotConstantOrVariable →
+    (checkBytes arr config).TokenNotConstantOrVariablePayloadWitness := by
+  intro h_code
+  exact DB.parseErrorCode?_tokenNotConstantOrVariable_payload_inversion
+    (s := checkBytes arr config) h_code
+
+theorem checkBytes_parseErrorCode?_includeInInnerScope_payload_inversion
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .includeInInnerScope →
+    (checkBytes arr config).IncludeInInnerScopePayloadWitness := by
+  intro h_code
+  exact DB.parseErrorCode?_includeInInnerScope_payload_inversion
+    (s := checkBytes arr config) h_code
+
+theorem checkBytes_parseErrorCode?_includeInsideStatement_payload_inversion
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .includeInsideStatement →
+    (checkBytes arr config).IncludeInsideStatementPayloadWitness := by
+  intro h_code
+  exact DB.parseErrorCode?_includeInsideStatement_payload_inversion
+    (s := checkBytes arr config) h_code
 theorem checkBytes_allCodePayloadShape_implies_specClauseViolation
     (arr : ByteArray) (config : ModeConfig) (code : ParseErrorCode) :
     (checkBytes arr config).AllCodePayloadShapeViolation code →
@@ -4074,13 +4993,12 @@ partial def scanIncludes (contents : ByteArray) (fname : String) (config : ModeC
 
     -- Look for $[ token (only outside comments)
     if i + 1 < contents.size && contents[i]! == '$'.toUInt8 && contents[i+1]! == '['.toUInt8 then
-      -- Validate strict mode constraints (spec §4.1.2)
-      -- Check: not in inner scope (unless config allows)
-      if !config.allowIncludeInnerScope && scopeDepth > 0 then
-        return .error (.inInnerScope i scopeDepth)
-      -- Check: not inside a statement (unless config allows token splicing)
-      if !config.allowTokenSplicing && inStatement then
-        return .error (.insideStatement i)
+      -- Validate strict mode constraints (spec §4.1.2) via a pure gate helper.
+      match includeDirectiveViolation? config scopeDepth inStatement i with
+      | some err =>
+          return .error err
+      | none =>
+          pure ()
 
       i := i + 2
       -- Skip whitespace after $[
