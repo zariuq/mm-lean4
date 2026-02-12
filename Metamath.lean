@@ -38,7 +38,7 @@ def main (args : List String) : IO UInt32 := do
     if showErrorCode then
       match db.parseErrorCode? with
       | some code =>
-          IO.println s!"at {pos}: [{repr code}] [{repr (ParseErrorCode.specClause code)}] {err}"
+          IO.println s!"at {pos}: [code #{ParseErrorCode.toNat code}] [clause {repr (ParseErrorCode.specClause code)}] [tag {repr code}] {err}"
       | none =>
           IO.println s!"at {pos}: [unclassified] {err}"
     else

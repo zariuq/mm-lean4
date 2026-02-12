@@ -48,3 +48,7 @@ lean_exe validateDB where
   root := `Metamath.ValidateDB
   supportInterpreter := true
 
+lean_exe testCliErrorCode where
+  root := `Metamath.Tests.CliErrorCodeFormat
+  supportInterpreter := true
+

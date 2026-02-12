@@ -16,3 +16,17 @@ codex_archive/
 
 # Documentation snapshots
 docs_archive/
+
+# Scratch/archive work artifacts (local only)
+_archive/
+_archive_logs/
+_archive_scratch/
+_archive_scripts/
+_archive_test_files/
+_archive_old_docs.tar.gz
+archive/
+codex_scratch/
+_scratch*.lean
+all_mm*.txt
+all_mm4*.txt
+current_status_*.txt

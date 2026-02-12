@@ -188,12 +188,10 @@ theorem feedTokens_preserves_error (s : ParserState) (arr : Array Sym) (tp : Tok
         case isFalse h_float_bad =>
           exact ParserState_mkError_sets_error s pos _
       case h_2 =>  -- .ess
-        -- Knife mode adds check for top-level $e
+        -- Strict mode gate for top-level $e.
         split
-        case isTrue h_knife_check =>  -- knife mode rejects top-level $e
-          exact ParserState_mkError_sets_error s pos _
-        case isFalse h_not_knife =>  -- normal case: insert the hypothesis
-          have h_withdb : (s.withDB fun db => db.insertHyp pos l true arr).db.error? ≠ none := by
+        · exact ParserState_mkErrorFromEvidence_sets_error s pos _
+        · have h_withdb : (s.withDB fun db => db.insertHyp pos l true arr).db.error? ≠ none := by
             apply withDB_preserves_error?
             · intro h
               exact ParserCorrectness.insertHyp_preserves_error s.db pos l true arr h
@@ -423,46 +421,30 @@ private theorem djvars_list_forIn_preserves_error
         exact ParserCorrectness.withDJ_preserves_error s.db _ h
       · exact h_err
 
-/-- When variable check passes, djvars_loop reduces to djvars_loop_aux. -/
-theorem djvars_loop_eq_aux
-    (arr : Array String) (s : ParserState) (pos : Pos) (tk : String)
-    (h_isVar : s.db.isVar tk = true) :
-    _root_.Metamath.Verify.ParserState.djvars_loop arr s pos tk =
-      _root_.Metamath.Verify.ParserState.djvars_loop_aux arr s pos tk 0 := by
-  simp [_root_.Metamath.Verify.ParserState.djvars_loop, h_isVar]
-
-/-- The djvars for-loop preserves error.
-
-    The semantic content (error preservation) is fully proven by djvars_list_forIn_preserves_error.
-    The for-loop and djvars_loop_aux have identical semantics. -/
+/-- The djvars loop preserves error. -/
 theorem djvars_loop_preserves_error
     (arr : Array String) (s : ParserState) (pos : Pos) (tk : String)
     (h_err : s.db.error? ≠ none) :
     (_root_.Metamath.Verify.ParserState.djvars_loop arr s pos tk).db.error? ≠ none := by
-  cases h_isVar : s.db.isVar tk with
-  | true =>
-      simp [_root_.Metamath.Verify.ParserState.djvars_loop, h_isVar]
-      exact djvars_loop_aux_preserves_error arr s pos tk 0 h_err
-  | false =>
-      simp [_root_.Metamath.Verify.ParserState.djvars_loop, h_isVar]
-      exact ParserState_mkError_sets_error s pos _
+  unfold _root_.Metamath.Verify.ParserState.djvars_loop
+  cases h_gate : s.db.djvarsScopeViolation? tk with
+  | some err =>
+      exact ParserState_mkErrorFromEvidence_sets_error s pos (.scopeDecl err)
+  | none =>
+      simpa [h_gate] using djvars_loop_aux_preserves_error arr s pos tk 0 h_err
 
 /-- djvars loop either preserves hyps or sets error -/
 theorem djvars_loop_hyps_behavior
     (arr : Array String) (s : ParserState) (pos : Pos) (tk : String) :
     (_root_.Metamath.Verify.ParserState.djvars_loop arr s pos tk).db.frame.hyps = s.db.frame.hyps ∨
     (_root_.Metamath.Verify.ParserState.djvars_loop arr s pos tk).db.error = true := by
-  cases h_isVar : s.db.isVar tk with
-  | true =>
-      simp [_root_.Metamath.Verify.ParserState.djvars_loop, h_isVar]
-      exact djvars_loop_aux_hyps_behavior arr s pos tk 0
-  | false =>
+  unfold _root_.Metamath.Verify.ParserState.djvars_loop
+  cases h_gate : s.db.djvarsScopeViolation? tk with
+  | some err =>
       right
-      have h_err : (s.mkError pos s!"{tk} is not a variable").db.error? ≠ none :=
-        ParserState_mkError_sets_error s pos _
-      have h_err' : (s.mkError pos s!"{tk} is not a variable").db.error = true :=
-        (error_iff_error?_ne_none _).2 h_err
-      simpa [_root_.Metamath.Verify.ParserState.djvars_loop, h_isVar] using h_err'
+      exact ParserState_mkErrorFromEvidence_sets_error_bool s pos (.scopeDecl err)
+  | none =>
+      simpa [h_gate] using djvars_loop_aux_hyps_behavior arr s pos tk 0
 
 /-- Full djvars expression either preserves hyps or sets error -/
 theorem djvars_full_hyps_behavior
@@ -608,7 +590,7 @@ theorem feedToken_preserves_error (s : ParserState) (pos : Nat) (tk : ByteSlice)
           split
           · exact h_err'  -- some (.const _): structure update
           · exact h_err'  -- some (.var _): structure update
-          · exact ParserState_mkError_sets_error s' (s.mkPos pos) _  -- _: mkError
+          · split <;> exact ParserState_mkErrorFromEvidence_sets_error s' (s.mkPos pos) _  -- _: mkErrorFromEvidence
         · exact h_err
   | label pos' lab =>
     simp
@@ -1486,18 +1468,15 @@ theorem feedTokens_hyps_behavior (s : ParserState) (arr : Array Sym) (p : Tokens
               change (s.db.insertHyp pos l false arr).error?.isSome = true
               simp [h_err]
     | ess =>
-      -- Config check for top-level $e rejection
-      by_cases h_knife : s.db.config.rejectToplevelEss = true ∧ s.db.scopes = #[]
-      · -- Config rejects top-level $e → error
+      -- topLevelEssViolation? selects either immediate error or insertHyp.
+      cases h_gate : ParserState.topLevelEssViolation? s.db with
+      | some err =>
         right; right
         apply withAt_propagates_error
-        obtain ⟨h_rej, h_scopes⟩ := h_knife
-        simp only [h_rej, h_scopes, Id_bind_eq]
-        simpa [ParserState.mkErrorFromEvidence, ParserState.withDB] using
-          (ParserState_mkErrorFromEvidence_sets_error_bool s pos (.scopeDecl .topLevelEssentialNotAllowed))
-      · -- Normal case: insert the hypothesis
-        simp only [ParserState.withDB]
-        simp only [h_knife, ↓reduceIte, Id_bind_eq]
+        simp only [h_gate, Id_bind_eq, ParserState.mkErrorFromEvidence, ParserState.withDB]
+        exact ParserState_mkErrorFromEvidence_sets_error_bool s pos (.scopeDecl err)
+      | none =>
+        simp only [h_gate, ParserState.withDB, Id_bind_eq]
         by_cases h_ok : (s.db.insertHyp pos l true arr).error? = none
         · right; left
           exact ⟨l, insertHyp_call_order s.db pos l true arr h_ok⟩
@@ -1739,11 +1718,17 @@ theorem feedToken_frame_behavior (s : ParserState) (pos : Nat) (tk : ByteSlice) 
               -- The lambda either returns `{s with tokp := ...}` (hyps preserved) or an error.
               cases h_find : s.db.find? tkStr with
               | none =>
-                  right; right; right
-                  -- not a constant/variable: mkErrorFromEvidence sets error = true
-                  simp [Id_bind_eq, Id_pure_eq, h_find]
-                  exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos)
-                    (.scopeDecl (.tokenNotConstantOrVariable tkStr))
+                  cases h_gate : s.db.mathSymbolViolation? tkStr with
+                  | some err =>
+                      right; right; right
+                      simp [Id_bind_eq, Id_pure_eq, h_find, h_gate]
+                      exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos)
+                        (.scopeDecl err)
+                  | none =>
+                      right; right; right
+                      simp [Id_bind_eq, Id_pure_eq, h_find, h_gate]
+                      exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos)
+                        (.scopeDecl (.tokenNotConstantOrVariable tkStr false))
               | some obj =>
                   cases obj with
                   | const _ =>
@@ -1755,15 +1740,29 @@ theorem feedToken_frame_behavior (s : ParserState) (pos : Nat) (tk : ByteSlice) 
                       left
                       rfl
                   | hyp _ _ _ =>
-                      right; right; right
-                      simp [Id_bind_eq, Id_pure_eq, h_find]
-                      exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos)
-                        (.scopeDecl (.tokenNotConstantOrVariable tkStr))
+                      cases h_gate : s.db.mathSymbolViolation? tkStr with
+                      | some err =>
+                          right; right; right
+                          simp [Id_bind_eq, Id_pure_eq, h_find, h_gate]
+                          exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos)
+                            (.scopeDecl err)
+                      | none =>
+                          right; right; right
+                          simp [Id_bind_eq, Id_pure_eq, h_find, h_gate]
+                          exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos)
+                            (.scopeDecl (.tokenNotConstantOrVariable tkStr false))
                   | assert _ _ =>
-                      right; right; right
-                      simp [Id_bind_eq, Id_pure_eq, h_find]
-                      exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos)
-                        (.scopeDecl (.tokenNotConstantOrVariable tkStr))
+                      cases h_gate : s.db.mathSymbolViolation? tkStr with
+                      | some err =>
+                          right; right; right
+                          simp [Id_bind_eq, Id_pure_eq, h_find, h_gate]
+                          exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos)
+                            (.scopeDecl err)
+                      | none =>
+                          right; right; right
+                          simp [Id_bind_eq, Id_pure_eq, h_find, h_gate]
+                          exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos)
+                            (.scopeDecl (.tokenNotConstantOrVariable tkStr false))
   | label pos' lab =>
     simp
     cases h_comment : tk.eqArray "$(".toAscii with
