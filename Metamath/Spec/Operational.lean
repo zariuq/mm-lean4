@@ -267,5 +267,32 @@ But the inductive Prop approach has advantages:
 We will prove ProofValid ↔ Mario.Provable in Equivalence.lean.
 -/
 
+/-! ## Database Monotonicity
+
+If the axiom database grows (more entries), then any proof valid under the smaller
+database is also valid under the larger one. This is because ProofValid only uses
+Γ in the `useAxiom` constructor (to look up axiom frames/formulas), and the lookup
+still succeeds in a larger database. -/
+
+theorem ProofValid.mono_db
+    {Γ₁ Γ₂ : Database} {fr : Frame} {stk : List Expr} {steps : List ProofStep}
+    (h_sub : ∀ l x, Γ₁ l = some x → Γ₂ l = some x)
+    (h_valid : ProofValid Γ₁ fr stk steps) :
+    ProofValid Γ₂ fr stk steps := by
+  induction h_valid with
+  | nil => exact .nil _
+  | useEssential _ _ _ h_mem _ ih => exact .useEssential _ _ _ _ h_mem ih
+  | useFloating _ _ _ _ h_mem _ ih => exact .useFloating _ _ _ _ _ h_mem ih
+  | useAxiom _ _ _ _ _ _ h_lookup h_dv h_type _ needed h_needed remaining h_remaining ih =>
+      exact .useAxiom _ _ _ _ _ _ _ (h_sub _ _ h_lookup) h_dv h_type ih _ h_needed _ h_remaining
+
+theorem Provable.mono_db
+    {Γ₁ Γ₂ : Database} {fr : Frame} {e : Expr}
+    (h_sub : ∀ l x, Γ₁ l = some x → Γ₂ l = some x)
+    (h_prov : Provable Γ₁ fr e) :
+    Provable Γ₂ fr e := by
+  obtain ⟨steps, finalStack, h_valid, h_eq⟩ := h_prov
+  exact ⟨steps, finalStack, h_valid.mono_db h_sub, h_eq⟩
+
 end Metamath.Spec
 
