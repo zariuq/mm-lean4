@@ -3,61 +3,37 @@ namespace Metamath.Spec.Frontend
 /-- Abstract parser-side state for `$d` symbol admissibility. -/
 structure DjvarsState where
   isVar : String → Bool
-  activeVarInScope : String → Bool
-
-/-- A consistency condition for `$d` admissibility states. -/
-def DjvarsState.WellFormed (st : DjvarsState) : Prop :=
-  ∀ sym, st.activeVarInScope sym = true → st.isVar sym = true
 
 /-- Structured `$d`-gate errors used by the front-end spec layer. -/
 inductive DjvarsScopeError where
   | tokenNotVariable (sym : String)
-  | tokenNotInScope (sym : String) (isVarWitness : Bool) (activeInScopeWitness : Bool)
   deriving DecidableEq, Repr, Inhabited
 
-/-- Front-end `$d` admissibility rule (SS4.2.4): symbol is active as a variable. -/
+/-- Front-end `$d` admissibility rule (SS4.2.4): symbol is declared as a variable.
+Per the Metamath spec, `$d` statements only require that symbols are declared
+via `$v`, NOT that they have active `$f` hypotheses. -/
 def DjvarsSymbolAdmissible (st : DjvarsState) (sym : String) : Prop :=
-  st.activeVarInScope sym = true
+  st.isVar sym = true
 
 /-- Front-end `$d` rejection rule: symbol is not declared as a variable. -/
 def DjvarsSymbolMissing (st : DjvarsState) (sym : String) : Prop :=
   st.isVar sym = false
 
-/-- Gate-fact payload for `$d` token-not-in-scope diagnostics. -/
-def DjvarsTokenNotInScopeGateFacts
-    (isVarWitness : Bool) (activeInScopeWitness : Bool) : Prop :=
-  isVarWitness = true ∧ activeInScopeWitness = false
-
 /-- `$d` symbol gate from the front-end spec perspective. -/
 def djvarsScopeViolation? (st : DjvarsState) (sym : String) : Option DjvarsScopeError :=
   if !st.isVar sym then
     some (.tokenNotVariable sym)
-  else if !st.activeVarInScope sym then
-    some (.tokenNotInScope sym true false)
   else
     none
 
-/-- The `$d` gate is complete for front-end admissibility under state consistency. -/
+/-- The `$d` gate is complete for front-end admissibility. -/
 theorem djvarsScopeViolation?_none_iff_djvarsSymbolAdmissible
-    (st : DjvarsState) (sym : String)
-    (h_wf : st.WellFormed) :
+    (st : DjvarsState) (sym : String) :
     djvarsScopeViolation? st sym = none ↔ DjvarsSymbolAdmissible st sym := by
   unfold djvarsScopeViolation? DjvarsSymbolAdmissible
-  by_cases h_var_true : st.isVar sym = true
-  · by_cases h_active_true : st.activeVarInScope sym = true
-    · simp [h_var_true, h_active_true]
-    · simp [h_var_true, h_active_true]
-  · have h_var_false : st.isVar sym = false := by
-      cases h_is : st.isVar sym with
-      | false => simp
-      | true => exact False.elim (h_var_true (by simp [h_is]))
-    have h_active_false : st.activeVarInScope sym = false := by
-      cases h_active : st.activeVarInScope sym with
-      | false => simp
-      | true =>
-          have h_var_from_wf : st.isVar sym = true := h_wf sym (by simp [h_active])
-          exact False.elim (by simp [h_var_false] at h_var_from_wf)
-    simp [h_var_false, h_active_false]
+  by_cases h_var : st.isVar sym
+  · simp [h_var]
+  · simp [h_var]
 
 /-- The `$d` gate reports `tokenNotVariable` exactly when symbol declaration fails. -/
 theorem djvarsScopeViolation?_tokenNotVariable_iff_djvarsSymbolMissing
@@ -67,18 +43,6 @@ theorem djvarsScopeViolation?_tokenNotVariable_iff_djvarsSymbolMissing
   unfold djvarsScopeViolation? DjvarsSymbolMissing
   by_cases h_var : st.isVar sym
   · simp [h_var]
-  · simp [h_var]
-
-/-- The `$d` gate reports `tokenNotInScope` exactly at the active-variable failure branch. -/
-theorem djvarsScopeViolation?_tokenNotInScope_iff
-    (st : DjvarsState) (sym : String) :
-    djvarsScopeViolation? st sym = some (.tokenNotInScope sym true false) ↔
-      st.isVar sym = true ∧ st.activeVarInScope sym = false := by
-  unfold djvarsScopeViolation?
-  by_cases h_var : st.isVar sym
-  · by_cases h_active : st.activeVarInScope sym
-    · simp [h_var, h_active]
-    · simp [h_var, h_active]
   · simp [h_var]
 
 /-- Abstract parser-side state for formula/math symbol admissibility. -/

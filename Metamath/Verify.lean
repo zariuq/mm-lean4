@@ -1993,7 +1993,14 @@ Metamath allows `$d` declarations before the corresponding `$f` hypotheses, so
 this gate tracks variable declaration activity (`$v`) instead of requiring an
 already-active float hypothesis. -/
 def activeVarInScope (db : DB) (tk : String) : Bool :=
-  db.isVar tk
+  db.frame.hyps.toList.any fun lbl =>
+    match db.find? lbl with
+    | some (.hyp false prevF _) =>
+        prevF.size >= 2 &&
+          (match prevF[1]! with
+          | .var v' => v'
+          | _ => "") == tk
+    | _ => false
 
 def isSym (db : DB) (tk : String) : Bool :=
   match db.find? tk with
@@ -2053,8 +2060,6 @@ theorem mathSymbolViolation?_tokenNotConstantOrVariable_implies_isSym_false
 def djvarsScopeViolation? (db : DB) (tk : String) : Option ScopeDeclError :=
   if !db.isVar tk then
     some (.tokenNotVariable tk)
-  else if !db.activeVarInScope tk then
-    some (.tokenNotInScope tk)
   else
     none
 
@@ -2067,23 +2072,11 @@ theorem djvarsScopeViolation?_tokenNotVariable_iff
   · simp [h_var]
   · simp [h_var]
 
-theorem djvarsScopeViolation?_tokenNotInScope_iff
+theorem djvarsScopeViolation?_none_iff
     (db : DB) (tk : String) :
-    db.djvarsScopeViolation? tk = some (.tokenNotInScope tk) ↔
-      db.isVar tk = true ∧ db.activeVarInScope tk = false := by
+    db.djvarsScopeViolation? tk = none ↔ db.isVar tk = true := by
   unfold djvarsScopeViolation?
-  by_cases h_var : db.isVar tk
-  · by_cases h_active : db.activeVarInScope tk
-    · simp [h_var, h_active]
-    · simp [h_var, h_active]
-  · simp [h_var]
-
-theorem djvarsScopeViolation?_tokenNotInScope_implies_gate
-    (db : DB) (tk : String) :
-    db.djvarsScopeViolation? tk = some (.tokenNotInScope tk) →
-      db.isVar tk = true ∧ db.activeVarInScope tk = false := by
-  intro h
-  exact (djvarsScopeViolation?_tokenNotInScope_iff db tk).1 h
+  by_cases h_var : db.isVar tk <;> simp [h_var]
 
 @[inline] def withFrame (f : Frame → Frame) (db : DB) : DB :=
   { db with frame := f db.frame }
@@ -2181,8 +2174,8 @@ def floatVarOccursInFrame (db : DB) (v : String) : Bool :=
           | _ => "") == v
     | _ => false
 
-@[simp] theorem activeVarInScope_eq_isVar (db : DB) (tk : String) :
-    db.activeVarInScope tk = db.isVar tk := rfl
+-- activeVarInScope checks that variable tk has an active $f hypothesis in db.frame.
+-- This is strictly stronger than isVar (which just checks db.objects).
 
 def hypOK? (db : DB) (label : String) : Bool :=
   match db.find? label with

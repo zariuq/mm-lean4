@@ -46,21 +46,12 @@ theorem audit_checkBytes_scopeFamily_certifiedWitness_exists_bundle
       ∃ sym isSymWitness,
         (checkBytes arr config).errorEvidence? =
           some (.scopeDecl (.tokenNotConstantOrVariable sym)) ∧
-        isSymWitness = false) ∧
-    ((checkBytes arr config).parseErrorCode? = some .tokenNotInScope →
-      ∃ sym isVarWitness activeInScopeWitness,
-        (checkBytes arr config).errorEvidence? =
-          some (.scopeDecl (.tokenNotInScope sym)) ∧
-        isVarWitness = true ∧
-        activeInScopeWitness = false) := by
+        isSymWitness = false) := by
   constructor
   · intro h_code
     exact checkBytes_topLevelEssentialNotAllowed_certifiedWitness_exists arr config h_code
-  · constructor
-    · intro h_code
-      exact checkBytes_tokenNotConstantOrVariable_certifiedWitness_exists arr config h_code
-    · intro h_code
-      exact checkBytes_tokenNotInScope_certifiedWitness_exists arr config h_code
+  · intro h_code
+    exact checkBytes_tokenNotConstantOrVariable_certifiedWitness_exists arr config h_code
 
 /-- Audit canary: include-family decoded codes expose canonical certified witnesses. -/
 theorem audit_checkBytes_includeFamily_certifiedWitness_exists_bundle
@@ -240,21 +231,6 @@ theorem audit_checkBytes_nonInternal_evidenceFirst_bundle
         · intro h_code
           exact checkBytes_nonInternal_evidenceFirst
             arr config .includeInsideStatement h_code (by simp)
-
-/-- Audit canary: route token-not-in-scope certified live-state contradiction to the
-dedicated bridge theorem (single source of proof). -/
-theorem audit_checkBytes_tokenNotInScope_liveState_certified_unreachable
-    (arr : ByteArray) (config : ModeConfig)
-    (h_code : (checkBytes arr config).parseErrorCode? = some .tokenNotInScope)
-    (h_live :
-      ∃ sym,
-        (checkBytes arr config).errorEvidence? =
-          some (ErrorEvidence.scopeDecl (ScopeDeclError.tokenNotInScope sym)) ∧
-        (checkBytes arr config).isVar sym = true ∧
-        (checkBytes arr config).activeVarInScope sym = false) :
-    False :=
-  checkBytes_tokenNotInScope_certifiedWitness_immediate_contradiction
-    arr config h_code h_live
 
 /-- Audit bundle: consume the global dispatcher theorem from `FrontendCertified`. -/
 theorem audit_checkBytes_frontendEvidenceCertified_bundle

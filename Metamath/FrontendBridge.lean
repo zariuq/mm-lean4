@@ -9,7 +9,6 @@ open Metamath.Spec.Frontend
 /-- Bridge projection from verifier DB state to front-end `$d` spec state. -/
 def DB.toDjvarsState (db : DB) : DjvarsState where
   isVar := db.isVar
-  activeVarInScope := db.activeVarInScope
 
 /-- Bridge projection from verifier DB state to front-end math-symbol spec state. -/
 def DB.toMathSymbolState (db : DB) : MathSymbolState where
@@ -32,8 +31,8 @@ theorem DB.djvarsScopeViolation?_none_iff_frontendAdmissible
       DjvarsSymbolAdmissible (DB.toDjvarsState db) sym := by
   unfold DB.djvarsScopeViolation? DjvarsSymbolAdmissible DB.toDjvarsState
   by_cases h_var : db.isVar sym
-  · simp [h_var, DB.activeVarInScope]
-  · simp [h_var, DB.activeVarInScope]
+  · simp [h_var]
+  · simp [h_var]
 
 /-- Any emitted `$d` gate error implies front-end inadmissibility. -/
 theorem DB.djvarsScopeViolation?_some_implies_frontendNotAdmissible
@@ -62,23 +61,6 @@ theorem DB.djvarsScopeViolation?_frontendNotAdmissible_implies_exists
       exact False.elim (h_not h_adm)
   | some err =>
       exact ⟨err, rfl⟩
-
-/-- Under `activeVarInScope = isVar`, verifier `$d` `tokenNotInScope` is unreachable. -/
-theorem DB.djvarsScopeViolation?_tokenNotInScope_iff_false
-    (db : DB) (sym : String) :
-    db.djvarsScopeViolation? sym = some (.tokenNotInScope sym) ↔ False := by
-  constructor
-  · intro h_some
-    have h_gate :=
-      (DB.djvarsScopeViolation?_tokenNotInScope_iff db sym).1 h_some
-    have h_active_false : db.isVar sym = false := by
-      simpa [DB.activeVarInScope_eq_isVar] using h_gate.2
-    have h_contra : False := by
-      have h_true : db.isVar sym = true := h_gate.1
-      simp [h_true] at h_active_false
-    exact h_contra
-  · intro h_false
-    exact False.elim h_false
 
 /-- Math-symbol gate equivalence against the front-end admissibility predicate. -/
 theorem DB.mathSymbolViolation?_none_iff_frontendAdmissible
@@ -291,56 +273,6 @@ theorem checkBytes_tokenNotConstantOrVariable_implies_frontendNotAdmissible
   intro h_adm
   unfold MathSymbolAdmissible DB.toMathSymbolState at h_adm
   simp [h_isSym_false] at h_adm
-
-/-- `checkBytes` token-not-in-scope code carries canonical scope evidence + gate facts. -/
-theorem checkBytes_tokenNotInScope_implies_frontendGateFacts
-    (arr : ByteArray) (config : ModeConfig) :
-    (checkBytes arr config).parseErrorCode? = some .tokenNotInScope →
-    ∃ sym,
-      (checkBytes arr config).errorEvidence? =
-        some (.scopeDecl (.tokenNotInScope sym)) ∧
-      DjvarsTokenNotInScopeGateFacts true false := by
-  intro h_code
-  rcases checkBytes_parseErrorCode?_tokenNotInScope_guardFacts arr config h_code with
-    ⟨sym, h_ev⟩
-  exact ⟨sym, h_ev, rfl, rfl⟩
-
-/-- `checkBytes` token-not-in-scope code has certified witness existence. -/
-theorem checkBytes_tokenNotInScope_certifiedWitness_exists
-    (arr : ByteArray) (config : ModeConfig) :
-    (checkBytes arr config).parseErrorCode? = some .tokenNotInScope →
-    ∃ sym isVarWitness activeInScopeWitness,
-      (checkBytes arr config).errorEvidence? =
-        some (.scopeDecl (.tokenNotInScope sym)) ∧
-      isVarWitness = true ∧
-      activeInScopeWitness = false := by
-  intro h_code
-  rcases checkBytes_parseErrorCode?_tokenNotInScope_guardFacts arr config h_code with
-    ⟨sym, h_ev⟩
-  exact ⟨sym, true, false, h_ev, rfl, rfl⟩
-
-/-- If a live-state certified token-not-in-scope witness is asserted, it contradicts
-`activeVarInScope = isVar`. -/
-theorem checkBytes_tokenNotInScope_certifiedWitness_immediate_contradiction
-    (arr : ByteArray) (config : ModeConfig)
-    (_h_code : (checkBytes arr config).parseErrorCode? = some .tokenNotInScope)
-    (h_live :
-      ∃ sym,
-        (checkBytes arr config).errorEvidence? =
-          some (ErrorEvidence.scopeDecl (ScopeDeclError.tokenNotInScope sym)) ∧
-        (checkBytes arr config).isVar sym = true ∧
-        (checkBytes arr config).activeVarInScope sym = false) :
-    False := by
-  rcases h_live with ⟨sym, _h_ev, h_var_true, h_active_false⟩
-  have h_active_eq :
-      (checkBytes arr config).activeVarInScope sym =
-        (checkBytes arr config).isVar sym :=
-    DB.activeVarInScope_eq_isVar (db := checkBytes arr config) sym
-  have h_var_false : (checkBytes arr config).isVar sym = false := by
-    simpa [h_active_eq] using h_active_false
-  have : False := by
-    simp [h_var_true] at h_var_false
-  exact this
 
 /-- `checkBytes` include-in-inner-scope code carries canonical include evidence + gate facts. -/
 theorem checkBytes_includeInInnerScope_implies_frontendGateFacts
@@ -578,7 +510,6 @@ export Metamath.Verify.FrontendBridge
    DB.djvarsScopeViolation?_none_iff_frontendAdmissible
    DB.djvarsScopeViolation?_some_implies_frontendNotAdmissible
    DB.djvarsScopeViolation?_frontendNotAdmissible_implies_exists
-   DB.djvarsScopeViolation?_tokenNotInScope_iff_false
    DB.mathSymbolViolation?_none_iff_frontendAdmissible
    DB.mathSymbolViolation?_some_implies_frontendNotAdmissible
    DB.mathSymbolViolation?_frontendNotAdmissible_implies_exists
@@ -595,9 +526,6 @@ export Metamath.Verify.FrontendBridge
    checkBytes_tokenNotConstantOrVariable_implies_frontendGateFacts
    checkBytes_tokenNotConstantOrVariable_implies_frontendNotAdmissible
    checkBytes_tokenNotConstantOrVariable_certifiedWitness_exists
-   checkBytes_tokenNotInScope_implies_frontendGateFacts
-   checkBytes_tokenNotInScope_certifiedWitness_exists
-   checkBytes_tokenNotInScope_certifiedWitness_immediate_contradiction
    checkBytes_includeInInnerScope_implies_frontendGateFacts
    checkBytes_includeInsideStatement_implies_frontendGateFacts
    checkBytes_includeInInnerScope_certifiedWitness_exists
