@@ -30,3 +30,20 @@ _scratch*.lean
 all_mm*.txt
 all_mm4*.txt
 current_status_*.txt
+
+# Local debug/build logs
+.build_warnings*.log
+.full_build*.log
+.kernelclean_build*.log
+.parserops_build*.log
+.parserops_lean.log
+.verify_build*.log
+.warnings*.log
+verifier_unit_run_*.log
+
+# Local benchmark/test output folders
+results/
+.verify_*.log
+.parserops_*.log
+.kernelclean_*.log
+.full_build_*.log

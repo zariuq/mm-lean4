@@ -3730,12 +3730,6 @@ theorem trimFrame'_success_implies_formulaSymsRespectFrame
   exact formulaSymsRespectFrame_of_declared
     (db := db) (fr := fr) (f := fmla) h_scoped h_decl h_var_in
 
--- Helper lemma: mkError always sets error?
-theorem mkError_sets_error (db : DB) (pos : Pos) (msg : String) :
-    (db.mkError pos msg).error? = some ⟨.error pos msg, default⟩ := by
-  unfold DB.mkError
-  rfl
-
 -- Helper lemma: Extract success conditions from insertAxiom
 -- This isolates the control flow reasoning into a separate lemma
 theorem insertAxiom_success_conditions
@@ -5362,12 +5356,6 @@ theorem scopesOk_insert
       simpa [insert_scopes] using hi
     simpa [insert_scopes, insert_frame_unchanged] using h_within i hi_old
 
-theorem scopesOk_mkError
-    (db : DB) (pos : Pos) (msg : String) :
-    ScopesOk db → ScopesOk (db.mkError pos msg) := by
-  intro h_ok
-  simpa [DB.mkError] using h_ok
-
 theorem scopesOk_insertHypChecks
     (db : DB) (pos : Pos) (ess : Bool) (f : Formula) :
     ScopesOk db → ScopesOk (db.insertHypChecks pos ess f) := by
@@ -6229,7 +6217,7 @@ theorem feedToken_math_nonthm_maintains_wf
                     h_math_ok, tk', h_find, Bind.bind, Pure.pure]
               | hyp _ _ _ =>
                   have h_gate :
-                      s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk' false) := by
+                      s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk') := by
                     unfold DB.mathSymbolViolation? DB.isSym
                     simp [h_find]
                   have h_bad : (s.feedToken i tk).db.error? ≠ none := by
@@ -6238,7 +6226,7 @@ theorem feedToken_math_nonthm_maintains_wf
                   exact (h_bad h_success).elim
               | assert _ _ _ =>
                   have h_gate :
-                      s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk' false) := by
+                      s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk') := by
                     unfold DB.mathSymbolViolation? DB.isSym
                     simp [h_find]
                   have h_bad : (s.feedToken i tk).db.error? ≠ none := by
@@ -6335,7 +6323,7 @@ theorem feedToken_math_nonthm_maintains_scopesOk
                     h_math_ok, tk', h_find, Bind.bind, Pure.pure]
               | hyp _ _ _ =>
                   have h_gate :
-                      s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk' false) := by
+                      s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk') := by
                     unfold DB.mathSymbolViolation? DB.isSym
                     simp [h_find]
                   have h_bad : (s.feedToken i tk).db.error? ≠ none := by
@@ -6344,7 +6332,7 @@ theorem feedToken_math_nonthm_maintains_scopesOk
                   exact (h_bad h_success).elim
               | assert _ _ _ =>
                   have h_gate :
-                      s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk' false) := by
+                      s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk') := by
                     unfold DB.mathSymbolViolation? DB.isSym
                     simp [h_find]
                   have h_bad : (s.feedToken i tk).db.error? ≠ none := by
@@ -6405,7 +6393,7 @@ theorem feedToken_math_nonthm_maintains_scopedWithScopes
                     h_math_ok, tk', h_find, Bind.bind, Pure.pure]
               | hyp _ _ _ =>
                   have h_gate :
-                      s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk' false) := by
+                      s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk') := by
                     unfold DB.mathSymbolViolation? DB.isSym
                     simp [h_find]
                   have h_bad : (s.feedToken i tk).db.error? ≠ none := by
@@ -6414,7 +6402,7 @@ theorem feedToken_math_nonthm_maintains_scopedWithScopes
                   exact (h_bad h_success).elim
               | assert _ _ _ =>
                   have h_gate :
-                      s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk' false) := by
+                      s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk') := by
                     unfold DB.mathSymbolViolation? DB.isSym
                     simp [h_find]
                   have h_bad : (s.feedToken i tk).db.error? ≠ none := by
@@ -8240,7 +8228,7 @@ theorem feedToken_math_continue_maintains_tokpInv
             simpa [h_db_eq, h_tokp_eq, TokpInv] using h_decl'
         | hyp _ _ _ =>
             have h_gate :
-                s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk' false) := by
+                s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk') := by
               unfold DB.mathSymbolViolation? DB.isSym
               simp [h_find]
             have h_bad : (s.feedToken i tk).db.error? ≠ none := by
@@ -8249,7 +8237,7 @@ theorem feedToken_math_continue_maintains_tokpInv
             exact (h_bad h_success).elim
         | assert _ _ _ =>
             have h_gate :
-                s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk' false) := by
+                s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk') := by
               unfold DB.mathSymbolViolation? DB.isSym
               simp [h_find]
             have h_bad : (s.feedToken i tk).db.error? ≠ none := by
@@ -8962,7 +8950,7 @@ theorem feedToken_maintains_wf
                                 h_math_ok, tk', h_find, Bind.bind, Pure.pure]
                           | hyp _ _ _ =>
                               have h_gate :
-                                  s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk' false) := by
+                                  s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk') := by
                                 unfold DB.mathSymbolViolation? DB.isSym
                                 simp [h_find]
                               have h_bad : (s.feedToken i tk).db.error? ≠ none := by
@@ -8971,7 +8959,7 @@ theorem feedToken_maintains_wf
                               exact (h_bad h_success).elim
                           | assert _ _ _ =>
                               have h_gate :
-                                  s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk' false) := by
+                                  s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk') := by
                                 unfold DB.mathSymbolViolation? DB.isSym
                                 simp [h_find]
                               have h_bad : (s.feedToken i tk).db.error? ≠ none := by
@@ -9163,7 +9151,7 @@ theorem feedToken_maintains_scopedWithScopes
                                 h_math_ok, tk', h_find, Bind.bind, Pure.pure]
                           | hyp _ _ _ =>
                               have h_gate :
-                                  s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk' false) := by
+                                  s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk') := by
                                 unfold DB.mathSymbolViolation? DB.isSym
                                 simp [h_find]
                               have h_bad : (s.feedToken i tk).db.error? ≠ none := by
@@ -9172,7 +9160,7 @@ theorem feedToken_maintains_scopedWithScopes
                               exact (h_bad h_success).elim
                           | assert _ _ _ =>
                               have h_gate :
-                                  s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk' false) := by
+                                  s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk') := by
                                 unfold DB.mathSymbolViolation? DB.isSym
                                 simp [h_find]
                               have h_bad : (s.feedToken i tk).db.error? ≠ none := by
@@ -9349,7 +9337,7 @@ theorem feedToken_maintains_scopesOk
                                 h_math_ok, tk', h_find, Bind.bind, Pure.pure]
                           | hyp _ _ _ =>
                               have h_gate :
-                                  s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk' false) := by
+                                  s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk') := by
                                 unfold DB.mathSymbolViolation? DB.isSym
                                 simp [h_find]
                               have h_bad : (s.feedToken i tk).db.error? ≠ none := by
@@ -9358,7 +9346,7 @@ theorem feedToken_maintains_scopesOk
                               exact (h_bad h_success).elim
                           | assert _ _ _ =>
                               have h_gate :
-                                  s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk' false) := by
+                                  s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk') := by
                                 unfold DB.mathSymbolViolation? DB.isSym
                                 simp [h_find]
                               have h_bad : (s.feedToken i tk).db.error? ≠ none := by

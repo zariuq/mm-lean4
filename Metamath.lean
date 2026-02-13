@@ -3,6 +3,7 @@ import Metamath.Verify
 import Metamath.DBLemmas  -- Basic DB operation lemmas
 import Metamath.KernelExtras
 import Metamath.KernelClean  -- Soundness proofs
+import Metamath.FrontendBridge  -- Front-end gate/spec bridge theorems
 import Metamath.ParserInvariantsStep1
 -- import Metamath.ParserSoundnessDemo  -- Parser soundness demonstration (WIP)
 -- import Metamath.KernelSkeleton  -- Archived (parse errors)

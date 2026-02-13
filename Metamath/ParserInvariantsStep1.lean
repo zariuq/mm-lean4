@@ -65,7 +65,7 @@ theorem feedTokens_validates_float
         have : False := by
           have h_success' := h_success
           simp [ParserState.feedTokens, ParserState.withAt, ParserState.mkErrorFromEvidence, ParserState.withDB,
-            DB.mkErrorFromEvidence, DB.mkErrorWithEvidence, DB.error, h_head] at h_success'
+            DB.mkErrorFromEvidence, DB.mkErrorWithEvidence, h_head] at h_success'
         exact this.elim
   have h_shape : Formula.isFloatShape arr = true := by
     cases h_shape : Formula.isFloatShape arr with
@@ -74,7 +74,7 @@ theorem feedTokens_validates_float
         have : False := by
           have h_success' := h_success
           simp [ParserState.feedTokens, ParserState.withAt, ParserState.mkErrorFromEvidence, ParserState.withDB,
-            DB.mkErrorFromEvidence, DB.mkErrorWithEvidence, DB.error, h_head, h_shape] at h_success'
+            DB.mkErrorFromEvidence, DB.mkErrorWithEvidence, h_head, h_shape] at h_success'
         exact this.elim
 
   -- Unfold the shape check to extract the concrete float structure.
@@ -158,7 +158,7 @@ theorem feedTokens_validates_formula
             have : False := by
               have h_success' := h_success
               simp [ParserState.feedTokens, ParserState.withAt, ParserState.mkErrorFromEvidence, ParserState.withDB,
-                DB.mkErrorFromEvidence, DB.mkErrorWithEvidence, DB.error, h_head] at h_success'
+                DB.mkErrorFromEvidence, DB.mkErrorWithEvidence, h_head] at h_success'
             exact this.elim
       exact wellFormedFormula_of_hasConstHead h_head
 
