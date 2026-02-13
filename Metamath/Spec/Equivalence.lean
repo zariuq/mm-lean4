@@ -51,7 +51,7 @@ def varMapOfFrameAux (n : Nat) : List (Constant × Variable) → VarMap
 
 /-- Extract floating hypotheses (typecode, variable) in order. -/
 def floatList (fr : Frame) : List (Constant × Variable) :=
-  fr.mand.filterMap fun h =>
+  fr.hyps.filterMap fun h =>
     match h with
     | Hyp.floating c v => some (c, v)
     | Hyp.essential _ => none
@@ -71,7 +71,7 @@ def findVar (vm : VarMap) (vr : MarioVR) : Option Variable :=
 /-- Frame has unique floating hypotheses: each variable has at most one typecode.
     Per Metamath spec, the parser enforces this. -/
 def FloatUnique (fr : Frame) : Prop :=
-  ∀ c c' v, Hyp.floating c v ∈ fr.mand → Hyp.floating c' v ∈ fr.mand → c = c'
+  ∀ c c' v, Hyp.floating c v ∈ fr.hyps → Hyp.floating c' v ∈ fr.hyps → c = c'
 
 /-- Frame has no duplicate variables in floating hypotheses.
     This means each variable appears at most once in floatList.
@@ -179,7 +179,7 @@ def toMarioSubst (vmAx vm : VarMap) (σ : Subst) : MarioVR → MarioExpr :=
 /-- Convert Frame to Context using its typed variable map. -/
 noncomputable def frameToContext (fr : Frame) : Semantic.Context :=
   let vm := varMapOfFrame fr
-  { hyps := fr.mand.map (fun h => hypToMarioFormula vm h)
+  { hyps := fr.hyps.map (fun h => hypToMarioFormula vm h)
     dj := dvListToMarioDJ vm fr.dv }
 
 /-- Convert our Database to Mario's axiom set. -/
@@ -203,10 +203,10 @@ theorem dbToAxioms_inverse {Γ : Database} {ax : Semantic.Statement} :
   intro h
   exact h
 
-/-- Hypothesis membership in frameToContext comes from frame's mand. -/
+/-- Hypothesis membership in frameToContext comes from frame's hyps. -/
 theorem hyps_correspondence {fr : Frame} {h : Semantic.Formula} :
     h ∈ (frameToContext fr).hyps →
-    ∃ hyp ∈ fr.mand, h = hypToMarioFormula (varMapOfFrame fr) hyp := by
+    ∃ hyp ∈ fr.hyps, h = hypToMarioFormula (varMapOfFrame fr) hyp := by
   intro h_mem
   unfold frameToContext at h_mem
   simp only [] at h_mem
@@ -265,7 +265,7 @@ theorem hypToMarioFormula_floating_expr (vm : VarMap) (c : Constant) (v : Variab
 
 /-- Hypothesis conversion always yields a member of the frame context. -/
 theorem hypToMarioFormula_mem {fr : Frame} {h : Hyp} :
-    h ∈ fr.mand →
+    h ∈ fr.hyps →
     hypToMarioFormula (varMapOfFrame fr) h ∈ (frameToContext fr).hyps := by
   intro h_in
   unfold frameToContext
@@ -273,7 +273,7 @@ theorem hypToMarioFormula_mem {fr : Frame} {h : Hyp} :
 
 /-- Floating hypotheses appear in the floatList. -/
 theorem floatList_mem_of_float {fr : Frame} {c : Constant} {v : Variable} :
-    Hyp.floating c v ∈ fr.mand → (c, v) ∈ floatList fr := by
+    Hyp.floating c v ∈ fr.hyps → (c, v) ∈ floatList fr := by
   intro h_in
   unfold floatList
   refine (List.mem_filterMap).2 ?_
@@ -281,7 +281,7 @@ theorem floatList_mem_of_float {fr : Frame} {c : Constant} {v : Variable} :
 
 /-- Soundness: members of floatList come from floating hypotheses. -/
 theorem floatList_sound {fr : Frame} {c : Constant} {v : Variable} :
-    (c, v) ∈ floatList fr → Hyp.floating c v ∈ fr.mand := by
+    (c, v) ∈ floatList fr → Hyp.floating c v ∈ fr.hyps := by
   intro h_mem
   unfold floatList at h_mem
   simp [List.mem_filterMap] at h_mem
@@ -298,7 +298,7 @@ theorem floatList_sound {fr : Frame} {c : Constant} {v : Variable} :
 
 /-- Variables in a frame come from floating hypotheses. -/
 theorem var_mem_iff_float {fr : Frame} {v : Variable} :
-    v ∈ fr.vars ↔ ∃ c, Hyp.floating c v ∈ fr.mand := by
+    v ∈ fr.vars ↔ ∃ c, Hyp.floating c v ∈ fr.hyps := by
   unfold Frame.vars
   constructor
   · intro h_mem
@@ -505,21 +505,21 @@ theorem varMapOfFrameAux_var_unique_nodup {n : Nat} {xs : List (Constant × Vari
 
 /-- Typed soundness for varMapOfFrame: membership gives floating hyp AND type match. -/
 theorem mem_varMapOfFrame_sound_typed {fr : Frame} {v : Variable} {vr : MarioVR} :
-    (v, vr) ∈ varMapOfFrame fr → ∃ c, Hyp.floating c v ∈ fr.mand ∧ vr.type = c.c := by
+    (v, vr) ∈ varMapOfFrame fr → ∃ c, Hyp.floating c v ∈ fr.hyps ∧ vr.type = c.c := by
   intro h_mem
   unfold varMapOfFrame at h_mem
   obtain ⟨c, h_float, h_type⟩ := mem_varMapAux_sound_typed (n := 0) h_mem
   exact ⟨c, floatList_sound h_float, h_type⟩
 
 theorem mem_varMapOfFrame_of_float {fr : Frame} {c : Constant} {v : Variable} :
-    Hyp.floating c v ∈ fr.mand → ∃ vr, (v, vr) ∈ varMapOfFrame fr := by
+    Hyp.floating c v ∈ fr.hyps → ∃ vr, (v, vr) ∈ varMapOfFrame fr := by
   intro h_in
   have h_float : (c, v) ∈ floatList fr := floatList_mem_of_float h_in
   exact mem_varMapAux_of_mem (n := 0) h_float
 
 /-- Typed version: floating hypothesis gives entry with matching VR type. -/
 theorem mem_varMapOfFrame_of_float_typed {fr : Frame} {c : Constant} {v : Variable} :
-    Hyp.floating c v ∈ fr.mand → ∃ vr, (v, vr) ∈ varMapOfFrame fr ∧ vr.type = c.c := by
+    Hyp.floating c v ∈ fr.hyps → ∃ vr, (v, vr) ∈ varMapOfFrame fr ∧ vr.type = c.c := by
   intro h_in
   have h_float : (c, v) ∈ floatList fr := floatList_mem_of_float h_in
   unfold varMapOfFrame
@@ -527,7 +527,7 @@ theorem mem_varMapOfFrame_of_float_typed {fr : Frame} {c : Constant} {v : Variab
 
 /-- Floating hypotheses are always found in the typed variable map. -/
 theorem findVR_of_float {fr : Frame} {c : Constant} {v : Variable} :
-    Hyp.floating c v ∈ fr.mand →
+    Hyp.floating c v ∈ fr.hyps →
     ∃ vr, findVR (varMapOfFrame fr) v = some vr := by
   intro h_in
   obtain ⟨vr, h_mem⟩ := mem_varMapOfFrame_of_float (fr := fr) (c := c) (v := v) h_in
@@ -537,7 +537,7 @@ theorem findVR_of_float {fr : Frame} {c : Constant} {v : Variable} :
     Requires FloatUnique to ensure the VR has the expected typecode. -/
 theorem findVR_of_float_typed {fr : Frame} {c : Constant} {v : Variable}
     (h_unique : FloatUnique fr) :
-    Hyp.floating c v ∈ fr.mand →
+    Hyp.floating c v ∈ fr.hyps →
     ∃ vr, findVR (varMapOfFrame fr) v = some vr ∧ vr.type = c.c := by
   intro h_in
   -- Get that some VR exists in the map for v
@@ -557,7 +557,7 @@ theorem findVR_of_float_typed {fr : Frame} {c : Constant} {v : Variable}
 theorem marioSubstToSpec_float_typecode {frAx : Frame} {vm : VarMap}
     {σ : MarioVR → MarioExpr} {c : Constant} {v : Variable}
     (h_unique : FloatUnique frAx)
-    (h_float : Hyp.floating c v ∈ frAx.mand) :
+    (h_float : Hyp.floating c v ∈ frAx.hyps) :
     (marioSubstToSpec (varMapOfFrame frAx) vm σ v).typecode = c := by
   let vmAx := varMapOfFrame frAx
   obtain ⟨vr, h_findVR, h_type_eq⟩ := findVR_of_float_typed h_unique h_float
@@ -580,7 +580,7 @@ theorem marioSubstToSpec_float_typecode {frAx : Frame} {vm : VarMap}
 
 /-- If a pair appears in varMapOfFrame, it came from a floating hypothesis. -/
 theorem mem_varMapOfFrame_sound {fr : Frame} {v : Variable} {vr : MarioVR} :
-    (v, vr) ∈ varMapOfFrame fr → ∃ c, Hyp.floating c v ∈ fr.mand := by
+    (v, vr) ∈ varMapOfFrame fr → ∃ c, Hyp.floating c v ∈ fr.hyps := by
   intro h_mem
   -- Invert the map/enum structure.
   unfold varMapOfFrame at h_mem
@@ -987,7 +987,7 @@ theorem findVar_mem_of_some {vm : VarMap} {vr : MarioVR} {v : Variable}
 theorem floatList_map_snd_eq_vars (fr : Frame) :
     (floatList fr).map Prod.snd = fr.vars := by
   unfold floatList Frame.vars
-  induction fr.mand with
+  induction fr.hyps with
   | nil => rfl
   | cons h rest ih =>
       match h with
@@ -1723,7 +1723,7 @@ theorem exprToMarioExpr_applySubst_eq_subst_hyp
     {Γ : Database} {consts : ConstSet} {l : Label} {frAx fr : Frame} {σ : Subst} {eAx e_hyp : Expr}
     (h_wf : Spec.WellFormedDatabase Γ consts)
     (h_lookup : Γ l = some (frAx, eAx))
-    (h_hyp_in : Hyp.essential e_hyp ∈ frAx.mand)
+    (h_hyp_in : Hyp.essential e_hyp ∈ frAx.hyps)
     (h_fr_disjoint : Spec.FrameVarsDisjointConsts consts fr) :
     exprToMarioExpr (varMapOfFrame fr) (Spec.applySubst frAx.vars σ e_hyp) =
     Metamath.Expr.subst (toMarioSubst (varMapOfFrame frAx) (varMapOfFrame fr) σ)
@@ -1989,15 +1989,15 @@ theorem proofValid_stack_provable {Γ : Database} {consts : ConstSet} {fr : Fram
               Semantic.Provable (dbToAxioms Γ) (frameToContext fr) (h.subst σ_mario) := by
             intro h h_in_hyps
             -- h is a hypothesis from the axiom's frame (essential or floating)
-            -- ax.ctx.hyps = frAx.mand.map (hypToMarioFormula vmAx)
-            -- So there exists hyp ∈ frAx.mand with h = hypToMarioFormula vmAx hyp
+            -- ax.ctx.hyps = frAx.hyps.map (hypToMarioFormula vmAx)
+            -- So there exists hyp ∈ frAx.hyps with h = hypToMarioFormula vmAx hyp
             have h_ax_ctx : ax.ctx = frameToContext frAx := rfl
             rw [h_ax_ctx] at h_in_hyps
             unfold frameToContext at h_in_hyps
             simp only [] at h_in_hyps
-            -- h_in_hyps : h ∈ frAx.mand.map (hypToMarioFormula vmAx)
+            -- h_in_hyps : h ∈ frAx.hyps.map (hypToMarioFormula vmAx)
             obtain ⟨hyp, h_hyp_in, h_hyp_eq⟩ := List.mem_map.mp h_in_hyps
-            -- hyp ∈ frAx.mand and h = hypToMarioFormula vmAx hyp
+            -- hyp ∈ frAx.hyps and h = hypToMarioFormula vmAx hyp
             cases hyp with
             | essential e_hyp =>
                 -- h = exprToFormula vmAx e_hyp
@@ -2083,7 +2083,7 @@ theorem proofValid_stack_provable {Γ : Database} {consts : ConstSet} {fr : Fram
 
           -- Sub-goal 2b: Variable typing - for each VR in axiom, prove (v.type, σ_mario v)
           -- ax.vars contains MarioVRs from the axiom's formula and hypotheses
-          -- Each corresponds to a floating hypothesis in frAx.mand
+          -- Each corresponds to a floating hypothesis in frAx.hyps
           have h_hyps_var : ∀ v ∈ ax.vars,
               Semantic.Provable (dbToAxioms Γ) (frameToContext fr) (v.type, σ_mario v) := by
             intro v v_in_vars
@@ -2125,7 +2125,7 @@ theorem proofValid_stack_provable {Γ : Database} {consts : ConstSet} {fr : Fram
                       -- v ∈' [Sym.var vr] means Sym.var v ∈ [Sym.var vr], so v = vr
                       unfold hypToMarioFormula at h_v_mem
                       -- h_v_mem : v ∈' [Sym.var (match findVR vmAx v_hyp with ...)]
-                      -- v_hyp ∈ frAx.mand, so findVR vmAx v_hyp should succeed
+                      -- v_hyp ∈ frAx.hyps, so findVR vmAx v_hyp should succeed
                       have ⟨vr', h_findVR⟩ := findVR_of_float (fr := frAx) (c := c_hyp)
                         (v := v_hyp) h_hyp_in
                       simp only [h_findVR] at h_v_mem
@@ -2148,7 +2148,7 @@ theorem proofValid_stack_provable {Γ : Database} {consts : ConstSet} {fr : Fram
             -- From membership, get floating hyp AND type match
             obtain ⟨c_float, h_float_in, h_type_eq⟩ :=
               mem_varMapOfFrame_sound_typed h_mem
-            -- h_float_in : Hyp.floating c_float var_spec ∈ frAx.mand
+            -- h_float_in : Hyp.floating c_float var_spec ∈ frAx.hyps
             -- h_type_eq : v.type = c_float.c
             -- Use h_typed to get substitution type preservation
             have h_sigma_type := h_typed c_float var_spec h_float_in
@@ -2387,7 +2387,7 @@ theorem provable_const_separation {Γ : Database} {consts : ConstSet} {fr : Fram
   induction h_provable with
   | hyp h h_in =>
       -- h ∈ (frameToContext fr).hyps
-      -- h comes from fr.mand via hypToMarioFormula
+      -- h comes from fr.hyps via hypToMarioFormula
       -- By construction, constants in h are from the database
       intro c h_c_mem
       -- h is a hypothesis formula from the frame
@@ -2625,7 +2625,7 @@ theorem provable_wellformed {Γ : Database} {consts : ConstSet} {fr : Frame} {fm
       have h_vr_eq' := Metamath.Sym.var.inj h_vr_eq
       subst h_vr_eq'
       -- vr.vhyp ∈ (frameToContext fr).hyps
-      -- By hyps_correspondence, this came from some hypothesis in fr.mand
+      -- By hyps_correspondence, this came from some hypothesis in fr.hyps
       obtain ⟨hyp, hyp_in, hyp_eq⟩ := hyps_correspondence h_vhyp_in
       -- vr.vhyp = (vr.type, [.var vr]), so it must be a floating hypothesis
       -- hyp_eq : vr.vhyp = hypToMarioFormula vm hyp
@@ -2823,7 +2823,7 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
           -- Get the floating hypothesis for this variable
           have h_mem := findVR_mem_of_some h_findVR
           obtain ⟨c, h_float, h_type_eq⟩ := mem_varMapOfFrame_sound_typed h_mem
-          -- h_float : Hyp.floating c ⟨s⟩ ∈ fr.mand
+          -- h_float : Hyp.floating c ⟨s⟩ ∈ fr.hyps
           -- h_type_eq : v.type = c.c
           -- Show e = ⟨c, [s]⟩
           have h_expr_eq : e = ⟨c, [s]⟩ := by
@@ -2887,7 +2887,7 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
       -- The structure for ProofValid.useAxiom:
       -- 1. We have h_lookup : Γ l = some (frAx, eAx) ✓
       -- 2. Need: dvOK fr.vars frAx.dv fr.dv σ'
-      -- 3. Need: ∀ c v, Hyp.floating c v ∈ frAx.mand → (σ' v).typecode = c
+      -- 3. Need: ∀ c v, Hyp.floating c v ∈ frAx.hyps → (σ' v).typecode = c
       -- 4. Need: ProofValid building up the hypothesis stack
       -- 5. Need: stack structure matching needed.reverse ++ remaining
 
@@ -2899,7 +2899,7 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
       have h_floatVarNoDup : FloatVarNoDup frAx := h_frameWf.2
 
       -- PART B: Typecode preservation for floating hypotheses
-      have h_typecode : ∀ c v, Hyp.floating c v ∈ frAx.mand → (σ' v).typecode = c := by
+      have h_typecode : ∀ c v, Hyp.floating c v ∈ frAx.hyps → (σ' v).typecode = c := by
         intro c v h_float
         exact marioSubstToSpec_float_typecode h_floatUnique h_float
 
@@ -3214,14 +3214,14 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
       -- Build Provable for result using ProofValid.useAxiom
       -- We need to show there exist steps and a stack [resultExpr] with ProofValid
 
-      -- The key is building the hypothesis stack from frAx.mand
+      -- The key is building the hypothesis stack from frAx.hyps
       -- For now, we construct a simple proof showing the structure exists
 
       -- Use Classical.choice to extract proof witnesses from IH
-      -- Each hypothesis in frAx.mand has a Provable via ih
+      -- Each hypothesis in frAx.hyps has a Provable via ih
 
       -- Build the needed stack: substituted hypotheses in reverse order
-      let neededStack := frAx.mand.map (fun h => match h with
+      let neededStack := frAx.hyps.map (fun h => match h with
         | Hyp.essential e_hyp => Spec.applySubst frAx.vars σ' e_hyp
         | Hyp.floating _ v => σ' v)
 
@@ -3238,7 +3238,7 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
       -- then ProofValid.useAxiom to produce the result.
       -- Since Provable is a Prop, we construct it by building the stack from hypotheses.
 
-      -- Strategy: For each hypothesis in frAx.mand, we have a Provable.
+      -- Strategy: For each hypothesis in frAx.hyps, we have a Provable.
       -- We need to compose these proofs to build the hypothesis stack,
       -- then apply ProofValid.useAxiom.
 
@@ -3248,7 +3248,7 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
       -- For essential hypotheses: ih gives Provable after conversion
       -- For floating hypotheses: we use ProofValid.useFloating directly
 
-      -- Build the hypothesis stack using induction on frAx.mand
+      -- Build the hypothesis stack using induction on frAx.hyps
       -- Each step adds one hypothesis to the stack
 
       -- This construction is tedious but straightforward - the pieces are:
@@ -3268,7 +3268,7 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
       -- FINAL STEP: Build the proof using ProofValid.useAxiom
       --
       -- Strategy:
-      -- 1. For each h ∈ frAx.mand, we get Provable Γ fr (substituted h) from ih
+      -- 1. For each h ∈ frAx.hyps, we get Provable Γ fr (substituted h) from ih
       -- 2. Compose these using ProofValidFrom.trans to build the hypothesis stack
       -- 3. Apply ProofValidFrom.useAxiom with all preconditions
       -- 4. Convert to Provable via toProvable
@@ -3276,7 +3276,7 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
       -- Preconditions already proven:
       -- - h_lookup : Γ l = some (frAx, eAx)
       -- - h_dvOK : dvOK fr.vars frAx.dv fr.dv σ'
-      -- - h_typecode : ∀ c v, Hyp.floating c v ∈ frAx.mand → (σ' v).typecode = c
+      -- - h_typecode : ∀ c v, Hyp.floating c v ∈ frAx.hyps → (σ' v).typecode = c
       --
       -- The IH handles each hypothesis:
       -- - Essential h: ih (exprToFormula vmAx h) gives Provable for (applySubst frAx.vars σ' h)
@@ -3284,25 +3284,25 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
       --
       -- The composition is constructive but requires careful formula conversions
       -- similar to h_result_eq reasoning for each hypothesis.
-      -- Build hypothesis stack using induction on frAx.mand
-      -- Each hypothesis h ∈ frAx.mand has Provable Γ fr (substitute h)
+      -- Build hypothesis stack using induction on frAx.hyps
+      -- Each hypothesis h ∈ frAx.hyps has Provable Γ fr (substitute h)
       -- Compose to build the needed stack, then apply useAxiom
 
       -- Define needed stack (matches ProofValid.useAxiom format)
-      let needed := frAx.mand.map (fun h => match h with
+      let needed := frAx.hyps.map (fun h => match h with
         | Hyp.essential e_hyp => Spec.applySubst frAx.vars σ' e_hyp
         | Hyp.floating _ v => σ' v)
 
-      -- Build the hypothesis stack proof by folding over frAx.mand
+      -- Build the hypothesis stack proof by folding over frAx.hyps
       -- This uses the IH to get Provable for each hypothesis
-      have h_hyps_provable : ∀ h ∈ frAx.mand, Provable Γ fr (match h with
+      have h_hyps_provable : ∀ h ∈ frAx.hyps, Provable Γ fr (match h with
           | Hyp.essential e_hyp => Spec.applySubst frAx.vars σ' e_hyp
           | Hyp.floating _ v => σ' v) := by
         intro hyp h_in
         cases hyp with
         | essential e_hyp =>
             -- ih gives Provable after formula conversion
-            -- ax.ctx.hyps = (frameToContext frAx).hyps = frAx.mand.map (hypToMarioFormula vmAx)
+            -- ax.ctx.hyps = (frameToContext frAx).hyps = frAx.hyps.map (hypToMarioFormula vmAx)
             have h_formula_in : hypToMarioFormula vmAx (Hyp.essential e_hyp) ∈
                 (frameToContext frAx).hyps := hypToMarioFormula_mem h_in
             rw [← h_ctx_eq] at h_formula_in
@@ -3446,7 +3446,7 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
             exact ih_var vr (by simp only [Metamath.Statement.vars, h_fmla_eq, h_ctx_eq]; exact h_vr_in_ax_vars) h_formula_eq
 
       -- Use build_hyps_proof to construct the needed stack
-      -- This is a fold over frAx.mand that composes Provable proofs
+      -- This is a fold over frAx.hyps that composes Provable proofs
       have h_needed_stack : ∃ steps, ProofValid Γ fr (needed.reverse) steps := by
         -- First, show each element of needed has a Provable proof
         have h_each : ∀ e ∈ needed, Provable Γ fr e := by

@@ -50,12 +50,12 @@ inductive ProofValid (Γ : Database) : Frame → List Expr → List ProofStep �
   | nil : ∀ fr, ProofValid Γ fr [] []
 
   | useEssential : ∀ fr stack steps e,
-      Hyp.essential e ∈ fr.mand →
+      Hyp.essential e ∈ fr.hyps →
       ProofValid Γ fr stack steps →
       ProofValid Γ fr (e :: stack) (ProofStep.useHyp (Hyp.essential e) :: steps)
 
   | useFloating : ∀ fr stack steps c v,
-      Hyp.floating c v ∈ fr.mand →
+      Hyp.floating c v ∈ fr.hyps →
       ProofValid Γ fr stack steps →
       ProofValid Γ fr (⟨c, [v.v]⟩ :: stack) (ProofStep.useHyp (Hyp.floating c v) :: steps)
 
@@ -63,11 +63,11 @@ inductive ProofValid (Γ : Database) : Frame → List Expr → List ProofStep �
       Γ l = some (fr', e) →
       dvOK fr.vars fr'.dv fr.dv σ →  -- Per §4.2.5: callee DV in caller context
       -- Type preservation: substitution respects floating hypothesis typecodes
-      (∀ c v, Hyp.floating c v ∈ fr'.mand → (σ v).typecode = c) →
+      (∀ c v, Hyp.floating c v ∈ fr'.hyps → (σ v).typecode = c) →
       ProofValid Γ fr stack steps →
-      -- Pop fr'.mand hypotheses (in reverse order per §4.3)
+      -- Pop fr'.hyps hypotheses (in reverse order per §4.3)
       ∀ needed : List Expr,
-      needed = fr'.mand.map (fun h => match h with
+      needed = fr'.hyps.map (fun h => match h with
         | Hyp.essential e => applySubst fr'.vars σ e
         | Hyp.floating _ v => σ v) →
       ∀ remaining : List Expr,
@@ -99,12 +99,12 @@ inductive ProofValidFrom (Γ : Database) : Frame → List Expr → List Expr →
   | nil : ∀ fr stk, ProofValidFrom Γ fr stk stk []
 
   | useEssential : ∀ fr stk stack steps e,
-      Hyp.essential e ∈ fr.mand →
+      Hyp.essential e ∈ fr.hyps →
       ProofValidFrom Γ fr stk stack steps →
       ProofValidFrom Γ fr stk (e :: stack) (ProofStep.useHyp (Hyp.essential e) :: steps)
 
   | useFloating : ∀ fr stk stack steps c v,
-      Hyp.floating c v ∈ fr.mand →
+      Hyp.floating c v ∈ fr.hyps →
       ProofValidFrom Γ fr stk stack steps →
       ProofValidFrom Γ fr stk (⟨c, [v.v]⟩ :: stack) (ProofStep.useHyp (Hyp.floating c v) :: steps)
 
@@ -112,10 +112,10 @@ inductive ProofValidFrom (Γ : Database) : Frame → List Expr → List Expr →
       Γ l = some (fr', e) →
       dvOK fr.vars fr'.dv fr.dv σ →
       -- Type preservation: substitution respects floating hypothesis typecodes
-      (∀ c v, Hyp.floating c v ∈ fr'.mand → (σ v).typecode = c) →
+      (∀ c v, Hyp.floating c v ∈ fr'.hyps → (σ v).typecode = c) →
       ProofValidFrom Γ fr stk stack steps →
       ∀ needed : List Expr,
-      needed = fr'.mand.map (fun h => match h with
+      needed = fr'.hyps.map (fun h => match h with
         | Hyp.essential e => applySubst fr'.vars σ e
         | Hyp.floating _ v => σ v) →
       ∀ remaining : List Expr,

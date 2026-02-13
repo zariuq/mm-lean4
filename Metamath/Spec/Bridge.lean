@@ -560,13 +560,13 @@ Construct it from the frame's floating hypotheses.
     This ensures that every floating hypothesis variable is in the vars list,
     which is needed for well-formed conversion. -/
 def Frame.toVarList (fr : Frame) : List MarioVR :=
-  fr.mand.filterMap fun h => match h with
+  fr.hyps.filterMap fun h => match h with
     | Hyp.floating _ v => some (Variable.toMarioVR v)
     | Hyp.essential _ => none
 
 /-- Every floating hypothesis variable is in the constructed var list. -/
 theorem Frame.toVarList_complete (fr : Frame) :
-    ∀ c v, Hyp.floating c v ∈ fr.mand →
+    ∀ c v, Hyp.floating c v ∈ fr.hyps →
       Variable.toMarioVR v ∈ Frame.toVarList fr := by
   intro c v h_in
   unfold Frame.toVarList
@@ -673,7 +673,7 @@ theorem Frame.toVarList_mem_vars (fr : Frame) :
     ∀ vr ∈ Frame.toVarList fr, MarioVR.toVariable vr ∈ fr.vars := by
   intro vr h_vr_in
   unfold Frame.toVarList at h_vr_in
-  -- vr came from filterMap on mand, must be from some floating hypothesis
+  -- vr came from filterMap on hyps, must be from some floating hypothesis
   obtain ⟨h, h_in, h_some⟩ := List.mem_filterMap.mp h_vr_in
   cases h with
   | floating c v =>
@@ -696,7 +696,7 @@ theorem Frame.toVarList_mem_vars (fr : Frame) :
 /-! ## Frame/Context Conversion
 
 Mario: `MarioContext where (hyps : List MarioFormula) (dj : MarioDJ)`
-Us: `Frame where (mand : List Hyp) (dv : List (Variable × Variable))`
+Us: `Frame where (hyps : List Hyp) (dv : List (Variable × Variable))`
 
 **Challenge**:
 - Mario's MarioFormula = String × MarioExpr (flat)
@@ -743,13 +743,13 @@ def MarioFormula.toHyp : MarioFormula → Option Hyp
 
 /-- Convert our Frame to Mario's MarioContext -/
 def Frame.toMarioContext (fr : Frame) (vars : List MarioVR) : MarioContext :=
-  { hyps := fr.mand.map (fun h => Hyp.toMarioFormula h vars)
+  { hyps := fr.hyps.map (fun h => Hyp.toMarioFormula h vars)
     dj := dvList.toMarioDJ fr.dv }
 
 /-! ### Frame ↔ MarioContext Bidirectional Correctness
 
 The conversion Frame.toMarioContext has two components:
-1. Hypothesis list: fr.mand → hyps (Phase 5 handles bidirectional for this)
+1. Hypothesis list: fr.hyps → hyps (Phase 5 handles bidirectional for this)
 2. DJ constraints: fr.dv → dj (Phase 2 already proved bidirectional!)
 
 We prove bidirectional properties for the DJ component here, leveraging Phase 2 results.
@@ -786,12 +786,12 @@ theorem Frame.toMarioContext_dj_complete (fr : Frame) (vars : List MarioVR) :
 /-- Convert Mario's MarioContext to our Frame (approximate - loses DJ structure) -/
 noncomputable def MarioContext.toFrame : MarioContext → Option Frame
   | ⟨hyps, dj⟩ => do
-      let mand ← hyps.mapM MarioFormula.toHyp
+      let hyps_spec ← hyps.mapM MarioFormula.toHyp
       -- Extract MarioVR list from hyps for DJ conversion
       let vars := hyps.filterMap fun
         | (_, [.var vr]) => some vr
         | _ => none
-      return { mand := mand, dv := MarioDJ.toDvList dj vars }
+      return { hyps := hyps_spec, dv := MarioDJ.toDvList dj vars }
 
 /-! ## Database Conversion
 
@@ -855,12 +855,12 @@ theorem Hyp.floating_toMarioFormula_sound (c : Constant) (v : Variable) (vars : 
 
 /-- Hypothesis list conversion preserves membership -/
 theorem Hyp.toMarioFormula_mem {h : Hyp} {fr : Frame} {vars : List MarioVR} :
-    h ∈ fr.mand →
+    h ∈ fr.hyps →
     Hyp.toMarioFormula h vars ∈ (Frame.toMarioContext fr vars).hyps := by
   intro h_in
   unfold Frame.toMarioContext
   simp only []
-  -- Show: Hyp.toMarioFormula h vars ∈ List.map (fun h => Hyp.toMarioFormula h vars) fr.mand
+  -- Show: Hyp.toMarioFormula h vars ∈ List.map (fun h => Hyp.toMarioFormula h vars) fr.hyps
   apply List.mem_map_of_mem
   exact h_in
 
