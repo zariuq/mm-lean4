@@ -34,7 +34,7 @@ lean_lib Metamath where
   -- AutoTest: ATP automation test cases (requires lean-auto, not included in build)
   -- ZipperTest: Zipperposition integration test (requires lean-auto, not included in build)
   -- Tests.ParserInvariantTests: Executable verification tests
-  roots := #[`Metamath.Spec, `Metamath.ByteSliceCompat, `Metamath.Verify, `Metamath.WellFormedness, `Metamath.ParserBasics, `Metamath.ArrayListExt, `Metamath.Bridge, `Metamath.KernelExtras, `Metamath.DBLemmas, `Metamath.AllM, `Metamath.KernelClean, `Metamath.ValidateDB, `Metamath.ParserInvariants, `Metamath.HashMapLemmas, `Metamath.ParserCorrectness, `Metamath.ParserLoopInduction, `Metamath.LoopInvariant, `Metamath.DBCaseAnalysis, `Metamath.CounterexampleInsertError, `Metamath.ParserInvariantsStep1, `Metamath.ParserOperations]
+  roots := #[`Metamath.Spec, `Metamath.ByteSliceCompat, `Metamath.Verify, `Metamath.WellFormedness, `Metamath.ParserBasics, `Metamath.ArrayListExt, `Metamath.Bridge, `Metamath.KernelExtras, `Metamath.DBLemmas, `Metamath.AllM, `Metamath.KernelClean, `Metamath.ValidateDB, `Metamath.ParserInvariants, `Metamath.HashMapLemmas, `Metamath.ParserCorrectness, `Metamath.ParserLoopInduction, `Metamath.LoopInvariant, `Metamath.DBCaseAnalysis, `Metamath.CounterexampleInsertError, `Metamath.ParserInvariantsStep1, `Metamath.ParserOperations, `Metamath.FrontendBridge, `Metamath.FrontendCertified, `Metamath.FrontendAudit]
 
 @[default_target]
 lean_lib MetamathExperimental where
@@ -51,4 +51,3 @@ lean_exe validateDB where
 lean_exe testCliErrorCode where
   root := `Metamath.Tests.CliErrorCodeFormat
   supportInterpreter := true
-

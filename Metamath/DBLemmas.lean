@@ -70,6 +70,42 @@ theorem mkError_preserves_config (db : DB) (pos : Pos) (msg : String) :
   unfold DB.mkError
   rfl
 
+
+/-! ## Evidence-first internal-gate mkErrorWithEvidence lemmas -/
+
+/-- Canonical evidence-first replacement for legacy `mkError` in support proofs. -/
+def mkInternalGateError (db : DB) (pos : Pos) (msg : String) : DB :=
+  db.mkErrorWithEvidence pos msg (.internalGate db.config.allowDuplicateFloat db.wellFormed? db.assertDvVarsInFrame?)
+
+@[simp] theorem mkInternalGateError_sets_error (db : DB) (pos : Pos) (msg : String) :
+    (mkInternalGateError db pos msg).error = true := by
+  simp [mkInternalGateError, DB.error]
+
+@[simp] theorem mkInternalGateError_error?_ne_none (db : DB) (pos : Pos) (msg : String) :
+    (mkInternalGateError db pos msg).error? ≠ none := by
+  simp [mkInternalGateError]
+
+@[simp] theorem mkInternalGateError_preserves_objects (db : DB) (pos : Pos) (msg : String) :
+    (mkInternalGateError db pos msg).objects = db.objects := by
+  simp [mkInternalGateError]
+
+@[simp] theorem mkInternalGateError_preserves_find?
+    (db : DB) (pos : Pos) (msg : String) (label : String) :
+    (mkInternalGateError db pos msg).find? label = db.find? label := by
+  simp [mkInternalGateError, DB.find?]
+
+@[simp] theorem mkInternalGateError_preserves_frame (db : DB) (pos : Pos) (msg : String) :
+    (mkInternalGateError db pos msg).frame = db.frame := by
+  simp [mkInternalGateError]
+
+@[simp] theorem mkInternalGateError_preserves_scopes (db : DB) (pos : Pos) (msg : String) :
+    (mkInternalGateError db pos msg).scopes = db.scopes := by
+  simp [mkInternalGateError]
+
+@[simp] theorem mkInternalGateError_preserves_config (db : DB) (pos : Pos) (msg : String) :
+    (mkInternalGateError db pos msg).config = db.config := by
+  simp [mkInternalGateError]
+
 /-! ## withHyps lemmas -/
 
 /-- withHyps updates only the hyps field of the frame -/
@@ -113,7 +149,7 @@ theorem insert_with_error (db : DB) (pos : Pos) (label : String) (obj : String �
   · -- const case
     split
     · -- mkError called
-      simp [DB.mkError]
+      simp
     · -- no mkError
       simp [*]
   · -- non-const case

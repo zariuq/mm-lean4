@@ -82,15 +82,12 @@ theorem ParserState_mkError_sets_error_bool (s : ParserState) (pos : Pos) (msg :
 /-- ParserState.mkErrorFromEvidence always sets an error. -/
 theorem ParserState_mkErrorFromEvidence_sets_error (s : ParserState) (pos : Pos) (ev : ErrorEvidence) :
     (s.mkErrorFromEvidence pos ev).db.error? ≠ none := by
-  simpa [ParserState.mkErrorFromEvidence, ParserState.withDB] using
-    (Verify.DB.mkErrorFromEvidence_error? s.db pos ev)
+  simp [ParserState.mkErrorFromEvidence, ParserState.withDB]
 
 /-- ParserState.mkErrorFromEvidence sets db.error = true. -/
 theorem ParserState_mkErrorFromEvidence_sets_error_bool (s : ParserState) (pos : Pos) (ev : ErrorEvidence) :
     (s.mkErrorFromEvidence pos ev).db.error = true := by
-  simpa [ParserState.mkErrorFromEvidence, ParserState.withDB] using
-    (Verify.DB.mkErrorFromEvidence_error s.db pos ev)
-
+  simp [ParserState.mkErrorFromEvidence, ParserState.withDB]
 /-- label either preserves db or sets error -/
 theorem label_preserves_error (s : ParserState) (pos : Pos) (tk : ByteSlice) :
     s.db.error? ≠ none → (s.label pos tk).db.error? ≠ none := by
@@ -341,7 +338,7 @@ theorem djvars_loop_aux_hyps_behavior
     by_cases h_eq : arr[i] == tk
     · -- Case: arr[i] == tk, so return mkError
       simp only [h_eq, ↓reduceIte]
-      right; simp only [ParserState.mkError, Verify.DB.mkError, Verify.DB.error]; rfl
+      right; simp only [Verify.DB.error]; rfl
     · -- Case: arr[i] ≠ tk, so continue with withDB/withDJ and recurse
       simp only [h_eq, Bool.false_eq_true, ↓reduceIte]
       have h_step_hyps : (s.withDB fun db => db.withDJ fun dj => dj.push
@@ -463,7 +460,7 @@ theorem djvars_withMath_hyps_behavior
   cases h_ok : (Verify.toMath tk).1 with
   | false =>
     -- toMath failed, so mkError
-    right; simp [h_ok, ParserState.mkError, Verify.DB.mkError, Verify.DB.error]; rfl
+    right; simp [h_ok, Verify.DB.error]; rfl
   | true =>
     -- toMath succeeded, so call the lambda
     simp [h_ok]
@@ -1178,7 +1175,7 @@ private theorem insertHyp_dup_list_forIn_preserves_frame
   by_cases h_if : !ess && f.size >= 2
   · simp [h_if]
     by_cases h_dup : db.floatVarOccursInFrame (f[1]!.value)
-    · simp [h_dup, mkError_preserves_frame]
+    · simp [h_dup]
     · simp [h_dup]
   · simp [h_if]
 
@@ -1232,7 +1229,7 @@ theorem popScope_hyps_behavior (pos : Pos) (db : DB) :
   cases h : db.scopes.back? with
   | none =>
       right
-      simp [Verify.DB.mkError, Verify.DB.error]
+      simp [Verify.DB.error]
   | some sc =>
       left
       refine ⟨sc.2, ?_⟩
@@ -1268,10 +1265,10 @@ theorem insertAxiom_hyps_behavior (db : DB) (pos : Pos) (l : String) (fmla : For
               simp
               left; exact congrArg Frame.hyps (insert_preserves_frame db pos l (.assert fmla fr))
       | error msg =>
-          right; simp [h_err, Verify.DB.error, Verify.DB.mkError]
+          right; simp [h_err, Verify.DB.error]
   · -- head check fails: mkError sets error
     right
-    simp [h_head, Verify.DB.error, Verify.DB.mkError]
+    simp [h_head, Verify.DB.error]
 
 /-- resumeThm only modifies tokp, not db -/
 theorem resumeThm_preserves_db (s : ParserState) (pos : Pos) (l : String) (fmla : Formula) (fr : Frame) :
@@ -1360,12 +1357,14 @@ theorem finishProof_hyps_behavior (s : ParserState) (pr : ProofState) :
     cases ptp with
     | start =>
         right
-        simp [f, Id.run, pure, Id_bind_eq, Id_pure_eq, ParserState_mkErrorFromEvidence_sets_error_bool, ParserState.mkErrorFromEvidence,
-          ParserState.withDB]
+        simpa [f, Id.run, pure] using
+          (ParserState_mkErrorFromEvidence_sets_error_bool
+            { s with tokp := .start } pos (.proofCheck .proofParseError))
     | preload =>
         right
-        simp [f, Id.run, pure, Id_bind_eq, Id_pure_eq, ParserState_mkErrorFromEvidence_sets_error_bool, ParserState.mkErrorFromEvidence,
-          ParserState.withDB]
+        simpa [f, Id.run, pure] using
+          (ParserState_mkErrorFromEvidence_sets_error_bool
+            { s with tokp := .start } pos (.proofCheck .proofParseError))
     | compressed n =>
         cases n with
         | zero =>
@@ -1374,39 +1373,49 @@ theorem finishProof_hyps_behavior (s : ParserState) (pr : ProofState) :
             cases h_size : (stack.size == 1) with
             | false =>
                 right
-                simp [f, Id.run, pure, Id_bind_eq, Id_pure_eq, h_size, ParserState_mkErrorFromEvidence_sets_error_bool, ParserState.mkErrorFromEvidence,
-                  ParserState.withDB]
+                simpa [f, Id.run, pure, h_size] using
+                  (ParserState_mkErrorFromEvidence_sets_error_bool
+                    { s with tokp := .start } pos
+                    (.theoremFinality (.theoremMoreThanOneStackElement stack.size)))
             | true =>
                 cases h_claim : (stack[0]! == fmla) with
                 | false =>
                     right
-                    simp [f, Id.run, pure, Id_bind_eq, Id_pure_eq, h_size, h_claim, ParserState_mkErrorFromEvidence_sets_error_bool,
-                      ParserState.mkErrorFromEvidence, ParserState.withDB]
+                    simpa [f, Id.run, pure, h_size, h_claim] using
+                      (ParserState_mkErrorFromEvidence_sets_error_bool
+                        { s with tokp := .start } pos
+                        (.theoremFinality (.theoremClaimMismatch fmla stack[0]!)))
                 | true =>
                     left
                     -- Success path: reduce to `DB.insert` and use `insert_preserves_frame`.
-                    simp [f, Id.run, pure, Id_bind_eq, Id_pure_eq, h_size, h_claim, ParserState.withDB]
+                    simp [f, Id.run, pure, h_size, h_claim]
                     exact congrArg Frame.hyps (insert_preserves_frame s.db pos l (.assert fmla fr))
         | succ n =>
             -- Compressed with nonzero state: parse error.
             right
-            simp [f, Id.run, pure, Id_bind_eq, Id_pure_eq, ParserState_mkErrorFromEvidence_sets_error_bool, ParserState.mkErrorFromEvidence,
-              ParserState.withDB]
+            simpa [f, Id.run, pure] using
+              (ParserState_mkErrorFromEvidence_sets_error_bool
+                { s with tokp := .start } pos
+                (.proofCheck .proofParseError))
     | normal =>
         cases h_size : (stack.size == 1) with
         | false =>
             right
-            simp [f, Id.run, pure, Id_bind_eq, Id_pure_eq, h_size, ParserState_mkErrorFromEvidence_sets_error_bool, ParserState.mkErrorFromEvidence,
-              ParserState.withDB]
+            simpa [f, Id.run, pure, h_size] using
+              (ParserState_mkErrorFromEvidence_sets_error_bool
+                { s with tokp := .start } pos
+                (.theoremFinality (.theoremMoreThanOneStackElement stack.size)))
         | true =>
             cases h_claim : (stack[0]! == fmla) with
             | false =>
                 right
-                simp [f, Id.run, pure, Id_bind_eq, Id_pure_eq, h_size, h_claim, ParserState_mkErrorFromEvidence_sets_error_bool,
-                  ParserState.mkErrorFromEvidence, ParserState.withDB]
+                simpa [f, Id.run, pure, h_size, h_claim] using
+                  (ParserState_mkErrorFromEvidence_sets_error_bool
+                    { s with tokp := .start } pos
+                    (.theoremFinality (.theoremClaimMismatch fmla stack[0]!)))
             | true =>
                 left
-                simp [f, Id.run, pure, Id_bind_eq, Id_pure_eq, h_size, h_claim, ParserState.withDB]
+                simp [f, Id.run, pure, h_size, h_claim]
                 exact congrArg Frame.hyps (insert_preserves_frame s.db pos l (.assert fmla fr))
   cases h_inner with
   | inl hhyps =>
@@ -1437,11 +1446,8 @@ theorem feedTokens_hyps_behavior (s : ParserState) (arr : Array Sym) (p : Tokens
   -- First check: Formula.hasConstHead arr
   cases h_head : Formula.hasConstHead arr with
   | false =>
-    right; right
-    apply withAt_propagates_error
     -- Inner branch returns `mkErrorFromEvidence`.
-    simpa [ParserState.mkErrorFromEvidence, ParserState.withDB] using
-      (ParserState_mkErrorFromEvidence_sets_error_bool s pos (.scopeDecl .firstSymbolNotConstant))
+    simp [ParserState.mkErrorFromEvidence, ParserState.withDB]
   | true =>
     simp
     cases k with
@@ -1453,7 +1459,7 @@ theorem feedTokens_hyps_behavior (s : ParserState) (arr : Array Sym) (p : Tokens
         right; right
         apply withAt_propagates_error
         -- Inner branch returns `mkErrorFromEvidence`.
-        simp [Id_bind_eq, Id_pure_eq]
+        simp [Id_bind_eq]
         exact ParserState_mkErrorFromEvidence_sets_error_bool s pos (.scopeDecl .expectedConstantAndVariable)
       | true =>
         simp [ParserState.withDB]
@@ -1473,10 +1479,10 @@ theorem feedTokens_hyps_behavior (s : ParserState) (arr : Array Sym) (p : Tokens
       | some err =>
         right; right
         apply withAt_propagates_error
-        simp only [h_gate, Id_bind_eq, ParserState.mkErrorFromEvidence, ParserState.withDB]
+        simp [ParserState.mkErrorFromEvidence, ParserState.withDB]
         exact ParserState_mkErrorFromEvidence_sets_error_bool s pos (.scopeDecl err)
       | none =>
-        simp only [h_gate, ParserState.withDB, Id_bind_eq]
+        simp only [ParserState.withDB, Id_bind_eq]
         by_cases h_ok : (s.db.insertHyp pos l true arr).error? = none
         · right; left
           exact ⟨l, insertHyp_call_order s.db pos l true arr h_ok⟩
@@ -1515,9 +1521,8 @@ theorem feedTokens_hyps_behavior (s : ParserState) (arr : Array Sym) (p : Tokens
         right; right
         -- trimFrame' failure: `mkErrorFromEvidence` (scope/declaration violation).
         apply withAt_propagates_error
-        simp [Id_bind_eq, Id_pure_eq]
+        simp [Id_bind_eq]
         exact ParserState_mkErrorFromEvidence_sets_error_bool s pos (.scopeDecl msg)
-
 /-- withMath either preserves hyps or sets error -/
 theorem withMath_hyps_behavior (s : ParserState) (pos : Pos) (tk : ByteSlice)
     (f : ParserState → String → ParserState)
@@ -1526,7 +1531,7 @@ theorem withMath_hyps_behavior (s : ParserState) (pos : Pos) (tk : ByteSlice)
     (s.withMath pos tk f).db.error = true := by
   unfold ParserState.withMath
   cases h : (Verify.toMath tk).1 with
-  | false => right; simp [h, ParserState.mkError, Verify.DB.mkError, Verify.DB.error]; rfl
+  | false => right; simp [h, Verify.DB.error]; rfl
   | true =>
     simp [h]
     exact hf s (Verify.toMath tk).2
@@ -1537,7 +1542,7 @@ theorem label_frame_behavior (s : ParserState) (pos : Pos) (tk : ByteSlice) :
     (s.label pos tk).db.error = true := by
   unfold ParserState.label
   cases h : (Verify.toLabel tk).1 with
-  | false => right; simp only [h, ParserState.mkError, Verify.DB.mkError, Verify.DB.error]; rfl
+  | false => right; simp only [h, Verify.DB.error]; rfl
   | true => left; simp [h]
 
 /-- ParserState.sym either preserves frame or sets error -/
@@ -1551,7 +1556,7 @@ theorem sym_frame_behavior (s : ParserState) (pos : Pos) (tk : ByteSlice) (f : S
     simp
     unfold ParserState.withMath
     cases h_ok : (Verify.toMath tk).1 with
-    | false => right; simp [h_ok, ParserState.mkError, Verify.DB.mkError, Verify.DB.error]; rfl
+    | false => right; simp [h_ok, Verify.DB.error]; rfl
     | true => left; simp [h_ok, ParserState.withDB]; exact insert_preserves_frame _ _ _ _
 
 /-- ParserState.feedProof either preserves frame or sets error -/
@@ -1571,7 +1576,7 @@ theorem feedProof_frame_behavior (s : ParserState) (tk : ByteSlice) (pr : ProofS
     simp
     split
     · right; rfl
-    · right; simp only [ParserState.mkError, Verify.DB.mkError, Verify.DB.error]; rfl
+    · right; simp only [Verify.DB.error]; rfl
 
 /-- feedToken hyps behavior: either preserves frame.hyps, shrinks via popScope, grows via
     insertHyp, or sets error.
@@ -1707,7 +1712,7 @@ theorem feedToken_frame_behavior (s : ParserState) (pos : Nat) (tk : ByteSlice) 
         cases h_math : Verify.toMath tk with
         | mk ok tkStr =>
           -- Reduce the `withMath` wrapper.
-          simp [h_math]
+          simp
           cases ok with
           | false =>
               right; right; right
@@ -1721,48 +1726,48 @@ theorem feedToken_frame_behavior (s : ParserState) (pos : Nat) (tk : ByteSlice) 
                   cases h_gate : s.db.mathSymbolViolation? tkStr with
                   | some err =>
                       right; right; right
-                      simp [Id_bind_eq, Id_pure_eq, h_find, h_gate]
+                      simp [Id_pure_eq]
                       exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos)
                         (.scopeDecl err)
                   | none =>
                       right; right; right
-                      simp [Id_bind_eq, Id_pure_eq, h_find, h_gate]
+                      simp [Id_pure_eq]
                       exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos)
-                        (.scopeDecl (.tokenNotConstantOrVariable tkStr false))
+                        (.scopeDecl (.tokenNotConstantOrVariable tkStr))
               | some obj =>
                   cases obj with
                   | const _ =>
-                      simp [h_find]
+                      simp
                       left
                       rfl
                   | var _ =>
-                      simp [h_find]
+                      simp
                       left
                       rfl
                   | hyp _ _ _ =>
                       cases h_gate : s.db.mathSymbolViolation? tkStr with
                       | some err =>
                           right; right; right
-                          simp [Id_bind_eq, Id_pure_eq, h_find, h_gate]
+                          simp [Id_pure_eq]
                           exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos)
                             (.scopeDecl err)
                       | none =>
                           right; right; right
-                          simp [Id_bind_eq, Id_pure_eq, h_find, h_gate]
+                          simp [Id_pure_eq]
                           exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos)
-                            (.scopeDecl (.tokenNotConstantOrVariable tkStr false))
+                            (.scopeDecl (.tokenNotConstantOrVariable tkStr))
                   | assert _ _ =>
                       cases h_gate : s.db.mathSymbolViolation? tkStr with
                       | some err =>
                           right; right; right
-                          simp [Id_bind_eq, Id_pure_eq, h_find, h_gate]
+                          simp [Id_pure_eq]
                           exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos)
                             (.scopeDecl err)
                       | none =>
                           right; right; right
-                          simp [Id_bind_eq, Id_pure_eq, h_find, h_gate]
+                          simp [Id_pure_eq]
                           exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos)
-                            (.scopeDecl (.tokenNotConstantOrVariable tkStr false))
+                            (.scopeDecl (.tokenNotConstantOrVariable tkStr))
   | label pos' lab =>
     simp
     cases h_comment : tk.eqArray "$(".toAscii with
@@ -1889,4 +1894,3 @@ theorem counterexample_structure (initial_state : ParserState) (tk : ByteSlice) 
 -- Use manual proof steps instead
 
 end Metamath.ParserLoopInduction
-
