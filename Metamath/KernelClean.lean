@@ -11348,11 +11348,219 @@ theorem verify_parser_acceptance_iff_spec_provable
   · intro h_spec
     exact verify_parser_accepts_of_spec_provable bytes label f h_success h_spec
 
-/-! ## Historical note
+/-! ## Phase C: All Stored Assertions Self-Provable
 
-This section previously contained an in-progress Phase 9 status snapshot.
-Those notes are intentionally removed to avoid stale proof-state guidance.
+Every assertion stored in the database by `checkBytes` is `Spec.Provable` in the
+spec-level database, via self-use: push all frame hypotheses, then apply the
+assertion itself with the identity substitution.
+
+**Naming**: "selfProvable" to be precise — this proves DB closure (every entry is
+provable using the full database including itself), not parser-origin soundness.
+Object.assert does not distinguish axioms from proved theorems.
+
+**Non-vacuity**: For any `.mm` file containing at least one `$a` or `$p` statement,
+the spec-level `Γ` is non-empty, so `∀ l fr e, Γ l = some (fr, e) → ...` is
+non-vacuously instantiated.
 -/
+
+section PhaseC_SelfProvable
+
+open scoped Classical
+
+/-! ### Identity substitution infrastructure -/
+
+/-- `flatMap (fun x => [x])` is the identity on lists. -/
+theorem flatMap_singleton_id (l : List α) :
+    l.flatMap (fun x => [x]) = l := by
+  induction l with
+  | nil => rfl
+  | cons x xs ih => simp [ih]
+
+/-- An identity substitution preserves expressions under `applySubst`. -/
+theorem applySubst_identity (vars : List Spec.Variable) (σ : Spec.Subst) (e : Spec.Expr)
+    (h_id : ∀ v ∈ vars, (σ v).syms = [v.v]) :
+    Spec.applySubst vars σ e = e := by
+  unfold Spec.applySubst
+  suffices h : e.syms.flatMap (fun s =>
+      let v := Spec.Variable.mk s
+      if v ∈ vars then (σ v).syms else [s]) = e.syms by
+    cases e with | mk tc syms => simp [h]
+  rw [show e.syms.flatMap (fun s =>
+      let v := Spec.Variable.mk s
+      if v ∈ vars then (σ v).syms else [s]) =
+    e.syms.flatMap (fun s => [s]) from by
+      apply flatMap_congr; intro s _; simp only
+      split
+      · next h_mem =>
+        have := h_id (Spec.Variable.mk s) h_mem; simp at this; exact this
+      · rfl]
+  exact flatMap_singleton_id e.syms
+
+/-- Under identity substitution, `varsInExpr` of `σ v` is `[v]`. -/
+private theorem varsInExpr_identity_singleton
+    (vars : List Spec.Variable) (v : Spec.Variable) (σ : Spec.Subst)
+    (h_mem : v ∈ vars) (h_σv : (σ v).syms = [v.v]) :
+    Spec.varsInExpr vars (σ v) = [v] := by
+  unfold Spec.varsInExpr; rw [h_σv]; simp [List.filterMap, h_mem]
+
+/-- Identity substitution satisfies `dvOK` when source = target DV list.
+    Requires `DVWellFormed` (no self-pairs, all DV vars in `vars`). -/
+theorem dvOK_self_identity
+    (vars : List Spec.Variable) (dv : List (Spec.Variable × Spec.Variable))
+    (σ : Spec.Subst)
+    (h_id : ∀ v ∈ vars, (σ v).syms = [v.v])
+    (h_no_self : ∀ v, (v, v) ∉ dv)
+    (h_dv_vars : ∀ v w, (v, w) ∈ dv → v ∈ vars ∧ w ∈ vars) :
+    Spec.dvOK vars dv dv σ := by
+  show ∀ v w, (v, w) ∈ dv →
+    ∀ x ∈ Spec.varsInExpr vars (σ v), ∀ y ∈ Spec.varsInExpr vars (σ w),
+      Spec.dvRel dv x y
+  intro v w h_vw x h_x y h_y
+  have ⟨h_v_in, h_w_in⟩ := h_dv_vars v w h_vw
+  rw [varsInExpr_identity_singleton vars v σ h_v_in (h_id v h_v_in)] at h_x
+  rw [varsInExpr_identity_singleton vars w σ h_w_in (h_id w h_w_in)] at h_y
+  simp at h_x h_y; rw [h_x, h_y]
+  exact ⟨fun h_eq => h_no_self v (h_eq ▸ h_vw), Or.inl h_vw⟩
+
+/-! ### Pushing frame hypotheses onto the proof stack -/
+
+/-- The natural expression of a hypothesis: floating `c v` maps to `⟨c, [v.v]⟩`,
+    essential `e` maps to `e`. -/
+def hypExpr : Spec.Hyp → Spec.Expr
+  | .floating c v => ⟨c, [v.v]⟩
+  | .essential e => e
+
+/-- Push a list of hypotheses onto the proof stack (accumulator version).
+    After pushing `hs` in order, the stack is `hs.reverse.map hypExpr ++ acc`. -/
+theorem push_hyps_acc (Γ : Spec.Database) (fr : Spec.Frame) (hs : List Spec.Hyp)
+    (h_sub : ∀ h ∈ hs, h ∈ fr.hyps) (acc : List Spec.Expr)
+    (acc_steps : List Spec.ProofStep)
+    (h_acc : Spec.ProofValid Γ fr acc acc_steps) :
+    ∃ steps, Spec.ProofValid Γ fr (hs.reverse.map hypExpr ++ acc) steps := by
+  induction hs generalizing acc acc_steps with
+  | nil => simp; exact ⟨acc_steps, h_acc⟩
+  | cons h hs' ih =>
+    have h_h_in : h ∈ fr.hyps := h_sub h (by simp)
+    obtain ⟨ps, hp⟩ : ∃ ns, Spec.ProofValid Γ fr (hypExpr h :: acc) ns := by
+      cases h with
+      | floating c v =>
+        exact ⟨_, Spec.ProofValid.useFloating fr acc acc_steps c v h_h_in h_acc⟩
+      | essential e =>
+        exact ⟨_, Spec.ProofValid.useEssential fr acc acc_steps e h_h_in h_acc⟩
+    obtain ⟨s', hr⟩ := ih (fun h' hm => h_sub h' (by simp [hm])) (hypExpr h :: acc) ps hp
+    exact ⟨s', by simpa [List.reverse_cons, List.map_append, List.append_assoc] using hr⟩
+
+/-- Push all mandatory hypotheses of a frame onto the proof stack. -/
+theorem push_all_hyps_valid (Γ : Spec.Database) (fr : Spec.Frame) :
+    ∃ steps, Spec.ProofValid Γ fr (fr.hyps.reverse.map hypExpr) steps := by
+  have h := push_hyps_acc Γ fr fr.hyps (fun _ h => h) [] [] (Spec.ProofValid.nil fr)
+  simpa using h
+
+/-! ### Classical identity substitution for a frame -/
+
+/-- Identity substitution for a frame: maps each variable `v` to `⟨c, [v.v]⟩`
+    where `c` is the typecode from the (unique) floating hypothesis for `v`. -/
+noncomputable def idSubstOf (fr : Spec.Frame) : Spec.Subst := fun v =>
+  if h : ∃ c, Spec.Hyp.floating c v ∈ fr.hyps then ⟨h.choose, [v.v]⟩
+  else ⟨⟨""⟩, [v.v]⟩
+
+/-- `idSubstOf` always produces single-symbol expressions. -/
+theorem idSubstOf_syms (fr : Spec.Frame) (v : Spec.Variable) :
+    (idSubstOf fr v).syms = [v.v] := by
+  unfold idSubstOf; split <;> simp
+
+/-- `idSubstOf` respects floating hypothesis typecodes (given `FloatUnique`). -/
+theorem idSubstOf_typed (fr : Spec.Frame) (c : Spec.Constant) (v : Spec.Variable)
+    (h_in : Spec.Hyp.floating c v ∈ fr.hyps) (h_unique : FloatUnique fr) :
+    (idSubstOf fr v).typecode = c := by
+  unfold idSubstOf
+  have h_ex : ∃ c, Spec.Hyp.floating c v ∈ fr.hyps := ⟨c, h_in⟩
+  simp [h_ex]; exact h_unique _ _ _ (Classical.choose_spec h_ex) h_in
+
+/-- `idSubstOf` maps a floating variable to its canonical expression. -/
+theorem idSubstOf_eq (fr : Spec.Frame) (c : Spec.Constant) (v : Spec.Variable)
+    (h_mem : Spec.Hyp.floating c v ∈ fr.hyps) (h_unique : FloatUnique fr) :
+    idSubstOf fr v = ⟨c, [v.v]⟩ := by
+  unfold idSubstOf
+  have h_ex : ∃ c, Spec.Hyp.floating c v ∈ fr.hyps := ⟨c, h_mem⟩
+  simp [h_ex]; exact h_unique _ _ _ (Classical.choose_spec h_ex) h_mem
+
+/-! ### Main self-provability theorem -/
+
+/-- **Every assertion in a database is self-provable** via identity substitution.
+
+    Given `Γ l = some (fr, e)` with `DVWellFormed fr` and `FloatUnique fr`,
+    we construct a proof that pushes all mandatory hypotheses of `fr` onto the
+    stack, then applies `l` with identity substitution to produce `e`.
+
+    This is not vacuous: any `.mm` file with at least one `$a` or `$p` statement
+    yields a non-empty `Γ`. -/
+theorem assertion_self_provable
+    (Γ : Spec.Database) (l : Spec.Label) (fr : Spec.Frame) (e : Spec.Expr)
+    (h_in : Γ l = some (fr, e))
+    (h_dv_wf : DVWellFormed fr)
+    (h_float_unique : FloatUnique fr) :
+    Spec.Provable Γ fr e := by
+  -- Step 1: Push all frame hypotheses onto the stack
+  obtain ⟨push_steps, h_push⟩ := push_all_hyps_valid Γ fr
+  -- Step 2: Properties of the identity substitution
+  have h_σ_syms : ∀ v ∈ fr.vars, (idSubstOf fr v).syms = [v.v] :=
+    fun v _ => idSubstOf_syms fr v
+  have h_typed : ∀ c v, Spec.Hyp.floating c v ∈ fr.hyps →
+      (idSubstOf fr v).typecode = c :=
+    fun c v h => idSubstOf_typed fr c v h h_float_unique
+  have h_dvok : Spec.dvOK fr.vars fr.dv fr.dv (idSubstOf fr) :=
+    dvOK_self_identity fr.vars fr.dv (idSubstOf fr) h_σ_syms h_dv_wf.2 h_dv_wf.1
+  -- Step 3: Under identity subst, the "needed" list = fr.hyps.map hypExpr
+  have h_needed_eq :
+      fr.hyps.map (fun h => match h with
+        | .essential e => Spec.applySubst fr.vars (idSubstOf fr) e
+        | .floating _ v => idSubstOf fr v) =
+      fr.hyps.map hypExpr := by
+    apply List.map_congr_left; intro h h_mem
+    cases h with
+    | floating c v => simp only [hypExpr]; exact idSubstOf_eq fr c v h_mem h_float_unique
+    | essential e => simp only [hypExpr]; exact applySubst_identity fr.vars (idSubstOf fr) e h_σ_syms
+  -- Step 4: Stack = needed.reverse ++ []
+  have h_stack_eq : fr.hyps.reverse.map hypExpr =
+      (fr.hyps.map (fun h => match h with
+        | .essential e => Spec.applySubst fr.vars (idSubstOf fr) e
+        | .floating _ v => idSubstOf fr v)).reverse ++ [] := by
+    rw [h_needed_eq, List.map_reverse]; simp
+  -- Step 5: Apply ProofValid.useAxiom and close
+  have h_result := Spec.ProofValid.useAxiom fr
+    (fr.hyps.reverse.map hypExpr) push_steps l fr e (idSubstOf fr)
+    h_in h_dvok h_typed h_push _ rfl [] h_stack_eq
+  rw [applySubst_identity fr.vars (idSubstOf fr) e h_σ_syms] at h_result
+  exact Spec.ProofValid.toProvable h_result
+
+/-! ### Parser-level theorem: all stored assertions are self-provable -/
+
+/-- **All assertions stored by `checkBytes` are self-provable.**
+
+    For any successful parse, every entry `Γ l = some (fr, e)` in the spec-level
+    database satisfies `Spec.Provable Γ fr e`.
+
+    This is a DB-closure property: it uses the full database `Γ` (including `l`
+    itself). For axioms, self-use IS the semantics. For proved theorems, self-use
+    is weaker than the parser's validation but still honest.
+
+    See `assertion_self_provable` for the proof technique (identity substitution). -/
+theorem checkBytes_all_assertions_selfProvable
+    (bytes : ByteArray)
+    (h_success : (Verify.checkBytes bytes).error? = none) :
+    ∃ (Γ : Spec.Database),
+      toDatabase (Verify.checkBytes bytes) = some Γ ∧
+      ∀ l fr e, Γ l = some (fr, e) → Spec.Provable Γ fr e := by
+  -- Extract spec database with strong well-formedness
+  rcases parser_toDatabase_wellFormed_strong bytes h_success with ⟨Γ, h_db, h_strong⟩
+  refine ⟨Γ, h_db, ?_⟩
+  intro l fr e h_lookup
+  -- WellFormedDatabaseStrong gives FloatUnique + DVWellFormed for every entry
+  have h_wf := h_strong.2 l fr e h_lookup
+  exact assertion_self_provable Γ l fr e h_lookup h_wf.2 h_wf.1.1
+
+end PhaseC_SelfProvable
 
 end Metamath.Kernel
 
