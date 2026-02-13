@@ -1769,14 +1769,14 @@ def toFrame (db : Verify.DB) (fr_impl : Verify.Frame) : Option Spec.Frame := do
   let dv_spec := fr_impl.dj.toList.map convertDV
   pure ⟨hyps_spec, dv_spec⟩
 
-/-- If a label is in the frame and toFrame succeeds, its converted hypothesis is in mand. -/
-theorem convertHyp_mem_mand
+/-- If a label is in the frame and toFrame succeeds, its converted hypothesis is in hyps. -/
+theorem convertHyp_mem_hyps
     (db : Verify.DB) (fr_impl : Verify.Frame) (fr_spec : Spec.Frame) (label : String)
     (h_fr : toFrame db fr_impl = some fr_spec)
     (h_mem : label ∈ fr_impl.hyps.toList) :
-    ∃ h_spec, convertHyp db label = some h_spec ∧ h_spec ∈ fr_spec.mand := by
+    ∃ h_spec, convertHyp db label = some h_spec ∧ h_spec ∈ fr_spec.hyps := by
   -- Extract the mapM result from toFrame
-  have h_map : fr_impl.hyps.toList.mapM (convertHyp db) = some fr_spec.mand := by
+  have h_map : fr_impl.hyps.toList.mapM (convertHyp db) = some fr_spec.hyps := by
     unfold toFrame at h_fr
     cases h_m : fr_impl.hyps.toList.mapM (convertHyp db) with
     | none =>
@@ -1785,26 +1785,26 @@ theorem convertHyp_mem_mand
         simp [h_m] at h_fr
         have h_eq : (Spec.Frame.mk hyps_spec (fr_impl.dj.toList.map convertDV)) = fr_spec := by
           simpa using h_fr
-        have h_mand : fr_spec.mand = hyps_spec := by
+        have h_hyps_eq : fr_spec.hyps = hyps_spec := by
           cases h_eq
           rfl
-        cases h_mand
+        cases h_hyps_eq
         rfl
 
   -- Get the index of label in the frame hyps
   obtain ⟨i, hi, h_eq_label⟩ := toList_mem_implies_index fr_impl.hyps label h_mem
   have hi_list : i < fr_impl.hyps.toList.length := by
     simpa [Array.toList_length] using hi
-  have h_len : fr_spec.mand.length = fr_impl.hyps.toList.length :=
+  have h_len : fr_spec.hyps.length = fr_impl.hyps.toList.length :=
     List.mapM_length_option (convertHyp db) h_map
-  have h_len' : i < fr_spec.mand.length := by
+  have h_len' : i < fr_spec.hyps.length := by
     simpa [h_len] using hi_list
 
   -- Use mapM_get_some to fetch the converted hypothesis at index i
   let i_fin : Fin fr_impl.hyps.toList.length := ⟨i, hi_list⟩
   obtain ⟨h_spec, h_conv, h_at⟩ :=
     KernelExtras.List.mapM_get_some (convertHyp db)
-      (fr_impl.hyps.toList) fr_spec.mand h_map i_fin h_len'
+      (fr_impl.hyps.toList) fr_spec.hyps h_map i_fin h_len'
 
   -- Show we converted exactly the label
   have h_eq' : fr_impl.hyps[i] = label := by
@@ -1820,23 +1820,23 @@ theorem convertHyp_mem_mand
     rw [h_label_at] at h_conv'
     exact h_conv'
 
-  -- Membership in mand from indexed equality
-  have h_in_mand : h_spec ∈ fr_spec.mand := by
+  -- Membership in hyps from indexed equality
+  have h_in_hyps : h_spec ∈ fr_spec.hyps := by
     apply (List.mem_iff_get).mpr
     refine ⟨⟨i, h_len'⟩, ?_⟩
     simpa using h_at
 
-  exact ⟨h_spec, h_conv_label, h_in_mand⟩
+  exact ⟨h_spec, h_conv_label, h_in_hyps⟩
 
-/-- If `toFrame` succeeds, each hypothesis label converts to the same index in `mand`. -/
+/-- If `toFrame` succeeds, each hypothesis label converts to the same index in `hyps`. -/
 theorem convertHyp_at_index
     (db : Verify.DB) (fr_impl : Verify.Frame) (fr_spec : Spec.Frame)
     (h_fr : toFrame db fr_impl = some fr_spec)
     (i : Nat) (hi : i < fr_impl.hyps.size) :
     ∃ h_spec, convertHyp db fr_impl.hyps[i]! = some h_spec ∧
-      ∃ h_len' : i < fr_spec.mand.length, fr_spec.mand.get ⟨i, h_len'⟩ = h_spec := by
+      ∃ h_len' : i < fr_spec.hyps.length, fr_spec.hyps.get ⟨i, h_len'⟩ = h_spec := by
   -- Extract the mapM result from toFrame
-  have h_map : fr_impl.hyps.toList.mapM (convertHyp db) = some fr_spec.mand := by
+  have h_map : fr_impl.hyps.toList.mapM (convertHyp db) = some fr_spec.hyps := by
     unfold toFrame at h_fr
     cases h_m : fr_impl.hyps.toList.mapM (convertHyp db) with
     | none =>
@@ -1845,23 +1845,23 @@ theorem convertHyp_at_index
         simp [h_m] at h_fr
         have h_eq : (Spec.Frame.mk hyps_spec (fr_impl.dj.toList.map convertDV)) = fr_spec := by
           simpa using h_fr
-        have h_mand : fr_spec.mand = hyps_spec := by
+        have h_hyps_eq : fr_spec.hyps = hyps_spec := by
           cases h_eq
           rfl
-        cases h_mand
+        cases h_hyps_eq
         rfl
 
   have hi_list : i < fr_impl.hyps.toList.length := by
     simpa [Array.toList_length] using hi
-  have h_len : fr_spec.mand.length = fr_impl.hyps.toList.length :=
+  have h_len : fr_spec.hyps.length = fr_impl.hyps.toList.length :=
     List.mapM_length_option (convertHyp db) h_map
-  have h_len' : i < fr_spec.mand.length := by
+  have h_len' : i < fr_spec.hyps.length := by
     simpa [h_len] using hi_list
 
   let i_fin : Fin fr_impl.hyps.toList.length := ⟨i, hi_list⟩
   obtain ⟨h_spec, h_conv, h_at⟩ :=
     KernelExtras.List.mapM_get_some (convertHyp db)
-      fr_impl.hyps.toList fr_spec.mand h_map i_fin h_len'
+      fr_impl.hyps.toList fr_spec.hyps h_map i_fin h_len'
 
   -- Rewrite the mapM result back to the array label at index i
   have h_label : fr_impl.hyps.toList[i_fin] = fr_impl.hyps[i] :=
@@ -1876,25 +1876,25 @@ theorem convertHyp_at_index
   refine ⟨h_spec, h_conv', ?_⟩
   exact ⟨h_len', by simpa using h_at⟩
 
-/-- Reverse direction of convertHyp_mem_mand: every hypothesis in fr_spec.mand
+/-- Reverse direction of convertHyp_mem_hyps: every hypothesis in fr_spec.hyps
     has a corresponding label in fr_impl.hyps.
 
     This is the key lemma for implementation completeness - given a spec hypothesis,
     we can find its implementation label.
 
     **Proof strategy**: Since toFrame uses mapM over fr_impl.hyps.toList,
-    and mapM preserves indices, each h_spec ∈ fr_spec.mand corresponds to
+    and mapM preserves indices, each h_spec ∈ fr_spec.hyps corresponds to
     a label at the same index in fr_impl.hyps. -/
-theorem mand_mem_has_label
+theorem hyps_mem_has_label
     (db : Verify.DB) (fr_impl : Verify.Frame) (fr_spec : Spec.Frame) (h_spec : Spec.Hyp)
     (h_fr : toFrame db fr_impl = some fr_spec)
-    (h_mem : h_spec ∈ fr_spec.mand) :
+    (h_mem : h_spec ∈ fr_spec.hyps) :
     ∃ label, label ∈ fr_impl.hyps.toList ∧ convertHyp db label = some h_spec := by
-  -- Get the index of h_spec in fr_spec.mand
+  -- Get the index of h_spec in fr_spec.hyps
   obtain ⟨⟨i, hi⟩, h_at⟩ := List.mem_iff_get.mp h_mem
 
   -- Extract the mapM result from toFrame
-  have h_map : fr_impl.hyps.toList.mapM (convertHyp db) = some fr_spec.mand := by
+  have h_map : fr_impl.hyps.toList.mapM (convertHyp db) = some fr_spec.hyps := by
     unfold toFrame at h_fr
     cases h_m : fr_impl.hyps.toList.mapM (convertHyp db) with
     | none =>
@@ -1903,14 +1903,14 @@ theorem mand_mem_has_label
         simp [h_m] at h_fr
         have h_eq : (Spec.Frame.mk hyps_spec (fr_impl.dj.toList.map convertDV)) = fr_spec := by
           simpa using h_fr
-        have h_mand : fr_spec.mand = hyps_spec := by
+        have h_hyps_eq : fr_spec.hyps = hyps_spec := by
           cases h_eq
           rfl
-        cases h_mand
+        cases h_hyps_eq
         rfl
 
   -- mapM preserves length, so i is valid in fr_impl.hyps
-  have h_len : fr_spec.mand.length = fr_impl.hyps.toList.length :=
+  have h_len : fr_spec.hyps.length = fr_impl.hyps.toList.length :=
     List.mapM_length_option (convertHyp db) h_map
   have hi_impl : i < fr_impl.hyps.toList.length := by
     rw [← h_len]; exact hi
@@ -1919,12 +1919,12 @@ theorem mand_mem_has_label
   let i_fin : Fin fr_impl.hyps.toList.length := ⟨i, hi_impl⟩
   obtain ⟨h_spec', h_conv, h_at'⟩ :=
     KernelExtras.List.mapM_get_some (convertHyp db)
-      fr_impl.hyps.toList fr_spec.mand h_map i_fin hi
+      fr_impl.hyps.toList fr_spec.hyps h_map i_fin hi
 
-  -- The hypothesis at index i in mand equals h_spec
+  -- The hypothesis at index i in hyps equals h_spec
   have h_eq_spec : h_spec' = h_spec := by
-    have h_get : fr_spec.mand.get ⟨i, hi⟩ = h_spec' := by simpa using h_at'
-    have h_at_h : fr_spec.mand.get ⟨i, hi⟩ = h_spec := h_at
+    have h_get : fr_spec.hyps.get ⟨i, hi⟩ = h_spec' := by simpa using h_at'
+    have h_at_h : fr_spec.hyps.get ⟨i, hi⟩ = h_spec := h_at
     rw [h_get] at h_at_h
     exact h_at_h
   subst h_eq_spec
@@ -1938,7 +1938,7 @@ theorem mand_mem_has_label
 theorem toFrame_hypsOnly_of_toFrame
     (db : Verify.DB) (fr_impl : Verify.Frame) (fr_spec : Spec.Frame)
     (h_fr : toFrame db fr_impl = some fr_spec) :
-    toFrame db {dj := #[], hyps := fr_impl.hyps} = some ⟨fr_spec.mand, []⟩ := by
+    toFrame db {dj := #[], hyps := fr_impl.hyps} = some ⟨fr_spec.hyps, []⟩ := by
   cases fr_impl with
   | mk dj hyps =>
     unfold toFrame at h_fr ⊢
@@ -1949,9 +1949,9 @@ theorem toFrame_hypsOnly_of_toFrame
     | some hs =>
         simp [h_map] at h_fr ⊢
         cases fr_spec with
-        | mk mand dv =>
+        | mk hyps_val dv =>
             simp at h_fr
-            have : hs = mand ∧ dj.toList.map convertDV = dv := h_fr
+            have : hs = hyps_val ∧ dj.toList.map convertDV = dv := h_fr
             simp [this.1]
 
 theorem toFrame_dv_eq
@@ -1968,9 +1968,9 @@ theorem toFrame_dv_eq
     | some hs =>
         simp [h_map] at h_fr
         cases fr_spec with
-        | mk mand dv =>
+        | mk hyps_val dv =>
             simp at h_fr
-            have : hs = mand ∧ dj.toList.map convertDV = dv := h_fr
+            have : hs = hyps_val ∧ dj.toList.map convertDV = dv := h_fr
             simp [this.2]
 
 /-- **Totality**: If a frame is well-formed, `toFrame` succeeds. -/
@@ -2071,9 +2071,9 @@ theorem wellFormedFrame_hyps_only (db : Verify.DB) (fr : Verify.Frame) :
 -- -- /-- Helper: Extract the mapM result from toFrame's do-notation -/
 -- -- lemma toFrame_hyps_eq (db : Verify.DB) (fr_impl : Verify.Frame) (fr_spec : Spec.Frame)
 -- --     (h_conv : toFrame db fr_impl = some fr_spec) :
--- --     fr_impl.hyps.toList.mapM (convertHyp db) = some fr_spec.mand := by
+-- --     fr_impl.hyps.toList.mapM (convertHyp db) = some fr_spec.hyps := by
 -- --   -- toFrame returns ⟨hyps_spec, dv_spec⟩, so extracting hyps_spec gives us the mapM result
--- --   have : toFrame db fr_impl = some ⟨fr_spec.mand, fr_spec.dj⟩ := h_conv
+-- --   have : toFrame db fr_impl = some ⟨fr_spec.hyps, fr_spec.dj⟩ := h_conv
 -- --   -- The do-notation in toFrame is: let hyps_spec ← ...; ... pure ⟨hyps_spec, dv_spec⟩
 -- --   unfold toFrame at this
 -- --   simp at this
@@ -2090,8 +2090,8 @@ theorem wellFormedFrame_hyps_only (db : Verify.DB) (fr : Verify.Frame) :
 -- --   unfold Spec.Frame.vars at h_mem
 -- --   simp [List.mem_filterMap] at h_mem
 -- -- 
--- --   -- h_mem: ∃ h ∈ fr_spec.mand, (match h with | floating _ v' => some v' | _ => none) = some v
--- --   obtain ⟨h, h_in_mand, h_match⟩ := h_mem
+-- --   -- h_mem: ∃ h ∈ fr_spec.hyps, (match h with | floating _ v' => some v' | _ => none) = some v
+-- --   obtain ⟨h, h_in_hyps, h_match⟩ := h_mem
 -- -- 
 -- --   -- Only floating hypotheses produce some in the filterMap
 -- --   cases h with
@@ -2102,21 +2102,21 @@ theorem wellFormedFrame_hyps_only (db : Verify.DB) (fr : Verify.Frame) :
 -- --       rw [← h_match]
 -- -- 
 -- --       -- Now v_float came from some convertHyp call
--- --       -- fr_spec.mand came from fr_impl.hyps.toList.mapM (convertHyp db)
+-- --       -- fr_spec.hyps came from fr_impl.hyps.toList.mapM (convertHyp db)
 -- --       -- Need to find which label in fr_impl.hyps produced this floating hyp
 -- -- 
 -- --       -- **Proof sketch**:
--- --       -- 1. h came from fr_spec.mand, which was built by mapM convertHyp
+-- --       -- 1. h came from fr_spec.hyps, which was built by mapM convertHyp
 -- --       -- 2. Find the corresponding label in fr_impl.hyps
 -- --       -- 3. That label resolves to a well-formed floating hypothesis formula
 -- --       -- 4. Apply convertHyp_float_from_var to get the Variable from Sym.var
 -- -- 
 -- --       -- From toFrame definition: hyps_spec ← fr_impl.hyps.toList.mapM (convertHyp db)
--- --       -- So fr_spec.mand came from this mapM
--- --       -- h ∈ fr_spec.mand was produced by convertHyp, so by List.mapM_mem:
--- --       have h_map_eq : fr_impl.hyps.toList.mapM (convertHyp db) = some fr_spec.mand :=
+-- --       -- So fr_spec.hyps came from this mapM
+-- --       -- h ∈ fr_spec.hyps was produced by convertHyp, so by List.mapM_mem:
+-- --       have h_map_eq : fr_impl.hyps.toList.mapM (convertHyp db) = some fr_spec.hyps :=
 -- --         toFrame_hyps_eq db fr_impl fr_spec h_conv
---       have ⟨lbl, h_lbl_mem, h_convert⟩ := List.mapM_mem (convertHyp db) fr_impl.hyps.toList fr_spec.mand h h_map_eq h_in_mand
+--       have ⟨lbl, h_lbl_mem, h_convert⟩ := List.mapM_mem (convertHyp db) fr_impl.hyps.toList fr_spec.hyps h h_map_eq h_in_hyps
 -- 
 --       -- Now lbl ∈ fr_impl.hyps.toList and convertHyp db lbl = some h
 --       -- h = floating c_type v_float, so we get the floating case
@@ -2130,7 +2130,7 @@ theorem wellFormedFrame_hyps_only (db : Verify.DB) (fr : Verify.Frame) :
 /-- Variables extracted from toFrame come from Sym.var.
 
     **Proof strategy:**
-    1. fr_spec.vars = fr_spec.mand.filterMap (extract variables from floating hyps)
+    1. fr_spec.vars = fr_spec.hyps.filterMap (extract variables from floating hyps)
     2. By List.mem_filterMap: v ∈ vars means ∃ h ∈ mand with h = Hyp.floating c v
     3. By List.mapM_mem: h ∈ mand means ∃ lbl ∈ fr_impl.hyps with convertHyp db lbl = some h
     4. By WellFormedFrame: lbl has WellFormedFloat formula
@@ -2144,9 +2144,9 @@ theorem toFrame_vars_from_var (db : Verify.DB) (fr_impl : Verify.Frame) (fr_spec
   -- Unfold Frame.vars: it's filterMap extracting variables from floating hypotheses
   unfold Spec.Frame.vars at h_v_in_vars
 
-  -- By List.mem_filterMap: ∃ h ∈ fr_spec.mand, (match h with | floating _ v => some v | _ => none) = some v
+  -- By List.mem_filterMap: ∃ h ∈ fr_spec.hyps, (match h with | floating _ v => some v | _ => none) = some v
   simp [List.mem_filterMap] at h_v_in_vars
-  obtain ⟨h, h_in_mand, h_match⟩ := h_v_in_vars
+  obtain ⟨h, h_in_hyps, h_match⟩ := h_v_in_vars
 
   -- The match only succeeds for floating hypotheses
   cases h with
@@ -2177,11 +2177,11 @@ theorem toFrame_vars_from_var (db : Verify.DB) (fr_impl : Verify.Frame) (fr_spec
       simp at h_conv
       -- Now h_conv: fr_spec = ⟨hyps_spec, fr_impl.dj.toList.map convertDV⟩
       cases h_conv
-      -- Now fr_spec.mand = hyps_spec
+      -- Now fr_spec.hyps = hyps_spec
 
-      -- Now h_in_mand: Hyp.floating c_type v_hyp ∈ hyps_spec
+      -- Now h_in_hyps: Hyp.floating c_type v_hyp ∈ hyps_spec
       -- By List.mapM_mem: ∃ lbl ∈ fr_impl.hyps.toList, convertHyp db lbl = some (floating c_type v_hyp)
-      obtain ⟨lbl, h_lbl_mem, h_convertHyp⟩ := List.mapM_mem (convertHyp db) fr_impl.hyps.toList hyps_spec _ h_mapM_res h_in_mand
+      obtain ⟨lbl, h_lbl_mem, h_convertHyp⟩ := List.mapM_mem (convertHyp db) fr_impl.hyps.toList hyps_spec _ h_mapM_res h_in_hyps
 
       -- Use WellFormedFrame to show the hypothesis at lbl is well-formed
       obtain ⟨h_hypOK, _⟩ := h_wf
@@ -2395,11 +2395,11 @@ theorem toFrame_floats_eq
   | none =>
       simp [h_hyps] at h
   | some hyps_spec =>
-      -- toFrame succeeded, so fr_spec.mand = hyps_spec
+      -- toFrame succeeded, so fr_spec.hyps = hyps_spec
       have h_fr_spec : fr_spec = ⟨hyps_spec, fr_impl.dj.toList.map convertDV⟩ := by
         simp [h_hyps] at h
         exact h.symm
-      -- Unfold Bridge.floats - it's just filterMap floatVarOfHyp on mand
+      -- Unfold Bridge.floats - it's just filterMap floatVarOfHyp on hyps
       subst h_fr_spec
       unfold Bridge.floats
       -- Show the inline match equals floatVarOfHyp by definition
@@ -2882,28 +2882,28 @@ theorem toSubstTyped_sigma_of_lookup
 
 end
 
-/-- When two frames have the same mand, toSubstTyped results match on the σ function.
+/-- When two frames have the same hyps, toSubstTyped results match on the σ function.
 
-If toSubstTyped succeeds for ⟨fr.mand, []⟩, it also succeeds for fr (any dv),
+If toSubstTyped succeeds for ⟨fr.hyps, []⟩, it also succeeds for fr (any dv),
 and the resulting σ functions are equal.
 
-**Key insight:** floats only depends on mand, so allM checks are identical.
+**Key insight:** floats only depends on hyps, so allM checks are identical.
 -/
-theorem toSubstTyped_same_mand
+theorem toSubstTyped_same_hyps
     (fr : Spec.Frame) (σ_impl : Std.HashMap String Verify.Formula)
-    (σ_hypsOnly : Bridge.TypedSubst ⟨fr.mand, []⟩)
-    (h_typed_hypsOnly : toSubstTyped ⟨fr.mand, []⟩ σ_impl = some σ_hypsOnly) :
+    (σ_hypsOnly : Bridge.TypedSubst ⟨fr.hyps, []⟩)
+    (h_typed_hypsOnly : toSubstTyped ⟨fr.hyps, []⟩ σ_impl = some σ_hypsOnly) :
     ∃ σ_typed : Bridge.TypedSubst fr, toSubstTyped fr σ_impl = some σ_typed ∧
       σ_typed.σ = σ_hypsOnly.σ := by
-  -- floats only depends on mand
-  have h_floats_eq : Bridge.floats fr = Bridge.floats ⟨fr.mand, []⟩ := by
+  -- floats only depends on hyps
+  have h_floats_eq : Bridge.floats fr = Bridge.floats ⟨fr.hyps, []⟩ := by
     unfold Bridge.floats
     rfl
   -- Extract allM success from h_typed_hypsOnly
   unfold toSubstTyped at h_typed_hypsOnly
   simp only [] at h_typed_hypsOnly
   by_cases h_allM :
-      (Bridge.floats ⟨fr.mand, []⟩).allM (fun x => checkFloat σ_impl x.fst x.snd) = some true
+      (Bridge.floats ⟨fr.hyps, []⟩).allM (fun x => checkFloat σ_impl x.fst x.snd) = some true
   · -- allM succeeded, so toSubstTyped fr also succeeds
     simp [h_allM] at h_typed_hypsOnly
     -- Now construct the result for fr
@@ -5245,7 +5245,7 @@ theorem float_step_ok
   ProofStateInv db pr Γ fr_spec stack_spec steps →
   db.find? label = some (Verify.Object.hyp false f lbl) →
   toExprOpt f = some ⟨c, [v.v]⟩ →
-  Spec.Hyp.floating c v ∈ fr_spec.mand →
+  Spec.Hyp.floating c v ∈ fr_spec.hyps →
   Verify.DB.stepNormal db pr label = Except.ok pr' →
   ProofStateInv db pr' Γ fr_spec (stack_spec ++ [toExpr f])
     (Spec.ProofStep.useHyp (Spec.Hyp.floating c v) :: steps) := by
@@ -5310,7 +5310,7 @@ theorem essential_step_ok
   ProofStateInv db pr Γ fr_spec stack_spec steps →
   db.find? label = some (Verify.Object.hyp true f lbl) →
   toExprOpt f = some e →
-  Spec.Hyp.essential e ∈ fr_spec.mand →
+  Spec.Hyp.essential e ∈ fr_spec.hyps →
   Verify.DB.stepNormal db pr label = Except.ok pr' →
   ProofStateInv db pr' Γ fr_spec (stack_spec ++ [toExpr f])
     (Spec.ProofStep.useHyp (Spec.Hyp.essential e) :: steps) := by
@@ -6018,7 +6018,7 @@ theorem frameFloatVars_mem_iff_vars
   have h_fr_hypsOnly := toFrame_hypsOnly_of_toFrame db fr_impl fr_spec h_fr
   have h_wf_hypsOnly : WellFormedFrame db {dj := #[], hyps := fr_impl.hyps} :=
     wellFormedFrame_hyps_only db fr_impl h_wf
-  have h_corr := toFrame_float_correspondence db fr_impl.hyps ⟨fr_spec.mand, []⟩ h_fr_hypsOnly h_wf_hypsOnly
+  have h_corr := toFrame_float_correspondence db fr_impl.hyps ⟨fr_spec.hyps, []⟩ h_fr_hypsOnly h_wf_hypsOnly
   constructor
   · intro h_mem
     have h_mem' : s ∈ Verify.DB.frameFloatVars db (Verify.Frame.mk #[] fr_impl.hyps) := by
@@ -6037,7 +6037,7 @@ theorem frameFloatVars_mem_iff_vars
     have h_find_i : db.find? fr_impl.hyps[i]! = some (.hyp false f lbl') := by
       simpa [h_lbl_eq] using h_find
     have h_float_mem' :
-        (Spec.Constant.mk c, Spec.Variable.mk s) ∈ Bridge.floats ⟨fr_spec.mand, []⟩ := by
+        (Spec.Constant.mk c, Spec.Variable.mk s) ∈ Bridge.floats ⟨fr_spec.hyps, []⟩ := by
       refine (h_corr (Spec.Constant.mk c) (Spec.Variable.mk s)).2 ?_
       exact ⟨i, lbl', f, hi, h_find_i, h_size, h0, by simp [h1]⟩
     have h_float_mem : (Spec.Constant.mk c, Spec.Variable.mk s) ∈ Bridge.floats fr_spec := by
@@ -6048,7 +6048,7 @@ theorem frameFloatVars_mem_iff_vars
     have h_var : Spec.Variable.mk s ∈ fr_spec.vars :=
       (varNames_mem_iff fr_spec.vars s).1 h_mem
     obtain ⟨c, h_float_mem⟩ := (vars_mem_iff_floats fr_spec (Spec.Variable.mk s)).1 h_var
-    have h_float_mem' : (c, Spec.Variable.mk s) ∈ Bridge.floats ⟨fr_spec.mand, []⟩ := by
+    have h_float_mem' : (c, Spec.Variable.mk s) ∈ Bridge.floats ⟨fr_spec.hyps, []⟩ := by
       simpa using h_float_mem
     have h_exists := (h_corr c (Spec.Variable.mk s)).1 h_float_mem'
     rcases h_exists with ⟨i, lbl, f, hi, h_find, h_size, h0, h1⟩
@@ -6369,7 +6369,7 @@ theorem toDatabase_spec_wellFormed
           simp
       | essential e_hyp =>
           obtain ⟨label, h_lbl_mem, h_conv⟩ :=
-            mand_mem_has_label db fr_impl fr (Spec.Hyp.essential e_hyp) h_fr h_mem
+            hyps_mem_has_label db fr_impl fr (Spec.Hyp.essential e_hyp) h_fr h_mem
           obtain ⟨i, hi, h_lbl_eq⟩ := toList_mem_implies_index fr_impl.hyps label h_lbl_mem
           have h_find_hyp :
               ∃ f_hyp lbl', db.find? label = some (.hyp true f_hyp lbl') ∧
@@ -6450,11 +6450,11 @@ theorem toDatabase_spec_wellFormed
       assert_frame_wf_of_db h_wf h_find
     exact frameVarsDisjointConsts_of_toFrame db fr_impl fr h_fr h_frame_wf h_scoped
 
-theorem mand_length_eq_of_toFrame
+theorem hyps_length_eq_of_toFrame
     (db : Verify.DB) (fr_impl : Verify.Frame) (fr_spec : Spec.Frame)
     (h_fr : toFrame db fr_impl = some fr_spec) :
-    fr_spec.mand.length = fr_impl.hyps.size := by
-  have h_map : fr_impl.hyps.toList.mapM (convertHyp db) = some fr_spec.mand := by
+    fr_spec.hyps.length = fr_impl.hyps.size := by
+  have h_map : fr_impl.hyps.toList.mapM (convertHyp db) = some fr_spec.hyps := by
     unfold toFrame at h_fr
     cases h_m : fr_impl.hyps.toList.mapM (convertHyp db) with
     | none =>
@@ -6463,12 +6463,12 @@ theorem mand_length_eq_of_toFrame
         simp [h_m] at h_fr
         have h_eq : (Spec.Frame.mk hyps_spec (fr_impl.dj.toList.map convertDV)) = fr_spec := by
           simpa using h_fr
-        have h_mand : fr_spec.mand = hyps_spec := by
+        have h_hyps_eq : fr_spec.hyps = hyps_spec := by
           cases h_eq
           rfl
-        cases h_mand
+        cases h_hyps_eq
         rfl
-  have h_len : fr_spec.mand.length = fr_impl.hyps.toList.length :=
+  have h_len : fr_spec.hyps.length = fr_impl.hyps.toList.length :=
     List.mapM_length_option (convertHyp db) h_map
   simpa [Array.toList_length] using h_len
 
@@ -6477,12 +6477,12 @@ theorem float_var_distinct_of_indices
     (h_fr : toFrame db fr_impl = some fr_spec)
     (h_wf : WellFormedFrame db fr_impl)
     (h_unique : UniqueFloatVars db fr_impl)
-    {i j : Nat} (hi : i < fr_spec.mand.length) (hj : j < fr_spec.mand.length) (hij : i ≠ j)
+    {i j : Nat} (hi : i < fr_spec.hyps.length) (hj : j < fr_spec.hyps.length) (hij : i ≠ j)
     {c v c' v'}
-    (h_i : fr_spec.mand.get ⟨i, hi⟩ = Spec.Hyp.floating c v)
-    (h_j : fr_spec.mand.get ⟨j, hj⟩ = Spec.Hyp.floating c' v') :
+    (h_i : fr_spec.hyps.get ⟨i, hi⟩ = Spec.Hyp.floating c v)
+    (h_j : fr_spec.hyps.get ⟨j, hj⟩ = Spec.Hyp.floating c' v') :
     v ≠ v' := by
-  have h_len := mand_length_eq_of_toFrame db fr_impl fr_spec h_fr
+  have h_len := hyps_length_eq_of_toFrame db fr_impl fr_spec h_fr
   have hi' : i < fr_impl.hyps.size := by
     simpa [h_len] using hi
   have hj' : j < fr_impl.hyps.size := by
@@ -6490,7 +6490,7 @@ theorem float_var_distinct_of_indices
   obtain ⟨h_spec_i, h_conv_i, h_get_i⟩ :=
     convertHyp_at_index db fr_impl fr_spec h_fr i hi'
   obtain ⟨h_len_i, h_get_i'⟩ := h_get_i
-  have h_get_i'' : fr_spec.mand.get ⟨i, hi⟩ = h_spec_i := by
+  have h_get_i'' : fr_spec.hyps.get ⟨i, hi⟩ = h_spec_i := by
     simpa using h_get_i'
   have h_spec_i_eq : h_spec_i = Spec.Hyp.floating c v := by
     exact h_get_i''.symm.trans h_i
@@ -6500,7 +6500,7 @@ theorem float_var_distinct_of_indices
   obtain ⟨h_spec_j, h_conv_j, h_get_j⟩ :=
     convertHyp_at_index db fr_impl fr_spec h_fr j hj'
   obtain ⟨h_len_j, h_get_j'⟩ := h_get_j
-  have h_get_j'' : fr_spec.mand.get ⟨j, hj⟩ = h_spec_j := by
+  have h_get_j'' : fr_spec.hyps.get ⟨j, hj⟩ = h_spec_j := by
     simpa using h_get_j'
   have h_spec_j_eq : h_spec_j = Spec.Hyp.floating c' v' := by
     exact h_get_j''.symm.trans h_j
@@ -6585,10 +6585,10 @@ theorem floatUnique_of_uniqueFloatVars
   by_cases hij : i = j
   · subst hij
     -- same index: equal hypotheses, so typecodes equal
-    have h_fin : (⟨i, hi⟩ : Fin fr_spec.mand.length) = ⟨i, hj⟩ := by
+    have h_fin : (⟨i, hi⟩ : Fin fr_spec.hyps.length) = ⟨i, hj⟩ := by
       apply Fin.ext
       rfl
-    have h_j' : fr_spec.mand.get ⟨i, hi⟩ = Spec.Hyp.floating c' v := by
+    have h_j' : fr_spec.hyps.get ⟨i, hi⟩ = Spec.Hyp.floating c' v := by
       simpa [h_fin] using h_j
     have h_eq : Spec.Hyp.floating c v = Spec.Hyp.floating c' v := by
       exact h_i.symm.trans h_j'
@@ -6642,14 +6642,14 @@ theorem floatVarNoDup_of_uniqueFloatVars
       List.Pairwise
         (fun h h' =>
           ∀ v, hypVar? h = some v → ∀ v', hypVar? h' = some v' → v ≠ v')
-        fr_spec.mand := by
+        fr_spec.hyps := by
     -- Use index-based distinctness for floating hypotheses
-    apply (pairwise_of_index (l := fr_spec.mand))
+    apply (pairwise_of_index (l := fr_spec.hyps))
     intro i j hij hj
-    have hi : i < fr_spec.mand.length := Nat.lt_trans hij hj
+    have hi : i < fr_spec.hyps.length := Nat.lt_trans hij hj
     -- Split on floating/essential cases
-    cases h_i : fr_spec.mand.get ⟨i, hi⟩ <;>
-    cases h_j : fr_spec.mand.get ⟨j, hj⟩ <;> intro v h_v v' h_v'
+    cases h_i : fr_spec.hyps.get ⟨i, hi⟩ <;>
+    cases h_j : fr_spec.hyps.get ⟨j, hj⟩ <;> intro v h_v v' h_v'
     · -- floating / floating
       cases h_v
       cases h_v'
@@ -6661,17 +6661,17 @@ theorem floatVarNoDup_of_uniqueFloatVars
     · -- essential / essential
       cases h_v
   have h_pairwise_vars :
-      List.Pairwise (· ≠ ·) (fr_spec.mand.filterMap hypVar?) := by
-    have := (List.pairwise_filterMap (l := fr_spec.mand) (f := hypVar?) (R := fun v v' => v ≠ v'))
+      List.Pairwise (· ≠ ·) (fr_spec.hyps.filterMap hypVar?) := by
+    have := (List.pairwise_filterMap (l := fr_spec.hyps) (f := hypVar?) (R := fun v v' => v ≠ v'))
     exact (this.2 h_pairwise)
-  have h_nodup : List.Nodup (fr_spec.mand.filterMap hypVar?) :=
+  have h_nodup : List.Nodup (fr_spec.hyps.filterMap hypVar?) :=
     (List.nodup_iff_pairwise_ne).2 h_pairwise_vars
   -- Rewrite to FloatVarNoDup definition
   have h_eq :
-      (floatList fr_spec).map Prod.snd = fr_spec.mand.filterMap hypVar? := by
+      (floatList fr_spec).map Prod.snd = fr_spec.hyps.filterMap hypVar? := by
     -- Unfold and simplify
     unfold floatList
-    induction fr_spec.mand with
+    induction fr_spec.hyps with
     | nil =>
         simp [hypVar?]
     | cons h tl ih =>
@@ -6887,7 +6887,7 @@ corresponding hypothesis after applying the validated substitution:
 
 ```lean
 ∀ i < hyps.size, ∃ e_spec : Spec.Expr,
-  convertHyp db hyps[i] = some (match fr_spec.mand[i] with
+  convertHyp db hyps[i] = some (match fr_spec.hyps[i] with
     | Spec.Hyp.floating c v => Spec.Hyp.floating c v
     | Spec.Hyp.essential e => Spec.Hyp.essential e) ∧
   toExpr stack[off + i] = Spec.applySubst (frame_vars fr_spec) σ_typed.σ e_spec
@@ -6895,7 +6895,7 @@ corresponding hypothesis after applying the validated substitution:
 
 **Proof outline:**
 - compute window/needed list lengths
-- relate convertHyp list to frame mand via toFrame
+- relate convertHyp list to frame hyps via toFrame
 - elementwise equality using checkHyp_stack_alignment (float/essential cases)
 
 **Dependencies:** checkHyp_stack_alignment (from checkHyp_loop_alignment)
@@ -6938,7 +6938,7 @@ theorem checkHyp_hyp_matches
       _ = Nat.min len ((viewStack stack).drop off).length := by simp
       _ = len := by simp [h_len_drop, Nat.min_eq_left (Nat.le_refl len)]
   -- Length of needed is mand length, which matches hyps size via toFrame
-  have h_map : fr_impl.hyps.toList.mapM (convertHyp db) = some fr_spec.mand := by
+  have h_map : fr_impl.hyps.toList.mapM (convertHyp db) = some fr_spec.hyps := by
     unfold toFrame at h_fr
     cases h_m : fr_impl.hyps.toList.mapM (convertHyp db) with
     | none =>
@@ -6949,17 +6949,17 @@ theorem checkHyp_hyp_matches
           have h_fr' := h_fr
           simp at h_fr'
           exact h_fr'
-        have h_mand : fr_spec.mand = hyps_spec := by
+        have h_hyps_eq : fr_spec.hyps = hyps_spec := by
           cases h_eq
           rfl
-        cases h_mand
+        cases h_hyps_eq
         rfl
-  have h_len_mand : fr_spec.mand.length = fr_impl.hyps.size := by
-    have h_len : fr_spec.mand.length = fr_impl.hyps.toList.length :=
+  have h_len_hyps : fr_spec.hyps.length = fr_impl.hyps.size := by
+    have h_len : fr_spec.hyps.length = fr_impl.hyps.toList.length :=
       List.mapM_length_option (convertHyp db) h_map
     simpa [Array.toList_length] using h_len
   have h_len_needed : (Bridge.needed fr_spec.vars fr_spec σ_typed.σ).length = len := by
-    simp [Bridge.needed, h_len_mand, len]
+    simp [Bridge.needed, h_len_hyps, len]
   -- Elementwise equality
   have h_len_eq :
       (viewStack (stack.extract off (off + len))).length =
@@ -7020,47 +7020,47 @@ theorem checkHyp_hyp_matches
       _ = toExpr (stack[off.1 + i]!) := by
             simp [getElem!_pos _ _ h_idx]
   -- RHS element: needed list at i
-  have h_len' : i < fr_spec.mand.length := by
-    simpa [h_len_mand] using h_i
+  have h_len' : i < fr_spec.hyps.length := by
+    simpa [h_len_hyps] using h_i
   obtain ⟨h_spec, h_conv, h_at⟩ :=
     convertHyp_at_index db fr_impl fr_spec h_fr i h_i
   have h_right :
       (Bridge.needed fr_spec.vars fr_spec σ_typed.σ)[i]'h_i_needed =
         Bridge.needOf fr_spec.vars σ_typed.σ h_spec := by
     rcases h_at with ⟨h_len', h_get⟩
-    have h_i_mand : i < fr_spec.mand.length := by
-      simpa [h_len_mand, len] using h_i
-    have h_get' : fr_spec.mand[i]'h_i_mand = h_spec := by
-      have h_get0 : fr_spec.mand[i]'h_len' = h_spec := by
+    have h_i_hyps : i < fr_spec.hyps.length := by
+      simpa [h_len_hyps, len] using h_i
+    have h_get' : fr_spec.hyps[i]'h_i_hyps = h_spec := by
+      have h_get0 : fr_spec.hyps[i]'h_len' = h_spec := by
         simpa using h_get
-      have h_eq : h_len' = h_i_mand := Subsingleton.elim _ _
+      have h_eq : h_len' = h_i_hyps := Subsingleton.elim _ _
       simpa [h_eq] using h_get0
     -- Build a proof of i < needed.length from i < mand.length.
     have h_i_needed' : i < (Bridge.needed fr_spec.vars fr_spec σ_typed.σ).length := by
       have h_i_len : i < len := by
-        simpa [h_len_mand, len] using h_i_mand
+        simpa [h_len_hyps, len] using h_i_hyps
       simpa [h_len_needed] using h_i_len
     have h_eq_needed : h_i_needed = h_i_needed' := Subsingleton.elim _ _
     have h_right0 :
         (Bridge.needed fr_spec.vars fr_spec σ_typed.σ)[i]'h_i_needed' =
-          Bridge.needOf fr_spec.vars σ_typed.σ (fr_spec.mand[i]'h_i_mand) := by
+          Bridge.needOf fr_spec.vars σ_typed.σ (fr_spec.hyps[i]'h_i_hyps) := by
       -- List.getElem_map uses a derived proof; replace it via proof irrelevance.
       have h_right1 :
           (Bridge.needed fr_spec.vars fr_spec σ_typed.σ)[i]'h_i_needed' =
-            Bridge.needOf fr_spec.vars σ_typed.σ (fr_spec.mand[i]'(by
+            Bridge.needOf fr_spec.vars σ_typed.σ (fr_spec.hyps[i]'(by
               have h_i_len : i < len := by
                 simpa [h_len_needed] using h_i_needed'
-              simpa [h_len_mand, len] using h_i_len)) := by
+              simpa [h_len_hyps, len] using h_i_len)) := by
         simp [Bridge.needed, List.getElem_map]
-      have h_i_mand' : i < fr_spec.mand.length := by
+      have h_i_hyps' : i < fr_spec.hyps.length := by
         have h_i_len : i < len := by
           simpa [h_len_needed] using h_i_needed'
-        simpa [h_len_mand, len] using h_i_len
-      have h_eq_mand : h_i_mand' = h_i_mand := Subsingleton.elim _ _
+        simpa [h_len_hyps, len] using h_i_len
+      have h_eq_mand : h_i_hyps' = h_i_hyps := Subsingleton.elim _ _
       simpa [h_eq_mand] using h_right1
     have h_right1 :
         (Bridge.needed fr_spec.vars fr_spec σ_typed.σ)[i]'h_i_needed =
-          Bridge.needOf fr_spec.vars σ_typed.σ (fr_spec.mand[i]'h_i_mand) := by
+          Bridge.needOf fr_spec.vars σ_typed.σ (fr_spec.hyps[i]'h_i_hyps) := by
       simpa [h_eq_needed] using h_right0
     -- Rewrite the hypothesis at index i.
     simpa [h_get'] using h_right1
@@ -7173,12 +7173,12 @@ theorem checkHyp_hyp_matches
           simpa [h_ess_true] using h_find'
         exact checkHyp_essential_syms_ok_loop db fr_impl.hyps stack off 0 ∅ σ_impl h_chk
           i (Nat.zero_le i) h_i f lbl h_ess_find
-      have h_fr_hypsOnly : toFrame db {dj := #[], hyps := fr_impl.hyps} = some ⟨fr_spec.mand, []⟩ :=
+      have h_fr_hypsOnly : toFrame db {dj := #[], hyps := fr_impl.hyps} = some ⟨fr_spec.hyps, []⟩ :=
         toFrame_hypsOnly_of_toFrame db fr_impl fr_spec h_fr
       have h_wf_hypsOnly : WellFormedFrame db {dj := #[], hyps := fr_impl.hyps} :=
         wellFormedFrame_hyps_only db fr_impl h_wf
       have h_syms_sound :=
-        formulaSymsRespectFrame_sound_hypsOnly db fr_impl.hyps ⟨fr_spec.mand, []⟩ f
+        formulaSymsRespectFrame_sound_hypsOnly db fr_impl.hyps ⟨fr_spec.hyps, []⟩ f
           h_fr_hypsOnly h_wf_hypsOnly h_syms_ok
       have h_match : ∀ v_var ∈ fr_spec.vars, ∃ f_v, σ_impl[v_var.v]? = some f_v ∧ toExpr f_v = σ_typed.σ v_var := by
         intro v_var h_v_in
@@ -7287,8 +7287,8 @@ theorem stack_window_needOf
   obtain ⟨h_spec, h_conv, h_at⟩ :=
     convertHyp_at_index db fr_impl fr_spec h_fr i h_i
   -- Evaluate needed list at index i
-  have h_len_mand : fr_spec.mand.length = fr_impl.hyps.size := by
-    have h_map : fr_impl.hyps.toList.mapM (convertHyp db) = some fr_spec.mand := by
+  have h_len_hyps : fr_spec.hyps.length = fr_impl.hyps.size := by
+    have h_map : fr_impl.hyps.toList.mapM (convertHyp db) = some fr_spec.hyps := by
       unfold toFrame at h_fr
       cases h_m : fr_impl.hyps.toList.mapM (convertHyp db) with
       | none =>
@@ -7297,33 +7297,33 @@ theorem stack_window_needOf
           simp [h_m] at h_fr
           have h_eq : (Spec.Frame.mk hyps_spec (fr_impl.dj.toList.map convertDV)) = fr_spec := by
             simpa using h_fr
-          have h_mand : fr_spec.mand = hyps_spec := by
+          have h_hyps_eq : fr_spec.hyps = hyps_spec := by
             cases h_eq
             rfl
-          cases h_mand
+          cases h_hyps_eq
           rfl
-    have h_len : fr_spec.mand.length = fr_impl.hyps.toList.length :=
+    have h_len : fr_spec.hyps.length = fr_impl.hyps.toList.length :=
       List.mapM_length_option (convertHyp db) h_map
     simpa [Array.toList_length] using h_len
   have h_i_needed : i < (Bridge.needed fr_spec.vars fr_spec σ).length := by
-    have h_i' : i < fr_spec.mand.length := by
-      simpa [h_len_mand] using h_i
-    simpa [Bridge.needed, h_i', h_len_mand]
+    have h_i' : i < fr_spec.hyps.length := by
+      simpa [h_len_hyps] using h_i
+    simpa [Bridge.needed, h_i', h_len_hyps]
   have h_need :
       (Bridge.needed fr_spec.vars fr_spec σ)[i]'h_i_needed =
         Bridge.needOf fr_spec.vars σ h_spec := by
     rcases h_at with ⟨h_len', h_get⟩
-    have h_i_mand : i < fr_spec.mand.length := by
-      simpa [h_len_mand] using h_i
-    have h_get' : fr_spec.mand[i]'h_i_mand = h_spec := by
-      have h_eq : h_len' = h_i_mand := Subsingleton.elim _ _
+    have h_i_hyps : i < fr_spec.hyps.length := by
+      simpa [h_len_hyps] using h_i
+    have h_get' : fr_spec.hyps[i]'h_i_hyps = h_spec := by
+      have h_eq : h_len' = h_i_hyps := Subsingleton.elim _ _
       simpa [h_eq] using h_get
     have h_i_needed' : i < (Bridge.needed fr_spec.vars fr_spec σ).length := by
-      simpa [Bridge.needed, h_len_mand] using h_i_mand
+      simpa [Bridge.needed, h_len_hyps] using h_i_hyps
     have h_eq_needed : h_i_needed = h_i_needed' := Subsingleton.elim _ _
     have h_need' :
         (Bridge.needed fr_spec.vars fr_spec σ)[i]'h_i_needed' =
-          Bridge.needOf fr_spec.vars σ (fr_spec.mand[i]'h_i_mand) := by
+          Bridge.needOf fr_spec.vars σ (fr_spec.hyps[i]'h_i_hyps) := by
       simp [Bridge.needed, List.getElem_map]
     simpa [h_eq_needed, h_get'] using h_need'
   -- Combine with window equality
@@ -7402,7 +7402,7 @@ theorem assert_step_ok
       have h_off : off + fr_impl.hyps.size = pr.stack.size := Nat.sub_add_cancel h_hyp_size
 
       -- Build hyps-only frame witnesses (used in multiple places)
-      have h_fr_hypsOnly : toFrame db {dj := #[], hyps := fr_impl.hyps} = some ⟨fr_assert.mand, []⟩ := by
+      have h_fr_hypsOnly : toFrame db {dj := #[], hyps := fr_impl.hyps} = some ⟨fr_assert.hyps, []⟩ := by
         cases fr_impl with | mk dj hyps =>
         unfold toFrame at h_fr_assert ⊢
         simp at h_fr_assert ⊢
@@ -7412,12 +7412,12 @@ theorem assert_step_ok
             -- If mapM fails, h_fr_assert would be none
             simp [h_map] at h_fr_assert
         | some hs =>
-            -- If mapM succeeds with hs, extract that fr_assert.mand = hs
+            -- If mapM succeeds with hs, extract that fr_assert.hyps = hs
             simp [h_map] at h_fr_assert ⊢
-            cases fr_assert with | mk mand dv =>
+            cases fr_assert with | mk hyps_val dv =>
             simp at h_fr_assert
             -- h_fr_assert gives us hs = mand ∧ dj.toList.map convertDV = dv
-            have : hs = mand ∧ dj.toList.map convertDV = dv := h_fr_assert
+            have : hs = hyps_val ∧ dj.toList.map convertDV = dv := h_fr_assert
             simp [this.1]
       have h_wf_hypsOnly : WellFormedFrame db {dj := #[], hyps := fr_impl.hyps} :=
         wellFormedFrame_hyps_only db fr_impl h_frame_wf
@@ -7441,9 +7441,9 @@ theorem assert_step_ok
           -- Use checkHyp_validates_floats with a hyps-only frame
           have h_allM : (Bridge.floats fr_assert).allM (fun (c, v) => checkFloat σ_impl c v) = some true := by
             -- Apply checkHyp_validates_floats with the hyps-only frame
-            have h_allM_hypsOnly := checkHyp_validates_floats db fr_impl.hyps pr.stack ⟨off, h_off⟩ σ_impl ⟨fr_assert.mand, []⟩ h_chk h_fr_hypsOnly h_wf_hypsOnly
-            -- Bridge.floats only depends on .mand, not .dv
-            have h_floats_eq : Bridge.floats ⟨fr_assert.mand, []⟩ = Bridge.floats fr_assert := by
+            have h_allM_hypsOnly := checkHyp_validates_floats db fr_impl.hyps pr.stack ⟨off, h_off⟩ σ_impl ⟨fr_assert.hyps, []⟩ h_chk h_fr_hypsOnly h_wf_hypsOnly
+            -- Bridge.floats only depends on .hyps, not .dv
+            have h_floats_eq : Bridge.floats ⟨fr_assert.hyps, []⟩ = Bridge.floats fr_assert := by
               unfold Bridge.floats
               rfl
             rw [← h_floats_eq]
@@ -7492,7 +7492,7 @@ theorem assert_step_ok
             (∀ c, Verify.Sym.const c ∈ f_impl.toList.tail →
               Spec.Variable.mk (toSym (Verify.Sym.const c)) ∉ fr_assert.vars) := by
           have h_sound :=
-            formulaSymsRespectFrame_sound_hypsOnly db fr_impl.hyps ⟨fr_assert.mand, []⟩ f_impl
+            formulaSymsRespectFrame_sound_hypsOnly db fr_impl.hyps ⟨fr_assert.hyps, []⟩ f_impl
               h_fr_hypsOnly h_wf_hypsOnly h_syms_ok'
           constructor
           · intro v h_mem
@@ -7599,7 +7599,7 @@ theorem assert_step_ok
                 let steps_new := Spec.ProofStep.useAssertion label σ_typed.σ :: steps
                 have h_valid :
                     Spec.ProofValid Γ fr_spec (e_conclusion :: remaining.reverse) steps_new := by
-                  have h_typed : ∀ c v, Spec.Hyp.floating c v ∈ fr_assert.mand →
+                  have h_typed : ∀ c v, Spec.Hyp.floating c v ∈ fr_assert.hyps →
                       (σ_typed.σ v).typecode = c := fun c v h => σ_typed.typed h
                   refine Spec.ProofValid.useAxiom (fr := fr_spec) (stack := stack_spec.reverse)
                     (steps := steps) (l := label) (fr' := fr_assert) (e := e_assert)
@@ -7678,8 +7678,8 @@ theorem stepNormal_sound
       -- Use frame equality to convert db.frame membership to pr.frame membership
       have h_mem_pr : label ∈ pr.frame.hyps.toList := by
         simpa [h_frame_eq] using h_mem
-      obtain ⟨h_spec, h_conv, h_in_mand⟩ :=
-        convertHyp_mem_mand db pr.frame fr label h_fr h_mem_pr
+      obtain ⟨h_spec, h_conv, h_in_hyps⟩ :=
+        convertHyp_mem_hyps db pr.frame fr label h_fr h_mem_pr
 
       cases ess
       · -- Floating hypothesis
@@ -7714,7 +7714,7 @@ theorem stepNormal_sound
             refine ⟨stack_spec ++ [toExpr f],
               Spec.ProofStep.useHyp (Spec.Hyp.floating c v) :: steps, ?_⟩
             exact float_step_ok db pr pr' label Γ fr stack_spec steps c v f lbl
-              h_inv h_find h_expr h_in_mand h_step
+              h_inv h_find h_expr h_in_hyps h_step
         | essential _ =>
             have : False := by
               unfold convertHyp at h_conv
@@ -7752,7 +7752,7 @@ theorem stepNormal_sound
             refine ⟨stack_spec ++ [toExpr f],
               Spec.ProofStep.useHyp (Spec.Hyp.essential e) :: steps, ?_⟩
             exact essential_step_ok db pr pr' label Γ fr stack_spec steps e f lbl
-              h_inv h_find h_expr h_in_mand h_step
+              h_inv h_find h_expr h_in_hyps h_step
         | floating _ _ =>
             have : False := by
               unfold convertHyp at h_conv
@@ -8840,13 +8840,13 @@ The reverse of Phase 7: showing that spec-valid proofs can be verified.
 4. stepNormal_of_assert: stepNormal accepts assertion labels with correct stack
 5. verify_impl_complete: Main completeness theorem
 
-**Key helper proven**: mand_mem_has_label (line ~1627)
-  Given h ∈ fr_spec.mand, find label ∈ fr_impl.hyps with convertHyp db label = some h
+**Key helper proven**: hyps_mem_has_label (line ~1627)
+  Given h ∈ fr_spec.hyps, find label ∈ fr_impl.hyps with convertHyp db label = some h
 -/
 
 /-- Extract implementation label for a hypothesis in the frame.
 
-Given a spec hypothesis h ∈ fr_spec.mand, returns the corresponding label
+Given a spec hypothesis h ∈ fr_spec.hyps, returns the corresponding label
 in fr_impl.hyps. This is the computational inverse of convertHyp.
 
 **Note**: This function is noncomputable because List.find? is noncomputable
@@ -8857,19 +8857,19 @@ noncomputable def hypToLabel (db : Verify.DB) (fr_impl : Verify.Frame)
   fr_impl.hyps.toList.find? fun label =>
     convertHyp db label = some h
 
-/-- hypToLabel succeeds when h ∈ fr_spec.mand and toFrame succeeds.
+/-- hypToLabel succeeds when h ∈ fr_spec.hyps and toFrame succeeds.
 
-This is the computational version of mand_mem_has_label.
-Note: The returned label might not be the same as the one from mand_mem_has_label
+This is the computational version of hyps_mem_has_label.
+Note: The returned label might not be the same as the one from hyps_mem_has_label
 (if there are duplicate hypotheses), but it will still satisfy convertHyp. -/
 theorem hypToLabel_some_of_mand_mem
     (db : Verify.DB) (fr_impl : Verify.Frame) (fr_spec : Spec.Frame) (h : Spec.Hyp)
     (h_fr : toFrame db fr_impl = some fr_spec)
-    (h_mem : h ∈ fr_spec.mand) :
+    (h_mem : h ∈ fr_spec.hyps) :
     ∃ label, hypToLabel db fr_impl h = some label ∧
       label ∈ fr_impl.hyps.toList ∧ convertHyp db label = some h := by
-  -- Use mand_mem_has_label to get a label that converts to h
-  obtain ⟨label₀, h_in₀, h_conv₀⟩ := mand_mem_has_label db fr_impl fr_spec h h_fr h_mem
+  -- Use hyps_mem_has_label to get a label that converts to h
+  obtain ⟨label₀, h_in₀, h_conv₀⟩ := hyps_mem_has_label db fr_impl fr_spec h h_fr h_mem
 
   -- hypToLabel uses List.find? which may return a different label
   -- but any label it returns will satisfy the predicate
@@ -8912,14 +8912,14 @@ noncomputable def proofStepToLabel (db : Verify.DB) (fr_impl : Verify.Frame)
 /-- proofStepToLabel succeeds for valid proof steps.
 
 A proof step is valid if:
-- useHyp h: h ∈ fr_spec.mand
+- useHyp h: h ∈ fr_spec.hyps
 - useAssertion l σ: Γ l = some (fr', e') for some fr', e' -/
 theorem proofStepToLabel_some_of_valid
     (db : Verify.DB) (fr_impl : Verify.Frame) (fr_spec : Spec.Frame) (Γ : Spec.Database)
     (h_fr : toFrame db fr_impl = some fr_spec)
     (step : Spec.ProofStep)
     (h_valid : match step with
-      | .useHyp h => h ∈ fr_spec.mand
+      | .useHyp h => h ∈ fr_spec.hyps
       | .useAssertion l _ => ∃ fr' e', Γ l = some (fr', e')) :
     ∃ label, proofStepToLabel db fr_impl step = some label := by
   cases step with
@@ -8964,6 +8964,53 @@ theorem stepNormal_floating_success
   unfold Verify.DB.stepNormal
   simp only [h_find, h_in_frame, ↓reduceIte, h_isFloatShape]
   rfl
+
+/-- Canary: stepNormal accepts hypothesis labels from the SCOPE frame (db.frame),
+    even when the label is NOT in the proof state's mandatory frame (pr.frame).
+
+    This theorem is unprovable if stepNormal is changed to check pr.frame.hyps
+    instead of db.frame.hyps — providing structural regression protection for
+    the scope-vs-mandatory distinction (Metamath §4.3). -/
+theorem stepNormal_uses_scope_not_mandatory
+    (db : Verify.DB) (pr : Verify.ProofState) (label : String)
+    (f : Verify.Formula) (lbl : String) (ess : Bool)
+    (h_find : db.find? label = some (.hyp ess f lbl))
+    (h_in_scope : label ∈ db.frame.hyps.toList)
+    (_h_not_mandatory : label ∉ pr.frame.hyps.toList)
+    (h_shape : if ess then f.hasConstHead = true else f.isFloatShape = true) :
+    ∃ pr', Verify.DB.stepNormal db pr label = Except.ok pr' := by
+  cases ess with
+  | true =>
+    simp at h_shape
+    exact ⟨pr.push f, stepNormal_essential_success db pr label f lbl h_find h_in_scope h_shape⟩
+  | false =>
+    simp at h_shape
+    exact ⟨pr.push f, stepNormal_floating_success db pr label f lbl h_find h_in_scope h_shape⟩
+
+/-- For hypothesis labels, stepNormal success/failure is independent of pr.frame.
+    Whether stepNormal accepts a hypothesis depends only on db.frame (the scope frame),
+    not on pr.frame (the mandatory/trimmed frame from trimFrame').
+
+    NOTE: This does NOT hold for assertion steps — stepAssert (Verify.lean:2578-2579)
+    uses pr.frame for DV checking via `frameFloatVars db pr.frame` and
+    `dvCheck vars pr.frame.dj`. For assertions, pr.frame matters. -/
+theorem stepNormal_hyp_success_independent_of_pr_frame
+    (db : Verify.DB) (pr₁ pr₂ : Verify.ProofState) (label : String)
+    (ess : Bool) (f : Verify.Formula) (lbl : String)
+    (h_find : db.find? label = some (.hyp ess f lbl)) :
+    (∃ pr', Verify.DB.stepNormal db pr₁ label = Except.ok pr') ↔
+    (∃ pr', Verify.DB.stepNormal db pr₂ label = Except.ok pr') := by
+  unfold Verify.DB.stepNormal
+  simp only [h_find]
+  split  -- l ∈ db.frame.hyps.toList
+  · split  -- ess
+    · split  -- !f.hasConstHead
+      · simp
+      · exact ⟨fun _ => ⟨pr₂.push f, rfl⟩, fun _ => ⟨pr₁.push f, rfl⟩⟩
+    · split  -- !f.isFloatShape
+      · simp
+      · exact ⟨fun _ => ⟨pr₂.push f, rfl⟩, fun _ => ⟨pr₁.push f, rfl⟩⟩
+  · simp
 
 /-- If convertHyp produces a floating hypothesis and the label is in a well-formed frame,
     then the formula has float shape.
@@ -9105,7 +9152,7 @@ noncomputable def proofStepsToLabels (db : Verify.DB) (fr : Verify.Frame)
 /-- Helper predicate: a proof step is valid in the given context. -/
 def isValidStep (fr_spec : Spec.Frame) (Γ : Spec.Database) (step : Spec.ProofStep) : Prop :=
   match step with
-  | .useHyp h => h ∈ fr_spec.mand
+  | .useHyp h => h ∈ fr_spec.hyps
   | .useAssertion l _ => ∃ fr' e', Γ l = some (fr', e')
 
 /-- For valid proof steps, proofStepsToLabels preserves length.
@@ -9167,7 +9214,7 @@ theorem checkHypOK_of_stack_window_aux
     (h_wf : WellFormedFrame db fr_impl)
     (h_scoped : WellScopedFrame db fr_impl)
     (h_scoped_facts : CompletenessScopedFacts db)
-    (h_typed : ∀ c v, Spec.Hyp.floating c v ∈ fr_spec.mand → (σ_spec v).typecode = c)
+    (h_typed : ∀ c v, Spec.Hyp.floating c v ∈ fr_spec.hyps → (σ_spec v).typecode = c)
     (h_window :
       viewStack (stack.extract off (off + fr_impl.hyps.size)) =
         Bridge.needed fr_spec.vars fr_spec σ_spec)
@@ -9177,7 +9224,7 @@ theorem checkHypOK_of_stack_window_aux
     CheckHypOK db fr_impl.hyps stack off i
       (sigmaFromHypsPrefix db fr_impl.hyps stack off i)
       (sigmaFromHypsPrefix db fr_impl.hyps stack off fr_impl.hyps.size) := by
-  have h_fr_hypsOnly : toFrame db {dj := #[], hyps := fr_impl.hyps} = some ⟨fr_spec.mand, []⟩ :=
+  have h_fr_hypsOnly : toFrame db {dj := #[], hyps := fr_impl.hyps} = some ⟨fr_spec.hyps, []⟩ :=
     toFrame_hypsOnly_of_toFrame db fr_impl fr_spec h_fr
   have h_wf_hypsOnly : WellFormedFrame db {dj := #[], hyps := fr_impl.hyps} :=
     wellFormedFrame_hyps_only db fr_impl h_wf
@@ -9289,7 +9336,7 @@ theorem checkHypOK_of_stack_window_aux
                   intro v h_mem
                   exact varsInExpr_mem_implies_in_vars fr_spec.vars e v h_mem
                 have h_syms_sound :=
-                  formulaSymsRespectFrame_sound_hypsOnly db fr_impl.hyps ⟨fr_spec.mand, []⟩ f
+                  formulaSymsRespectFrame_sound_hypsOnly db fr_impl.hyps ⟨fr_spec.hyps, []⟩ f
                     h_fr_hypsOnly h_wf_hypsOnly h_syms_ok
                 have h_match : ∀ v ∈ vars_local, ∃ f_v,
                     (sigmaFromHypsPrefix db fr_impl.hyps stack off i)[v.v]? = some f_v ∧
@@ -9500,7 +9547,7 @@ theorem checkHypOK_of_stack_window_aux
               have h_label_mem : fr_impl.hyps[i]! ∈ fr_impl.hyps.toList :=
                 getElem!_mem_toList fr_impl.hyps i h_lt
               have ⟨h_spec', h_conv', h_mem⟩ :=
-                convertHyp_mem_mand db fr_impl fr_spec (fr_impl.hyps[i]!) h_fr h_label_mem
+                convertHyp_mem_hyps db fr_impl fr_spec (fr_impl.hyps[i]!) h_fr h_label_mem
               have h_spec_eq : h_spec' = Spec.Hyp.floating c v := by
                 have h_eq : some h_spec' = some (Spec.Hyp.floating c v) := by
                   calc
@@ -9509,7 +9556,7 @@ theorem checkHypOK_of_stack_window_aux
                     _ = some (Spec.Hyp.floating c v) := h_conv
                 cases h_eq
                 rfl
-              have h_mem' : Spec.Hyp.floating c v ∈ fr_spec.mand := by
+              have h_mem' : Spec.Hyp.floating c v ∈ fr_spec.hyps := by
                 simpa [h_spec_eq] using h_mem
               have h_tc_stack : (toExpr (stack[off.1 + i]!)).typecode = c := by
                 have h_toExpr_stack' : toExpr (stack[off.1 + i]!) = σ_spec v := by
@@ -9620,7 +9667,7 @@ theorem checkHypOK_of_stack_window
     (h_wf : WellFormedFrame db fr_impl)
     (h_scoped : WellScopedFrame db fr_impl)
     (h_scoped_facts : CompletenessScopedFacts db)
-    (h_typed : ∀ c v, Spec.Hyp.floating c v ∈ fr_spec.mand → (σ_spec v).typecode = c)
+    (h_typed : ∀ c v, Spec.Hyp.floating c v ∈ fr_spec.hyps → (σ_spec v).typecode = c)
     (h_window :
       viewStack (stack.extract off (off + fr_impl.hyps.size)) =
         Bridge.needed fr_spec.vars fr_spec σ_spec)
@@ -9643,7 +9690,7 @@ theorem checkHypOK_of_stack_window_of_checkBytes
     (h_fr : toFrame (Verify.checkBytes bytes) fr_impl = some fr_spec)
     (h_wf : WellFormedFrame (Verify.checkBytes bytes) fr_impl)
     (h_scoped : WellScopedFrame (Verify.checkBytes bytes) fr_impl)
-    (h_typed : ∀ c v, Spec.Hyp.floating c v ∈ fr_spec.mand → (σ_spec v).typecode = c)
+    (h_typed : ∀ c v, Spec.Hyp.floating c v ∈ fr_spec.hyps → (σ_spec v).typecode = c)
     (h_window :
       viewStack (stack.extract off (off + fr_impl.hyps.size)) =
         Bridge.needed fr_spec.vars fr_spec σ_spec)
@@ -10382,13 +10429,13 @@ theorem foldlM_proofSteps_complete
 
       -- Step 3: Show stack size is sufficient for hyps
       -- viewStack pr_mid.stack = impl_stack ++ remaining.reverse ++ needed
-      -- needed.length = fr'.mand.length (by definition)
-      -- fr'.mand.length = fr_impl.hyps.size (from toFrame correspondence)
+      -- needed.length = fr'.hyps.length (by definition)
+      -- fr'.hyps.length = fr_impl.hyps.size (from toFrame correspondence)
       have h_hyps_length : fr_impl.hyps.size = needed.length := by
         -- From toFrame, we know mand.length = hyps.toList.length via mapM
         rw [h_needed_eq, Bridge.needed_length]
         -- Extract mapM result from toFrame
-        have h_map : fr_impl.hyps.toList.mapM (convertHyp db) = some fr'.mand := by
+        have h_map : fr_impl.hyps.toList.mapM (convertHyp db) = some fr'.hyps := by
           unfold toFrame at h_fr_impl
           cases h_m : fr_impl.hyps.toList.mapM (convertHyp db) with
           | none => simp [h_m] at h_fr_impl
@@ -10396,7 +10443,7 @@ theorem foldlM_proofSteps_complete
               simp [h_m] at h_fr_impl
               cases h_fr_impl; rfl
         -- mapM preserves length
-        have h_len : fr'.mand.length = fr_impl.hyps.toList.length :=
+        have h_len : fr'.hyps.length = fr_impl.hyps.toList.length :=
           List.mapM_length_option (convertHyp db) h_map
         simp only [Array.toList_length] at h_len
         omega
@@ -10471,18 +10518,18 @@ theorem foldlM_proofSteps_complete
         checkHyp_complete db fr_impl.hyps pr_mid.stack off 0 ∅ σ_impl h_chk
 
       -- Step 8: Get typed substitution from checkHyp success
-      have h_fr_hypsOnly : toFrame db (Verify.Frame.mk #[] fr_impl.hyps) = some ⟨fr'.mand, []⟩ :=
+      have h_fr_hypsOnly : toFrame db (Verify.Frame.mk #[] fr_impl.hyps) = some ⟨fr'.hyps, []⟩ :=
         toFrame_hypsOnly_of_toFrame db fr_impl fr' h_fr_impl
       have h_wf_hypsOnly : WellFormedFrame db (Verify.Frame.mk #[] fr_impl.hyps) := by
         simpa using h_wf_fr_impl
 
       obtain ⟨σ_typed_hypsOnly, h_toSubstTyped_hypsOnly⟩ := checkHyp_produces_TypedSubst
-        db fr_impl.hyps pr_mid.stack off σ_impl ⟨fr'.mand, []⟩
+        db fr_impl.hyps pr_mid.stack off σ_impl ⟨fr'.hyps, []⟩
         h_chk_ok h_fr_hypsOnly h_wf_hypsOnly
 
-      -- Convert TypedSubst from hypsOnly frame to full frame using toSubstTyped_same_mand
+      -- Convert TypedSubst from hypsOnly frame to full frame using toSubstTyped_same_hyps
       obtain ⟨σ_typed, h_toSubstTyped, h_sigma_eq⟩ :=
-        toSubstTyped_same_mand fr' σ_impl σ_typed_hypsOnly h_toSubstTyped_hypsOnly
+        toSubstTyped_same_hyps fr' σ_impl σ_typed_hypsOnly h_toSubstTyped_hypsOnly
 
       -- Step 9: Transfer dvOK (the spec proof gives us this)
       -- Key: σ_typed.σ agrees with σ on floating hyp variables
@@ -10501,14 +10548,14 @@ theorem foldlM_proofSteps_complete
         intro v_arg h_v_in
         -- From v ∈ fr'.vars, get (c, v) ∈ Bridge.floats fr'
         obtain ⟨c, h_float_in_bridge⟩ := (vars_mem_iff_floats fr' v_arg).1 h_v_in
-        have h_float_in_mand : Spec.Hyp.floating c v_arg ∈ fr'.mand :=
+        have h_float_in_mand : Spec.Hyp.floating c v_arg ∈ fr'.hyps :=
           Bridge.floats_sound fr' c v_arg h_float_in_bridge
 
-        -- Get index i in mand where floating hyp is
+        -- Get index i in hyps where floating hyp is
         obtain ⟨⟨i, hi⟩, h_at_i⟩ := List.mem_iff_get.mp h_float_in_mand
         have h_i_hyps : i < fr_impl.hyps.size := by
-          have h_len : fr'.mand.length = fr_impl.hyps.size := by
-            have h_map : fr_impl.hyps.toList.mapM (convertHyp db) = some fr'.mand := by
+          have h_len : fr'.hyps.length = fr_impl.hyps.size := by
+            have h_map : fr_impl.hyps.toList.mapM (convertHyp db) = some fr'.hyps := by
               unfold toFrame at h_fr_impl
               cases h_m : fr_impl.hyps.toList.mapM (convertHyp db) with
               | none => simp [h_m] at h_fr_impl
@@ -10525,13 +10572,13 @@ theorem foldlM_proofSteps_complete
           have h_eq : h_spec = h_spec' := by
             have h_some_eq : some h_spec = some h_spec' := h_conv.symm.trans h_conv'
             cases h_some_eq; rfl
-          -- From h_at_i: fr'.mand.get ⟨i, hi⟩ = Hyp.floating c v_arg
-          -- From h_get': fr'.mand.get ⟨i, h_len'⟩ = h_spec'
-          -- h_spec = h_spec' = fr'.mand.get ⟨i, h_len'⟩ = fr'.mand.get ⟨i, hi⟩ = Hyp.floating c v_arg
+          -- From h_at_i: fr'.hyps.get ⟨i, hi⟩ = Hyp.floating c v_arg
+          -- From h_get': fr'.hyps.get ⟨i, h_len'⟩ = h_spec'
+          -- h_spec = h_spec' = fr'.hyps.get ⟨i, h_len'⟩ = fr'.hyps.get ⟨i, hi⟩ = Hyp.floating c v_arg
           rw [h_eq, ← h_get']
-          -- Goal: fr'.mand.get ⟨i, h_len'⟩ = Spec.Hyp.floating c v_arg
-          -- h_at_i: fr'.mand.get ⟨i, hi⟩ = Spec.Hyp.floating c v_arg
-          have : (⟨i, h_len'⟩ : Fin fr'.mand.length) = ⟨i, hi⟩ := by
+          -- Goal: fr'.hyps.get ⟨i, h_len'⟩ = Spec.Hyp.floating c v_arg
+          -- h_at_i: fr'.hyps.get ⟨i, hi⟩ = Spec.Hyp.floating c v_arg
+          have : (⟨i, h_len'⟩ : Fin fr'.hyps.length) = ⟨i, hi⟩ := by
             ext; rfl
           rw [this]; exact h_at_i
         rw [h_spec_eq] at h_needOf_eq
@@ -10540,7 +10587,7 @@ theorem foldlM_proofSteps_complete
         -- From toSubstTyped_sigma_of_lookup: σ_typed.σ v = toExpr (σ_impl[v.v]!)
         -- We need σ_impl[v_arg.v]? = some (stack[off + i]!)
         -- This comes from SigmaCovers applied to the floating hyp at position i
-        have h_fr_hypsOnly' : toFrame db (Verify.Frame.mk #[] fr_impl.hyps) = some ⟨fr'.mand, []⟩ :=
+        have h_fr_hypsOnly' : toFrame db (Verify.Frame.mk #[] fr_impl.hyps) = some ⟨fr'.hyps, []⟩ :=
           toFrame_hypsOnly_of_toFrame db fr_impl fr' h_fr_impl
         have h_wf_hypsOnly' : WellFormedFrame db (Verify.Frame.mk #[] fr_impl.hyps) := by
           constructor
@@ -10552,7 +10599,7 @@ theorem foldlM_proofSteps_complete
         -- Get the impl hyp at position i
         have h_hypOK_i := h_wf_fr_impl.1 i h_i_hyps
         rcases h_hypOK_i with ⟨ess_i, f_i, lbl_i, h_find_i, h_wf_float_i, _⟩
-        -- Must be a float (ess_i = false) since fr'.mand[i] = Hyp.floating
+        -- Must be a float (ess_i = false) since fr'.hyps[i] = Hyp.floating
         have h_ess_false : ess_i = false := by
           cases ess_i with
           | false => rfl
@@ -10627,7 +10674,7 @@ theorem foldlM_proofSteps_complete
         have h_f_respects : Verify.DB.formulaSymsRespectFrame db f_impl fr_impl = true :=
           h_scoped_assert.2.1
         -- Get coverage from sigmaFromHypsPrefix_covers
-        have h_fr_hypsOnly_cov : toFrame db (Verify.Frame.mk #[] fr_impl.hyps) = some ⟨fr'.mand, []⟩ :=
+        have h_fr_hypsOnly_cov : toFrame db (Verify.Frame.mk #[] fr_impl.hyps) = some ⟨fr'.hyps, []⟩ :=
           toFrame_hypsOnly_of_toFrame db fr_impl fr' h_fr_impl
         have h_wf_hypsOnly_cov : WellFormedFrame db (Verify.Frame.mk #[] fr_impl.hyps) := by
           constructor
@@ -10780,7 +10827,7 @@ theorem foldlM_proofSteps_complete
         have h_syms_ok' :
             Verify.DB.formulaSymsRespectFrame db f_impl (Verify.Frame.mk #[] fr_impl.hyps) = true := by
           simpa [formulaSymsRespectFrame_hyps_only] using h_syms_ok_impl
-        have h_fr_hypsOnly' : toFrame db (Verify.Frame.mk #[] fr_impl.hyps) = some ⟨fr'.mand, []⟩ :=
+        have h_fr_hypsOnly' : toFrame db (Verify.Frame.mk #[] fr_impl.hyps) = some ⟨fr'.hyps, []⟩ :=
           toFrame_hypsOnly_of_toFrame db fr_impl fr' h_fr_impl
         have h_wf_hypsOnly'' : WellFormedFrame db (Verify.Frame.mk #[] fr_impl.hyps) := by
           constructor
@@ -10791,7 +10838,7 @@ theorem foldlM_proofSteps_complete
             (∀ c, Verify.Sym.const c ∈ f_impl.toList.tail →
               Spec.Variable.mk (toSym (Verify.Sym.const c)) ∉ fr'.vars) := by
           have h_sound :=
-            formulaSymsRespectFrame_sound_hypsOnly db fr_impl.hyps ⟨fr'.mand, []⟩ f_impl
+            formulaSymsRespectFrame_sound_hypsOnly db fr_impl.hyps ⟨fr'.hyps, []⟩ f_impl
               h_fr_hypsOnly' h_wf_hypsOnly'' h_syms_ok'
           constructor
           · intro v h_mem
@@ -10937,7 +10984,7 @@ theorem foldlM_proofSteps_complete
               σ_impl[v]? = some f_v → Verify.DB.formulaSymsRespectFrame db f_v db.frame = true := by
             intro v f_v h_lookup
             -- σ_impl = sigmaFromHypsPrefix db fr_impl.hyps pr_mid.stack off fr_impl.hyps.size
-            have h_fr_hypsOnly' : toFrame db (Verify.Frame.mk #[] fr_impl.hyps) = some ⟨fr'.mand, []⟩ :=
+            have h_fr_hypsOnly' : toFrame db (Verify.Frame.mk #[] fr_impl.hyps) = some ⟨fr'.hyps, []⟩ :=
               toFrame_hypsOnly_of_toFrame db fr_impl fr' h_fr_impl
             have h_wf_hypsOnly' : WellFormedFrame db (Verify.Frame.mk #[] fr_impl.hyps) := by
               constructor

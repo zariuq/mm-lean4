@@ -81,8 +81,10 @@ inductive Hyp where
   deriving Repr, DecidableEq
 
 structure Frame where
-  /-- Mandatory hypotheses in appearance order (spec §4.2.4) -/
-  mand : List Hyp
+  /-- Hypotheses in appearance order.
+      When stored in Database: mandatory hypotheses (spec §4.2.4).
+      When converted from scope frame: all active hypotheses (spec §4.3). -/
+  hyps : List Hyp
   /-- Disjoint variable constraints (spec §4.2.5) -/
   dv : List (Variable × Variable)
   deriving Repr, DecidableEq
@@ -90,7 +92,7 @@ structure Frame where
 /-- Extract the set of variables from a frame's floating hypotheses.
     Per §4.2.2: floating hypotheses declare variables. -/
 def Frame.vars (fr : Frame) : List Variable :=
-  fr.mand.filterMap fun h => match h with
+  fr.hyps.filterMap fun h => match h with
     | Hyp.floating _ v => some v
     | Hyp.essential _ => none
 
@@ -182,7 +184,7 @@ def ExprVarsInScope (consts : ConstSet) (fr : Frame) (e : Expr) : Prop :=
 /-- All expressions in a frame (assertion + essential hypotheses) have variables in scope. -/
 def FrameExprsInScope (consts : ConstSet) (fr : Frame) (e : Expr) : Prop :=
   ExprVarsInScope consts fr e ∧
-  ∀ h ∈ fr.mand, match h with
+  ∀ h ∈ fr.hyps, match h with
     | Hyp.essential e_hyp => ExprVarsInScope consts fr e_hyp
     | Hyp.floating _ _ => True
 
@@ -215,7 +217,7 @@ theorem const_global_of_wellFormed_hyp {Γ : Database} {consts : ConstSet}
     {fr : Frame} {e e_hyp : Expr} {l : Label}
     (h_wf : WellFormedDatabase Γ consts)
     (h_lookup : Γ l = some (fr, e))
-    (h_hyp_in : Hyp.essential e_hyp ∈ fr.mand)
+    (h_hyp_in : Hyp.essential e_hyp ∈ fr.hyps)
     (s : Sym)
     (h_s_in : s ∈ e_hyp.syms)
     (h_not_var : Variable.mk s ∉ fr.vars) :
