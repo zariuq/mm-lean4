@@ -11348,15 +11348,20 @@ theorem verify_parser_acceptance_iff_spec_provable
   · intro h_spec
     exact verify_parser_accepts_of_spec_provable bytes label f h_success h_spec
 
-/-! ## Phase C: All Stored Assertions Self-Provable
+/-! ## Phase C0: All Stored Assertions Self-Provable (DB Closure)
 
 Every assertion stored in the database by `checkBytes` is `Spec.Provable` in the
 spec-level database, via self-use: push all frame hypotheses, then apply the
 assertion itself with the identity substitution.
 
-**Naming**: "selfProvable" to be precise — this proves DB closure (every entry is
-provable using the full database including itself), not parser-origin soundness.
-Object.assert does not distinguish axioms from proved theorems.
+**Scope disclaimer**: This is a DB-closure property, NOT prefix-provenance.
+- Proven: `∀ l fr e, Γ l = some (fr, e) → Spec.Provable Γ fr e` using the FULL
+  final database `Γ` (including `l` itself).
+- For axioms ($a), self-use IS the correct semantics.
+- For proved theorems ($p), self-use is weaker than the parser's original validation.
+  The stronger prefix-witness theorem (each $p provable at insertion time using only
+  prior assertions) requires parser-trace induction and is future work.
+- `Object.assert` does not distinguish axioms from proved theorems.
 
 **Non-vacuity**: For any `.mm` file containing at least one `$a` or `$p` statement,
 the spec-level `Γ` is non-empty, so `∀ l fr e, Γ l = some (fr, e) → ...` is
@@ -11364,8 +11369,6 @@ non-vacuously instantiated.
 -/
 
 section PhaseC_SelfProvable
-
-open scoped Classical
 
 /-! ### Identity substitution infrastructure -/
 
@@ -11456,13 +11459,49 @@ theorem push_all_hyps_valid (Γ : Spec.Database) (fr : Spec.Frame) :
   have h := push_hyps_acc Γ fr fr.hyps (fun _ h => h) [] [] (Spec.ProofValid.nil fr)
   simpa using h
 
-/-! ### Classical identity substitution for a frame -/
+/-! ### Computable identity substitution for a frame -/
+
+/-- If `Hyp.floating c v` is in `fr.hyps`, then `List.find?` on `floatList fr`
+    succeeds for `v`, returning some `(c', v)` where `c'` is a floating typecode. -/
+theorem find?_floatList_of_mem (fr : Spec.Frame) (c : Spec.Constant) (v : Spec.Variable)
+    (h_in : Spec.Hyp.floating c v ∈ fr.hyps) :
+    ∃ c', (floatList fr).find? (fun p => p.2 == v) = some (c', v) ∧
+          Spec.Hyp.floating c' v ∈ fr.hyps := by
+  have h_fl : (c, v) ∈ floatList fr := by
+    unfold floatList; simp [List.mem_filterMap]; exact ⟨Spec.Hyp.floating c v, h_in, rfl⟩
+  have h_is_some : ((floatList fr).find? (fun p => p.2 == v)).isSome = true := by
+    rw [List.find?_isSome]; exact ⟨(c, v), h_fl, by simp⟩
+  obtain ⟨found, h_eq⟩ := Option.isSome_iff_exists.mp h_is_some
+  have h_pred := List.find?_some h_eq
+  simp at h_pred
+  have h_mem := List.mem_of_find?_eq_some h_eq
+  have h_eq' : (floatList fr).find? (fun p => p.2 == v) = some (found.1, v) := by
+    rw [show found = (found.1, found.2) from by simp] at h_eq; rw [h_pred] at h_eq; exact h_eq
+  have h_mem' : (found.1, v) ∈ floatList fr := by
+    rw [show found = (found.1, found.2) from by simp, h_pred] at h_mem; exact h_mem
+  unfold floatList at h_mem'
+  simp [List.mem_filterMap] at h_mem'
+  obtain ⟨h, h_hyps, h_match⟩ := h_mem'
+  cases h with
+  | floating c'' v'' =>
+    simp at h_match; obtain ⟨hc, hv⟩ := h_match; subst hc hv
+    exact ⟨found.1, h_eq', h_hyps⟩
+  | essential => simp at h_match
 
 /-- Identity substitution for a frame: maps each variable `v` to `⟨c, [v.v]⟩`
-    where `c` is the typecode from the (unique) floating hypothesis for `v`. -/
-noncomputable def idSubstOf (fr : Spec.Frame) : Spec.Subst := fun v =>
-  if h : ∃ c, Spec.Hyp.floating c v ∈ fr.hyps then ⟨h.choose, [v.v]⟩
-  else ⟨⟨""⟩, [v.v]⟩
+    where `c` is the typecode from the floating hypothesis for `v`, found via
+    computable `List.find?` on `floatList`. No Classical choice needed.
+
+    **Fallback note:** The `none` branch (returning `⟨""⟩`) is unreachable for any
+    variable `v` that has a floating hypothesis in `fr.hyps`. Under `FloatUnique` +
+    membership (the only calling context in `assertion_self_provable`), `find?` always
+    succeeds — see `find?_floatList_of_mem`. The fallback exists only because Lean
+    requires totality; `idSubstOf_typed` and `idSubstOf_eq` prove the `some` branch
+    is always taken for mandated variables. -/
+def idSubstOf (fr : Spec.Frame) : Spec.Subst := fun v =>
+  match (floatList fr).find? (fun p => p.2 == v) with
+  | some (c, _) => ⟨c, [v.v]⟩
+  | none => ⟨⟨""⟩, [v.v]⟩  -- unreachable for well-formed frames (see docstring)
 
 /-- `idSubstOf` always produces single-symbol expressions. -/
 theorem idSubstOf_syms (fr : Spec.Frame) (v : Spec.Variable) :
@@ -11474,16 +11513,18 @@ theorem idSubstOf_typed (fr : Spec.Frame) (c : Spec.Constant) (v : Spec.Variable
     (h_in : Spec.Hyp.floating c v ∈ fr.hyps) (h_unique : FloatUnique fr) :
     (idSubstOf fr v).typecode = c := by
   unfold idSubstOf
-  have h_ex : ∃ c, Spec.Hyp.floating c v ∈ fr.hyps := ⟨c, h_in⟩
-  simp [h_ex]; exact h_unique _ _ _ (Classical.choose_spec h_ex) h_in
+  obtain ⟨c', h_find, h_in'⟩ := find?_floatList_of_mem fr c v h_in
+  rw [h_find]; simp
+  exact h_unique _ _ _ h_in' h_in
 
 /-- `idSubstOf` maps a floating variable to its canonical expression. -/
 theorem idSubstOf_eq (fr : Spec.Frame) (c : Spec.Constant) (v : Spec.Variable)
     (h_mem : Spec.Hyp.floating c v ∈ fr.hyps) (h_unique : FloatUnique fr) :
     idSubstOf fr v = ⟨c, [v.v]⟩ := by
   unfold idSubstOf
-  have h_ex : ∃ c, Spec.Hyp.floating c v ∈ fr.hyps := ⟨c, h_mem⟩
-  simp [h_ex]; exact h_unique _ _ _ (Classical.choose_spec h_ex) h_mem
+  obtain ⟨c', h_find, h_in'⟩ := find?_floatList_of_mem fr c v h_mem
+  rw [h_find]; simp
+  exact h_unique _ _ _ h_in' h_mem
 
 /-! ### Main self-provability theorem -/
 
@@ -11561,6 +11602,148 @@ theorem checkBytes_all_assertions_selfProvable
   exact assertion_self_provable Γ l fr e h_lookup h_wf.2 h_wf.1.1
 
 end PhaseC_SelfProvable
+
+/-! ## Phase C1: DB Insert Monotonicity Infrastructure
+
+Phase C0 proves DB closure: every entry is `Spec.Provable` using the full final database.
+This section builds the bridge from `DB.insert` (implementation level) to `Spec.Provable`
+(spec level), enabling provability to lift across database extensions.
+
+**What Phase C0 proves (DB closure):**
+Every `Γ l = some (fr, e)` satisfies `Spec.Provable Γ fr e` — using the FULL database Γ.
+For axioms, self-use IS the semantics. For proved theorems, self-use is weaker than the
+parser's original validation but still honest.
+
+**What this section adds:**
+- `SpecDBSubset`: explicit subset relation on spec databases
+- `convertHyp_stable_under_insert`: hypothesis conversion stable under insert
+- `toFrame_stable_under_insert`: frame conversion stable under insert
+- `toDatabase_insert_subset`: spec DB subset after DB.insert
+- `provable_lifts_across_insert`: provability lifts across database extensions
+
+**What remains (future work):**
+Prefix-witness theorem: every `$p` theorem is `Provable` in the database at insertion time
+(requires parser-trace induction, separate effort).
+-/
+
+section PhaseC1_InsertMonotonicity
+
+/-- Spec-level database subset: every entry in `Γ` is also in `Γ'`. -/
+def SpecDBSubset (Γ Γ' : Spec.Database) : Prop :=
+  ∀ l x, Γ l = some x → Γ' l = some x
+
+/-- `List.mapM` congruence for the `Option` monad: pointwise-equal functions
+    produce the same result. -/
+private theorem List.mapM_option_congr {α β : Type} (f g : α → Option β) (l : List α)
+    (h : ∀ x ∈ l, f x = g x) :
+    @List.mapM Option _ α β f l = @List.mapM Option _ α β g l := by
+  induction l with
+  | nil => rfl
+  | cons x xs ih =>
+    simp only [List.mapM_cons]
+    rw [h x (by simp), ih (fun y hy => h y (by simp [hy]))]
+
+/-- `convertHyp` depends on `db` only through `db.find?`.
+    After `DB.insert` of a different label, `convertHyp` agrees. -/
+theorem convertHyp_stable_under_insert
+    (db : Verify.DB) (pos : Pos) (new_label : String)
+    (obj : String → Verify.Object) (hyp_label : String)
+    (h_ne : hyp_label ≠ new_label) :
+    convertHyp (db.insert pos new_label obj) hyp_label = convertHyp db hyp_label := by
+  unfold convertHyp
+  rw [Metamath.ParserCorrectness.insert_preserves_find?_ne db pos new_label hyp_label obj h_ne]
+
+/-- `toFrame` is stable under `DB.insert` when all hypothesis labels in the frame
+    differ from the inserted label. Since `toFrame` = `mapM (convertHyp db)` + pure
+    DV conversion, it suffices that each `convertHyp` call is stable. -/
+theorem toFrame_stable_under_insert
+    (db : Verify.DB) (pos : Pos) (new_label : String)
+    (obj : String → Verify.Object) (fr_impl : Verify.Frame)
+    (h_disjoint : ∀ lbl ∈ fr_impl.hyps.toList, lbl ≠ new_label) :
+    toFrame (db.insert pos new_label obj) fr_impl = toFrame db fr_impl := by
+  unfold toFrame
+  congr 1
+  exact List.mapM_option_congr
+    (convertHyp (db.insert pos new_label obj)) (convertHyp db) fr_impl.hyps.toList
+    (fun lbl h_mem => convertHyp_stable_under_insert db pos new_label obj lbl
+      (h_disjoint lbl h_mem))
+
+/-- After `DB.insert`, the spec-level database is a superset of the original.
+
+    **Preconditions:**
+    - `h_fresh`: `new_label` wasn't an assertion before (parser enforces label uniqueness)
+    - `h_hyp_disjoint`: no existing assertion's hypothesis labels clash with `new_label`
+      (hypothesis labels are defined before the assertion, so they have different labels)
+
+    **Proof structure (per Codex):**
+    - `l = new_label`: `Γ l = some x` requires `db.find? new_label = some (.assert ...)`,
+      contradicting `h_fresh`
+    - `l ≠ new_label`: `find?` preserved by `insert_preserves_find?_ne`, `toFrame` preserved
+      by `toFrame_stable_under_insert`, `toExprOpt` is DB-independent -/
+theorem toDatabase_insert_subset
+    (db : Verify.DB) (pos : Pos) (new_label : String)
+    (obj : String → Verify.Object)
+    (h_fresh : ∀ f (fr_impl : Verify.Frame) n,
+      db.find? new_label ≠ some (.assert f fr_impl n))
+    (h_hyp_disjoint : ∀ l f (fr_impl : Verify.Frame) n,
+      db.find? l = some (.assert f fr_impl n) →
+      ∀ hyp ∈ fr_impl.hyps.toList, hyp ≠ new_label)
+    (Γ : Spec.Database) (h_Γ : toDatabase db = some Γ)
+    (Γ' : Spec.Database) (h_Γ' : toDatabase (db.insert pos new_label obj) = some Γ') :
+    SpecDBSubset Γ Γ' := by
+  intro l x h_lookup
+  by_cases h_eq : l = new_label
+  · -- l = new_label: contradiction from h_fresh
+    unfold toDatabase at h_Γ
+    injection h_Γ with h_Γ_eq
+    rw [← h_Γ_eq] at h_lookup
+    simp only at h_lookup
+    rw [h_eq] at h_lookup
+    cases h_find : db.find? new_label with
+    | none => simp [h_find] at h_lookup
+    | some entry =>
+      cases entry with
+      | assert f fr_impl n => exact absurd h_find (h_fresh f fr_impl n)
+      | _ => simp [h_find] at h_lookup
+  · -- l ≠ new_label: find? and toFrame preserved
+    unfold toDatabase at h_Γ h_Γ'
+    injection h_Γ with h_Γ_eq
+    injection h_Γ' with h_Γ'_eq
+    rw [← h_Γ_eq] at h_lookup
+    rw [← h_Γ'_eq]
+    simp only at h_lookup ⊢
+    rw [Metamath.ParserCorrectness.insert_preserves_find?_ne db pos new_label l obj h_eq]
+    cases h_find : db.find? l with
+    | none => simp [h_find] at h_lookup
+    | some entry =>
+      cases entry with
+      | assert f fr_impl n =>
+        simp [h_find] at h_lookup ⊢
+        rw [toFrame_stable_under_insert db pos new_label obj fr_impl
+          (h_hyp_disjoint l f fr_impl n h_find)]
+        exact h_lookup
+      | _ => simp [h_find] at h_lookup
+
+/-- Provability lifts across `DB.insert`: if an expression is provable in the
+    spec database before insert, it remains provable after insert. -/
+theorem provable_lifts_across_insert
+    (db : Verify.DB) (pos : Pos) (new_label : String)
+    (obj : String → Verify.Object)
+    (h_fresh : ∀ f (fr_impl : Verify.Frame) n,
+      db.find? new_label ≠ some (.assert f fr_impl n))
+    (h_hyp_disjoint : ∀ l f (fr_impl : Verify.Frame) n,
+      db.find? l = some (.assert f fr_impl n) →
+      ∀ hyp ∈ fr_impl.hyps.toList, hyp ≠ new_label)
+    (Γ : Spec.Database) (h_Γ : toDatabase db = some Γ)
+    (Γ' : Spec.Database) (h_Γ' : toDatabase (db.insert pos new_label obj) = some Γ')
+    (fr : Spec.Frame) (e : Spec.Expr)
+    (h_prov : Spec.Provable Γ fr e) :
+    Spec.Provable Γ' fr e :=
+  Spec.Provable.mono_db
+    (toDatabase_insert_subset db pos new_label obj h_fresh h_hyp_disjoint Γ h_Γ Γ' h_Γ')
+    h_prov
+
+end PhaseC1_InsertMonotonicity
 
 end Metamath.Kernel
 
