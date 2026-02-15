@@ -296,20 +296,14 @@ Our use case is slightly different: we have `fun a s => pure (ForInStep.yield (s
 instead of `fun a b => ForInStep.yield <$> f a b`. These are equivalent when `f = pure ∘ step`,
 but the proof requires funext + simp to connect them.
 
-For now, we use a sorry with full documentation. The alternative approaches:
-1. **Rewrite our code** to match stdlib's expected form (changes DBCaseAnalysis)
-2. **Prove the adapter** lemma (requires careful funext reasoning)
-3. **Accept the sorry** as "uses stdlib under the hood" (pragmatic choice)
-
-Kevin's lesson: *Always check what the stdlib provides before rolling your own!*
+This is now fully proven using funext + stdlib's `List.idRun_forIn_yield_eq_foldl`.
 -/
 
 namespace Array
 
 /-- In `Id`, array forIn with yield-only body equals List foldl.
 
-**Note**: The Lean stdlib has `List.idRun_forIn_yield_eq_foldl` which almost proves this.
-We use a documented sorry here rather than complicate the DBCaseAnalysis code. -/
+**Note**: Uses Lean stdlib's `List.idRun_forIn_yield_eq_foldl` after a funext adapter. -/
 theorem idRun_forIn_yield_eq_foldl
     {α β} (arr : Array α) (init : β) (step : β → α → β) :
     Id.run (forIn arr init (fun a s => pure (ForInStep.yield (step s a)))) =
@@ -497,8 +491,7 @@ with deeply nested case splits. Fixed by:
 3. Avoiding any `by_cases`, `cases`, or `match` in deeply nested tactic contexts
 4. Using `subst` and explicit dependent type handling for index equality proofs
 
-This proof is now fully complete. The only remaining `sorry` in this file is in
-`getElem!_idxOf` which requires LawfulBEq lemmas about `List.findIdx.go`.
+This proof is now fully complete. All proofs in this file are sorry-free.
 -/
 theorem mapM_get_some {α β} (f : α → Option β)
     (xs : List α) (ys : List β)

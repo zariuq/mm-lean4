@@ -43,7 +43,8 @@ open Metamath.Kernel (toDatabase toFrame toExpr SpecDBSubset
 open Metamath.ParserOps (feedProof_success_db finishProof_success_insert
   insert_success_nonvar_fresh withAt_success_eq
   feedProof_goNormal_ok_preserves_core
-  fresh_not_in_assert_frames_of_wf)
+  fresh_not_in_assert_frames_of_wf
+  preloadMandatoryHyps_ok_preserves_core)
 
 -- Re-establish Formula to resolve ambiguity with Kernel.Formula
 -- (KernelClean defines abbrev Kernel.Formula := Verify.Formula which
@@ -2431,5 +2432,295 @@ theorem prefix_provable_any_proof_z
       (z_compressed_to_normal_reachable s.db pr.label pr.fmla pr.stack h_wf h
         h_stack_one h_stack_fmla)
       h_stack_one h_stack_fmla
+
+/-! ## Part 16: Parser Bridge for Compressed Proofs
+
+Close the `h_reach : ProofReachableZ` gap by deriving reachability from
+actual parser execution. The key insight: `applyCompressedActions` (which the
+parser uses) and `execStepSave` (which `ZCompressedProofReachable` uses) are
+the same function for non-unknown actions.
+
+**Architecture:**
+- 16a: Convert `CompressedAction` → `StepSaveAction`, prove fold equivalence
+- 16b: Bridge from parser data to `ZCompressedProofReachable`
+- 16c: `preloadMandatoryHyps` property lemmas (stack, HeapCert)
+- 16d: Full bridge from `preloadMandatoryHyps` + user preloads + compressed actions
+-/
+
+/-! ### Part 16a: CompressedAction ↔ StepSaveAction Bridge -/
+
+/-- Convert a `CompressedAction` to a `StepSaveAction`.
+    The `.unknown` case maps to `.save` (arbitrary default; unreachable
+    when the no-unknown precondition holds). -/
+def compressedToStepSave : ParserState.CompressedAction → StepSaveAction
+  | .step n => .step n
+  | .save => .save
+  | .unknown => .save
+
+/-- `applyCompressedActions` equals `execStepSave` fold when no unknowns are present.
+
+    This is the key bridge: the parser's `applyCompressedActions` (which handles
+    `.step`, `.save`, and `.unknown`) agrees with `execStepSave` fold (which only
+    handles `.step` and `.save`) when the action list contains no `.unknown` entries. -/
+theorem applyCA_eq_execSS_fold
+    (db : DB) (pr : ProofState)
+    (cacts : List ParserState.CompressedAction)
+    (h_no_unk : ∀ a ∈ cacts, a ≠ ParserState.CompressedAction.unknown) :
+    ParserState.applyCompressedActions db pr cacts =
+    (cacts.map compressedToStepSave).foldlM (fun p a => execStepSave db p a) pr := by
+  induction cacts generalizing pr with
+  | nil => simp [ParserState.applyCompressedActions, List.foldlM]
+  | cons act rest ih =>
+    have h_rest_no_unk : ∀ a ∈ rest, a ≠ ParserState.CompressedAction.unknown :=
+      fun a ha => h_no_unk a (List.mem_cons_of_mem _ ha)
+    simp only [ParserState.applyCompressedActions, List.foldlM_cons, List.map_cons,
+               bind, Except.bind]
+    cases act with
+    | step n =>
+      simp only [compressedToStepSave, execStepSave]
+      cases db.stepProof pr n with
+      | error e => rfl
+      | ok pr' => exact ih pr' h_rest_no_unk
+    | save =>
+      simp only [compressedToStepSave, execStepSave]
+      cases pr.save with
+      | error e => rfl
+      | ok pr' =>
+        simp only [pure, Except.pure]
+        exact ih pr' h_rest_no_unk
+    | unknown =>
+      exfalso; exact h_no_unk .unknown (by simp) rfl
+
+/-- `applyCompressedActions` distributes over list concatenation. -/
+theorem applyCA_append
+    (db : DB) (pr : ProofState)
+    (acts₁ acts₂ : List ParserState.CompressedAction) :
+    ParserState.applyCompressedActions db pr (acts₁ ++ acts₂) =
+    (ParserState.applyCompressedActions db pr acts₁).bind
+      (fun mid => ParserState.applyCompressedActions db mid acts₂) := by
+  simp only [ParserState.applyCompressedActions, List.foldlM_append]; rfl
+
+/-- Composing two `applyCompressedActions` calls: if both succeed, the
+    concatenated action list also succeeds with the same final state. -/
+theorem applyCA_compose_ok
+    (db : DB) (pr₁ pr₂ pr₃ : ProofState)
+    (acts₁ acts₂ : List ParserState.CompressedAction)
+    (h₁ : ParserState.applyCompressedActions db pr₁ acts₁ = .ok pr₂)
+    (h₂ : ParserState.applyCompressedActions db pr₂ acts₂ = .ok pr₃) :
+    ParserState.applyCompressedActions db pr₁ (acts₁ ++ acts₂) = .ok pr₃ := by
+  simp only [ParserState.applyCompressedActions, List.foldlM_append] at *
+  simp only [bind, Except.bind, h₁, h₂]
+
+/-! ### Part 16b: Parser Data → ZCompressedProofReachable -/
+
+/-- Bridge from parser execution data to `ZCompressedProofReachable`.
+
+    Given that preloads via `DB.preload` succeeded and `applyCompressedActions`
+    succeeded with no unknown actions, construct `ZCompressedProofReachable`.
+    The conversion uses `applyCA_eq_execSS_fold` to translate the
+    `applyCompressedActions` fold into an `execStepSave` fold. -/
+theorem parser_compressed_to_z_reachable
+    (db : DB) (label : String) (fmla : Formula)
+    (preloads : List String)
+    (cacts : List ParserState.CompressedAction)
+    (pr_preload pr_final : ProofState)
+    (h_preload : preloads.foldlM (DB.preload db)
+      ⟨⟨0,0⟩, label, fmla, db.frame, #[], #[], .normal⟩ = .ok pr_preload)
+    (h_actions : ParserState.applyCompressedActions db pr_preload cacts = .ok pr_final)
+    (h_no_unk : ∀ a ∈ cacts, a ≠ ParserState.CompressedAction.unknown) :
+    ZCompressedProofReachable db label fmla pr_final.stack := by
+  refine ⟨preloads, cacts.map compressedToStepSave, pr_preload, pr_final,
+    h_preload, ?_, rfl⟩
+  rwa [← applyCA_eq_execSS_fold db pr_preload cacts h_no_unk]
+
+/-! ### Part 16c: preloadMandatoryHyps Property Lemmas
+
+The parser calls `preloadMandatoryHyps` (a `for` loop over `pr.frame.hyps`)
+to populate the heap before compressed proof execution. We prove this preserves
+stack and establishes `HeapCert`. -/
+
+/-- `preloadMandatoryHyps` preserves the stack (it only modifies the heap). -/
+theorem preloadMandatoryHyps_preserves_stack
+    (db : DB) (pr pr' : ProofState)
+    (h_ok : db.preloadMandatoryHyps pr = .ok pr') :
+    pr'.stack = pr.stack := by
+  let body : String → ProofState → Except ProofCheckFail (ForInStep ProofState) :=
+    fun lbl acc =>
+      match db.find? lbl with
+      | some (.hyp _ f _) => pure (.yield (acc.pushHeap (.fmla f)))
+      | _ => throw (.proofCheck (.mandatoryHypothesisNotFoundInDatabase lbl))
+  have h_for_list : forIn pr.frame.hyps.toList pr body = Except.ok pr' := by
+    unfold DB.preloadMandatoryHyps at h_ok
+    have h_for : forIn pr.frame.hyps pr body = Except.ok pr' := by simpa [body] using h_ok
+    calc forIn pr.frame.hyps.toList pr body
+        = forIn pr.frame.hyps pr body := by
+          simp [Array.forIn_toList (xs := pr.frame.hyps) (b := pr) (f := body)]
+      _ = Except.ok pr' := h_for
+  suffices h_aux :
+      ∀ (labels : List String) (acc acc' : ProofState),
+        forIn labels acc body = Except.ok acc' →
+        acc'.stack = acc.stack from
+    h_aux _ _ _ h_for_list
+  intro labels
+  induction labels with
+  | nil =>
+    intro acc acc' h; simp at h; cases h; rfl
+  | cons lbl rest ih =>
+    intro acc acc' h
+    simp [List.forIn_cons, body] at h
+    cases h_find : db.find? lbl with
+    | none => simp [h_find, Bind.bind, Except.bind] at h
+    | some obj =>
+      cases obj with
+      | const _ => simp [h_find, Bind.bind, Except.bind] at h
+      | var _ => simp [h_find, Bind.bind, Except.bind] at h
+      | hyp ess f origin =>
+        simp [h_find, Bind.bind, Except.bind, pure, Except.pure] at h
+        rw [ih _ _ h]; simp [ProofState.pushHeap]
+      | assert f fr origin => simp [h_find, Bind.bind, Except.bind] at h
+
+/-- `preloadMandatoryHyps` establishes `HeapCert` on the resulting heap.
+
+    Each mandatory hypothesis label in `pr.frame.hyps` is looked up as `.hyp`,
+    yielding formula `f`. `hyp_derivcert` gives `DerivCert db f`, and
+    `HeapCert_push_fmla` extends the heap certificate. -/
+theorem preloadMandatoryHyps_heapCert
+    (db : DB) (pr pr' : ProofState)
+    (h_ok : db.preloadMandatoryHyps pr = .ok pr')
+    (h_hc : HeapCert db pr.heap)
+    (h_frame : pr.frame = db.frame)
+    (h_wf : WellFormedDB db) :
+    HeapCert db pr'.heap := by
+  let body : String → ProofState → Except ProofCheckFail (ForInStep ProofState) :=
+    fun lbl acc =>
+      match db.find? lbl with
+      | some (.hyp _ f _) => pure (.yield (acc.pushHeap (.fmla f)))
+      | _ => throw (.proofCheck (.mandatoryHypothesisNotFoundInDatabase lbl))
+  have h_for_list : forIn pr.frame.hyps.toList pr body = Except.ok pr' := by
+    unfold DB.preloadMandatoryHyps at h_ok
+    have h_for : forIn pr.frame.hyps pr body = Except.ok pr' := by simpa [body] using h_ok
+    calc forIn pr.frame.hyps.toList pr body
+        = forIn pr.frame.hyps pr body := by
+          simp [Array.forIn_toList (xs := pr.frame.hyps) (b := pr) (f := body)]
+      _ = Except.ok pr' := h_for
+  suffices h_aux :
+      ∀ (labels : List String) (acc acc' : ProofState),
+        (∀ l ∈ labels, l ∈ db.frame.hyps) →
+        forIn labels acc body = Except.ok acc' →
+        HeapCert db acc.heap →
+        HeapCert db acc'.heap from
+    h_aux pr.frame.hyps.toList pr pr'
+      (fun l h_mem => h_frame ▸ Array.mem_toList_iff.mp h_mem)
+      h_for_list h_hc
+  intro labels
+  induction labels with
+  | nil =>
+    intro acc acc' _ h hc; simp at h; cases h; exact hc
+  | cons lbl rest ih =>
+    intro acc acc' h_in_frame h_fold h_hc_acc
+    simp [List.forIn_cons, body] at h_fold
+    cases h_find : db.find? lbl with
+    | none => simp [h_find, Bind.bind, Except.bind] at h_fold
+    | some obj =>
+      cases obj with
+      | hyp ess f origin =>
+        simp [h_find, Bind.bind, Except.bind, pure, Except.pure] at h_fold
+        have h_lbl_in : lbl ∈ db.frame.hyps :=
+          h_in_frame lbl (List.Mem.head _)
+        have h_cert : DerivCert db f :=
+          hyp_derivcert db lbl ess f origin h_find h_lbl_in h_wf
+        have h_hc_new : HeapCert db (acc.pushHeap (.fmla f)).heap := by
+          simp [ProofState.pushHeap]
+          exact HeapCert_push_fmla db acc.heap f h_hc_acc h_cert
+        exact ih _ _
+          (fun l h_mem => h_in_frame l (List.mem_cons_of_mem _ h_mem))
+          h_fold h_hc_new
+      | const _ => simp [h_find, Bind.bind, Except.bind] at h_fold
+      | var _ => simp [h_find, Bind.bind, Except.bind] at h_fold
+      | assert _ _ _ => simp [h_find, Bind.bind, Except.bind] at h_fold
+
+/-! ### Part 16d: Full Compressed Proof Bridge
+
+Connect the actual parser compressed flow to `ProofReachableZ`.
+
+The parser's compressed proof execution has two preload sub-phases:
+1. `preloadMandatoryHyps`: bulk-preloads all mandatory hypothesis formulas
+2. User-specified preloads: individual `DB.preload` calls for each label token
+
+After preloading, compressed tokens are decoded and applied via
+`applyCompressedActions`. We bridge the combined preloaded state to
+`ZCompressedProofReachable` by showing the preloaded state has HeapCert,
+empty stack, and correct frame. -/
+
+/-- Full compressed proof bridge: from `preloadMandatoryHyps` + user preloads +
+    `applyCompressedActions` to `ZCompressedProofReachable`.
+
+    Combines mandatory hyps preload with user-specified preloads, then
+    bridges compressed actions to the `execStepSave` fold model. -/
+theorem compressed_full_bridge
+    (db : DB) (label : String) (fmla : Formula)
+    (pr_init pr_mand pr_preload pr_final : ProofState)
+    (user_preloads : List String)
+    (all_cacts : List ParserState.CompressedAction)
+    -- Initial state (from resumeThm)
+    (h_init : pr_init = ⟨⟨0,0⟩, label, fmla, db.frame, #[], #[], .start⟩)
+    -- preloadMandatoryHyps succeeded
+    (h_mand : db.preloadMandatoryHyps pr_init = .ok pr_mand)
+    -- User preloads succeeded
+    (h_user : user_preloads.foldlM (DB.preload db) pr_mand = .ok pr_preload)
+    -- Compressed actions succeeded with no unknowns
+    (h_actions : ParserState.applyCompressedActions db pr_preload all_cacts = .ok pr_final)
+    (h_no_unk : ∀ a ∈ all_cacts, a ≠ ParserState.CompressedAction.unknown)
+    -- WellFormedDB for HeapCert
+    (h_wf : WellFormedDB db)
+    -- Stack and formula conditions at finish
+    (h_stack_one : pr_final.stack.size = 1)
+    (h_stack_fmla : pr_final.stack[0]? = some fmla) :
+    ProofReachableZ db label fmla pr_final.stack := by
+  -- Establish initial properties after mandatory preload
+  have h_init_frame : pr_init.frame = db.frame := by subst h_init; rfl
+  have h_init_stack : pr_init.stack = #[] := by subst h_init; rfl
+  have h_init_heap : pr_init.heap = #[] := by subst h_init; rfl
+  -- Properties after mandatory preload
+  have h_mand_stack : pr_mand.stack = pr_init.stack :=
+    preloadMandatoryHyps_preserves_stack db pr_init pr_mand h_mand
+  have h_mand_frame : pr_mand.frame = pr_init.frame :=
+    (preloadMandatoryHyps_ok_preserves_core db pr_init pr_mand h_mand).2
+  have h_mand_hc : HeapCert db pr_mand.heap :=
+    preloadMandatoryHyps_heapCert db pr_init pr_mand h_mand
+      (by rw [h_init_heap]; exact HeapCert_empty db) h_init_frame h_wf
+  -- Properties after user preloads
+  have h_pre_stack : pr_preload.stack = pr_mand.stack :=
+    preload_fold_preserves_stack db user_preloads pr_mand pr_preload h_user
+  have h_pre_frame : pr_preload.frame = pr_mand.frame :=
+    preload_fold_preserves_frame db user_preloads pr_mand pr_preload h_user
+  have h_pre_hc : HeapCert db pr_preload.heap :=
+    preload_fold_preserves_heapCert db user_preloads pr_mand pr_preload
+      h_user h_mand_hc h_wf
+  -- Combined properties
+  have h_pre_frame_db : pr_preload.frame = db.frame := by
+    rw [h_pre_frame, h_mand_frame, h_init_frame]
+  have h_pre_stack_empty : pr_preload.stack = #[] := by
+    rw [h_pre_stack, h_mand_stack, h_init_stack]
+  -- Convert actions to StepSaveAction fold
+  have h_ss_actions : (all_cacts.map compressedToStepSave).foldlM
+      (fun p a => execStepSave db p a) pr_preload = .ok pr_final := by
+    rwa [← applyCA_eq_execSS_fold db pr_preload all_cacts h_no_unk]
+  -- Establish certs after action phase
+  have ⟨h_sc_final, _⟩ :=
+    execStepSave_fold_preserves_certs db (all_cacts.map compressedToStepSave)
+      pr_preload pr_final h_ss_actions
+      (by rw [h_pre_stack_empty]; exact StackCert_empty db)
+      h_pre_hc h_pre_frame_db
+  -- Extract DerivCert from final stack → NormalProofReachable
+  have h_cert : DerivCert db fmla :=
+    compressed_final_cert db pr_final h_sc_final fmla h_stack_fmla
+  have h_normal : NormalProofReachable db label fmla #[fmla] :=
+    DerivCert_to_NormalProofReachable db label fmla fmla h_cert
+  -- pr_final.stack = #[fmla]
+  have h_stack_eq : pr_final.stack = #[fmla] :=
+    array_eq_singleton pr_final.stack fmla h_stack_one h_stack_fmla
+  rw [h_stack_eq]
+  exact .normal h_normal
 
 end Metamath.PrefixProvenance

@@ -2229,24 +2229,9 @@ THEN we can construct SOME operational proof (may not be the same steps).
 This is the **completeness** direction - showing our verifier is complete with
 respect to Mario's semantic specification.
 
-**Status**: DEFERRED (less critical than soundness)
-
-**Why deferred**:
-1. Soundness (forward direction) is more important - ensures our verifier doesn't accept invalid proofs
-2. Completeness is nice-to-have - ensures our verifier isn't artificially restrictive
-3. More complex - requires reconstructing operational proof steps from declarative proof
-4. Can be completed after forward direction is fully proven
-
-**Strategy for future work**:
-- Induction on Mario's Provable derivation
-- For each Mario constructor (hyp, var, ax), construct corresponding ProofValid steps
-- hyp case: Find the hypothesis in our frame, use useEssential or useFloating
-- var case: Construct floating hypothesis for the variable
-- ax case: Most complex - need to:
-  * Find the axiom in our database (inverse of dbToAxioms)
-  * Convert Mario's functional substitution to our Subst
-  * Recursively construct proofs for needed hypotheses (IH)
-  * Apply useAxiom with constructed substitution
+**Status**: COMPLETE. The backward direction (`mario_to_proofValid`) is fully proven
+at line 3498 below. The implementation-level completeness theorem
+`verify_impl_complete` in KernelClean.lean establishes the full biconditional.
 -/
 
 /-! ### Completeness: Mario → Operational
