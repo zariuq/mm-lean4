@@ -10338,8 +10338,7 @@ theorem foldlM_proofSteps_complete
         exact stackRespectsFrame_push db db.frame pr_mid.stack f h_respects_mid h_f_respects
 
   | useAxiom stack steps l fr' e σ h_lookup h_dvOK h_typed h_valid' needed h_needed remaining h_stack_eq =>
-      -- TODO: These axioms need to be proven properly, but for now we stub them out
-      -- to complete the proof structure. See comments below for what they should say.
+      -- useAxiom case: all sub-goals proven inline below.
 
       -- Prove database lookup correspondence from toDatabase definition
       have database_lookup_correspondence :

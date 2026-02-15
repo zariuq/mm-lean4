@@ -226,4 +226,45 @@ theorem verify_parser_acceptance_any_mode_iff_spec_provable
     intro h_spec
     exact Or.inl (verify_parser_accepts_of_spec_provable bytes label f h_success h_spec)
 
+/-! ## Step 5: ProofReachableZ ↔ NormalProofReachable (DB level)
+
+On a well-formed DB with singleton stack, the three proof execution modes
+(normal, compressed, Z-compressed) are all equivalent to normal reachability.
+This closes the compressed completeness gap by reduction: since normal
+completeness is proven, compressed completeness follows for free. -/
+
+theorem ProofReachableZ_iff_NormalProofReachable
+    (db : DB) (label : String) (fmla : Formula) (stack : Array Formula)
+    (h_wf : WellFormedDB db)
+    (h_size : stack.size = 1) (h_fmla : stack[0]? = some fmla) :
+    ProofReachableZ db label fmla stack ↔ NormalProofReachable db label fmla stack :=
+  ⟨fun h => compressed_implies_normal_fold db label fmla stack h h_wf h_size h_fmla,
+   fun h => .normal h⟩
+
+/-- Compressed completeness follows from normal completeness by mode equivalence.
+
+Spec provability implies the existence of a `ProofReachableZ` witness (which
+subsumes all three proof modes). The stack element `f'` satisfies
+`toExpr f' = toExpr f` (expression equivalence up to the bridge). -/
+theorem compressed_completeness_of_normal_completeness
+    (bytes : ByteArray)
+    (label : String)
+    (f : Verify.Formula)
+    (h_success : (Verify.checkBytes bytes).error? = none)
+    (h_spec : ∃ (Γ : Spec.Database) (fr : Spec.Frame),
+      toDatabase (Verify.checkBytes bytes) = some Γ ∧
+      toFrame (Verify.checkBytes bytes) (Verify.checkBytes bytes).frame = some fr ∧
+      Spec.Provable Γ fr (toExpr f)) :
+    ∃ (stack : Array Verify.Formula) (f' : Verify.Formula),
+      ProofReachableZ (Verify.checkBytes bytes) label f stack ∧
+      stack.size = 1 ∧ stack[0]? = some f' ∧
+      toExpr f' = toExpr f := by
+  -- Normal completeness gives a stepNormal fold with f' on the stack
+  obtain ⟨proof, pr_final, f', h_fold, h_size, h_fmla, h_eq⟩ :=
+    verify_parser_accepts_of_spec_provable bytes label f h_success h_spec
+  -- Wrap the normal fold as NormalProofReachable, then embed into ProofReachableZ
+  have h_normal : NormalProofReachable (Verify.checkBytes bytes) label f pr_final.stack :=
+    ⟨proof, pr_final, h_fold, rfl⟩
+  exact ⟨pr_final.stack, f', .normal h_normal, h_size, h_fmla, h_eq⟩
+
 end Metamath.ParserAnyModeEquivalence
