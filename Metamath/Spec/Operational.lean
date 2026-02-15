@@ -187,27 +187,6 @@ theorem ProofValidFrom.trans
         (ProofValidFrom.useAxiom fr stk₁ stack (steps ++ steps₁) l fr' e σ
           h_find h_dv h_typed ih needed h_needed remaining h_stack)
 
-/-! ## Proof Sequences (Compositional)
-
-This is a generalization for composing proof steps. Used in fold-based proofs.
--/
-
-/-- Proof sequence: relates initial (frame, stack) to final (frame, stack).
-
-    **Intended semantics**: Always starts from empty stack.
-    - nil case: "we reach stk from empty using zero steps" (i.e., stk must be empty)
-    - cons case: builds from empty through some steps, then continues
-
-    **TODO**: Current cons has stk₀ unconstrained, may be too general.
-    For now, we only use nil with empty stacks in practice.
--/
-inductive ProofValidSeq (Γ : Database) : Frame → List Expr → Frame → List Expr → Prop where
-  | nil : ∀ fr stk, ProofValidSeq Γ fr stk fr stk
-  | cons : ∀ fr₀ stk₀ fr₁ stk₁ fr₂ stk₂ steps,
-      ProofValid Γ fr₀ stk₁ steps →
-      ProofValidSeq Γ fr₁ stk₁ fr₂ stk₂ →
-      ProofValidSeq Γ fr₀ stk₀ fr₂ stk₂
-
 /-! ## Key Theorems (Connecting Operational to Provable)
 
 These bridge the inductive proof construction to the existential definition.
@@ -218,13 +197,6 @@ theorem ProofValid.toProvable {Γ : Database} {fr : Frame} {e : Expr} {steps : L
   ProofValid Γ fr [e] steps → Provable Γ fr e := by
   intro h_valid
   exact ⟨steps, [e], h_valid, rfl⟩
-
-/-- Convert ProofValid to ProofValidSeq using cons + nil -/
-theorem ProofValid.toSeq_from_nil
-  {Γ : Database} {fr : Frame} {stk : List Expr} {steps : List ProofStep} :
-  ProofValid Γ fr stk steps → ProofValidSeq Γ fr [] fr stk := by
-  intro h_valid
-  exact ProofValidSeq.cons fr [] fr stk fr stk steps h_valid (ProofValidSeq.nil fr stk)
 
 /-! ## Soundness Statement
 
@@ -256,7 +228,7 @@ But the inductive Prop approach has advantages:
 1. **Proof-oriented**: Properties easier to state and prove
 2. **Spec clarity**: Describes "what is valid" not "how to compute"
 3. **Implementation independence**: Verify.lean can use different data structures
-4. **Coinductive reasoning**: Can compose proofs via ProofValidSeq
+4. **Composability**: Can compose proofs via inductive constructors
 
 **Relationship to Metamath Specification**:
 - §4.3 describes proof as "sequence of labels" - we model as ProofStep sequence
