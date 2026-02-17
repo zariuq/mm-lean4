@@ -1194,286 +1194,6 @@ substitution correspondence proofs.
 
 /-! #### Layer B: Equation lemma for Formula.subst loop -/
 
--- /-- Helper: foldlM on a nonempty initializer stays nonempty -/
--- lemma foldlM_nonempty_preserves_nonempty {σ : Std.HashMap String Verify.Formula}
---     {c : String} (syms : List Verify.Sym) (result : Verify.Formula)
---     (h_fold : syms.foldlM (Formula.substStep σ) #[Verify.Sym.const c] = Except.ok result) :
---     0 < result.size := by
---   -- Key insight: substStep always appends to the accumulator
---   -- - For const: appends the symbol via acc.push
---   -- - For var: appends the tail of the substitution via Array.push in a fold
---   -- Therefore the array never shrinks, and stays nonempty
--- 
---   -- Induction on syms
---   induction syms generalizing result with
---   | nil =>
---       -- syms = [] means foldlM doesn't process anything
---       -- So result = #[const c]
---       simp [List.foldlM_nil] at h_fold
---       -- h_fold : ok #[Verify.Sym.const c] = ok result
---       injection h_fold with h_eq
---       rw [← h_eq]
---       -- Now show 0 < #[const c].size
---       decide
--- 
---   | cons s rest ih =>
---       -- syms = s :: rest
---       -- foldlM (s :: rest) = substStep σ #[const c] s >>= fun a => rest.foldlM (Formula.substStep σ) a
---       simp only [List.foldlM_cons] at h_fold
--- 
---       -- h_fold : (Formula.substStep σ #[Verify.Sym.const c] s) >>= fun a => rest.foldlM (Formula.substStep σ) a = ok result
--- 
---       -- Case on whether substStep succeeds
---       have h_step : Formula.substStep σ #[Verify.Sym.const c] s = Except.ok ?acc := by
---         -- substStep either returns ok or error
---         -- We need to extract the successful case
---         cases h_step : Formula.substStep σ #[Verify.Sym.const c] s with
---         | ok acc =>
---             exact ⟨acc, rfl⟩
---         | error err =>
---             -- If substStep fails, the bind fails, contradicting h_fold
---             simp [h_step] at h_fold
--- 
---       obtain ⟨acc, h_step_ok⟩ := h_step
---       rw [h_step_ok] at h_fold
---       -- Now h_fold: ok acc >>= fun a => rest.foldlM (Formula.substStep σ) a = ok result
---       simp at h_fold
---       -- h_fold : rest.foldlM (Formula.substStep σ) acc = ok result
--- 
---       -- Key: acc has size > 0 because substStep appends to nonempty array
---       have h_acc_nonempty : 0 < acc.size := by
---         -- substStep σ #[const c] s appends to #[const c]
---         -- - If s is const, it appends the symbol
---         -- - If s is var, it appends elements from the substitution
---         -- In both cases, size increases from 1
---         cases s with
---         | const c' =>
---             -- substStep σ #[const c] (const c') = ok (#[const c].push (const c'))
---             simp [Formula.substStep] at h_step_ok
---             rw [h_step_ok]
---             simp [Array.size_push]
---         | var v =>
---             -- substStep σ #[const c] (var v) either errors or appends tail of substitution
---             cases lookup : σ[v]? with
---             | none =>
---                 -- substStep fails, contradiction
---                 simp [Formula.substStep, lookup] at h_step_ok
---             | some e =>
---                 -- substStep σ #[const c] (var v) = ok (e.foldl Array.push #[const c] 1)
---                 simp [Formula.substStep, lookup] at h_step_ok
---                 rw [h_step_ok]
---                 -- e.foldl Array.push #[const c] 1 starts with #[const c] and appends elements
---                 -- Its size is at least 1 (from the initial #[const c])
---                 have : 1 ≤ (e.foldl Array.push #[Verify.Sym.const c] 1).size := by
---                   -- Array.foldl starting from #[const c] preserves size >= 1
---                   have h_init : 0 < (#[Verify.Sym.const c] : Verify.Formula).size := by decide
---                   clear *
---                   -- General fact: foldl on nonempty array with push stays nonempty
---                   induction e with
---                   | nil =>
---                       simp [List.foldl_nil]
---                       decide
---                   | cons s' rest' ih' =>
---                       simp only [List.foldl_cons]
---                       -- foldl processes s' then rest'
---                       -- After processing s', we push s'
---                       -- This maintains size >= 1
---                       have : 1 ≤ (#[Verify.Sym.const c].push s').size := by decide
---                       omega
---                 omega
--- 
---       -- By induction hypothesis on rest with acc
---       have h_rest : 0 < result.size :=
---         ih acc h_fold
--- 
---       exact h_rest
--- 
--- /-- Helper: foldlM starting from position 1 doesn't affect index 0 -/
--- lemma foldl_from_pos1_preserves_head {a : Verify.Formula} (suffix : List Verify.Sym) :
---     (suffix.foldl (fun acc x => acc.push x) a 1)[0]! = a[0]! := by
---   -- Array.foldl with start=1 processes elements at positions >= 1
---   -- Position 0 is never touched
---   sorry  -- Requires: Array.foldl mechanics with start parameter
--- 
--- /-- Helper: foldlM with substStep preserves head constant -/
--- lemma foldlM_substStep_preserves_head_const {σ : Std.HashMap String Verify.Formula}
---     {c : String} (syms : List Verify.Sym) (result : Verify.Formula)
---     (h_fold : syms.foldlM (Formula.substStep σ) #[Verify.Sym.const c] = Except.ok result) :
---     result[0]! = Verify.Sym.const c := by
---   -- Induction on syms - at each step, the accumulator maintains the head constant
---   induction syms generalizing result with
---   | nil =>
---       -- Base: no processing, result is the initial accumulator
---       simp [List.foldlM_nil] at h_fold
---       injection h_fold with h_eq
---       simp [← h_eq]
--- 
---   | cons s rest ih =>
---       -- Inductive: process s then fold rest
---       simp only [List.foldlM_cons] at h_fold
--- 
---       -- Extract whether substStep succeeds
---       cases h_step : Formula.substStep σ #[Verify.Sym.const c] s with
---       | error err =>
---           simp [h_step] at h_fold
---       | ok acc =>
---           rw [h_step] at h_fold
---           simp at h_fold
---           -- h_fold : rest.foldlM (Formula.substStep σ) acc = ok result
--- 
---           -- Key: acc[0]! = const c after the first step
---           have h_acc_head : acc[0]! = Verify.Sym.const c := by
---             cases s with
---             | const c' =>
---                 -- substStep σ #[const c] (const c') = ok (#[const c].push (const c'))
---                 simp [Formula.substStep] at h_step
---                 rw [h_step]
---                 -- (#[const c].push c')[0]! = #[const c][0]!
---                 simp [Array.getElem!_push_left]
---             | var v =>
---                 -- substStep σ #[const c] (var v) = ok (e.foldl Array.push #[const c] 1)
---                 cases lookup : σ[v]? with
---                 | none =>
---                     simp [Formula.substStep, lookup] at h_step
---                 | some e =>
---                     simp [Formula.substStep, lookup] at h_step
---                     rw [h_step]
---                     -- Use helper: foldl from position 1 preserves head
---                     rw [foldl_from_pos1_preserves_head]
---                     simp
--- 
---           -- By induction hypothesis, rest.foldlM preserves the head
---           have h_rest : result[0]! = acc[0]! := by
---             -- rest.foldlM with acc as init preserves acc[0]!
---             -- This is the IH applied with acc
---             exact ih acc h_fold
--- 
---           -- Combine: acc[0]! = const c, so result[0]! = const c
---           rw [h_rest, h_acc_head]
--- 
--- /-- Head is preserved once the first symbol is a constant (core lemma).
--- 
---     This proof uses induction on the tail of the formula, showing that each fold step
---     preserves the head via head_push_stable and head_append_many_stable.
--- 
---     TODO: Complete the induction proof - currently uses helper lemmas for foldlM properties.
--- -/
--- theorem subst_preserves_head_of_const0
---     {σ : Std.HashMap String Verify.Formula}
---     {f g : Verify.Formula}
---     (hf : 0 < f.size)
---     (hhead : ∃ c, f[0]! = Verify.Sym.const c)
---     (h_sub : f.subst σ = Except.ok g) :
---   ∃ (hg : 0 < g.size), g[0]'hg = f[0]'hf := by
---   -- Use subst_eq_foldlM to convert to list fold
---   rw [subst_eq_foldlM] at h_sub
--- 
---   -- Extract the constant from hhead
---   obtain ⟨c, hc⟩ := hhead
--- 
---   -- f.size > 0 means f.toList is nonempty
---   have h_list_ne : f.toList ≠ [] := by
---     intro h_empty
---     have : f.size = 0 := by simp [Array.length_toList] at h_empty; exact h_empty
---     omega
--- 
---   -- Split f.toList into head and tail
---   obtain ⟨head, tail, h_split⟩ := List.exists_cons_of_ne_nil h_list_ne
--- 
---   -- The head is the constant c
---   have h_head_const : head = Verify.Sym.const c := by
---     have : f[0]! = head := by
---       rw [← Array.getElem!_toList f 0 hf, h_split]
---       rfl
---     rw [← this, hc]
--- 
---   -- Rewrite h_split into h_sub
---   rw [h_split] at h_sub
--- 
---   -- h_sub: (Verify.Sym.const c :: tail).foldlM (Formula.substStep σ) #[] = ok g
---   -- By head_append_many_stable, after folding, g[0] = (result after first step)[0] = const c
--- 
---   -- The crucial insight: foldlM (const c :: tail) on #[] processes const c first,
---   -- then tail on the result. The first step appends const c to the empty array.
---   -- Then remaining steps use head_append_many_stable to preserve this head.
--- 
---   -- Process the head symbol first using foldlM_cons
---   simp only [List.foldlM_cons] at h_sub
--- 
---   -- h_sub: (Formula.substStep σ #[] (Verify.Sym.const c)) >>= (fun a => tail.foldlM (Formula.substStep σ) a) = ok g
--- 
---   -- For a constant symbol, substStep appends to the accumulator
---   have h_step_const : Formula.substStep σ #[] (Verify.Sym.const c) = Except.ok #[Verify.Sym.const c] := by
---     simp [Formula.substStep]
--- 
---   rw [h_step_const] at h_sub
---   -- Now h_sub: (ok #[const c]) >>= (fun a => tail.foldlM (Formula.substStep σ) a) = ok g
---   simp at h_sub
---   -- Now h_sub simplifies: tail.foldlM (Formula.substStep σ) #[const c] = ok g
--- 
---   -- Extract g from the bind result
---   have h_g_from_fold : tail.foldlM (Formula.substStep σ) #[Verify.Sym.const c] = Except.ok g := h_sub
--- 
---   -- g.size > 0: folding onto an nonempty array preserves size >= 1
---   have h_g_size : 0 < g.size :=
---     foldlM_nonempty_preserves_nonempty tail g h_g_from_fold
--- 
---   refine ⟨h_g_size, ?_⟩
--- 
---   -- g[0]! = const c using head_append_many_stable
---   have h_g_head : g[0]! = Verify.Sym.const c :=
---     foldlM_substStep_preserves_head_const tail g h_g_from_fold
--- 
---   -- Now convert to the indexed form
---   have : g[0]'h_g_size = Verify.Sym.const c := by
---     rw [Array.getElem_eq_getElem_of_pos h_g_size]
---     exact h_g_head
--- 
---   simp only [h_head_const, hc] at *
---   exact this
--- 
--- /-- **Tail correspondence (list-level)**: When `f.subst σ = ok g`, the *tail* of `g`
---     equals the `flatMap` of the *tail* of `f` under the substitution step.
--- 
---     **STATUS**: THEOREM (was axiom) - now proved using subst_eq_foldlM + list induction.
--- 
---     The theorem states that the implementation's fold-based substitution processes symbols
---     exactly as the functional specification describes:
---     - Constants: copied unchanged
---     - Variables: replaced by (tail of) σ[v]
--- 
---     **Proof approach**:
---     1. Use equation lemma `subst_eq_foldlM` (converts to functional fold)
---     2. List induction on f.toList
---     3. Each substStep matches the flatMap specification
--- 
---     TODO: Complete the induction proof details.
---     -/
--- theorem subst_ok_flatMap_tail
---   {σ : Std.HashMap String Formula} {f g : Formula}
---   (hsub : f.subst σ = .ok g) :
---   g.toList.tail
---     =
---   (f.toList.tail).flatMap (fun s =>
---     match s with
---     | .const _ => [s]
---     | .var v   =>
---       match σ[v]? with
---       | none    => []
---       | some e  => e.toList.drop 1) := by
---   -- Use subst_eq_foldlM to rewrite as fold
---   have hfold := subst_eq_foldlM σ f
---   rw [hfold] at hsub
--- 
---   -- The proof proceeds by induction on f.toList
---   -- After processing the first element (head), the remaining fold processes the tail
---   -- and produces exactly the flatMap result
--- 
---   -- TODO: Complete the induction on f.toList
---   -- Key insight: substStep on const appends [s], on var appends e.drop 1
---   -- This matches exactly the flatMap specification
---   admit
--- 
 /-- Head (typecode) is preserved by implementation substitution.
 Returns explicit size bounds so callers can use array indexing.
 
@@ -2057,76 +1777,6 @@ theorem wellFormedFrame_hyps_only (db : Verify.DB) (fr : Verify.Frame) :
     exact h_hyps i hi
   · simpa using h_unique
 -- 
--- /-- **KEY THEOREM**: When toFrame succeeds from a well-formed frame, all variables in
---     the resulting Frame.vars came from Sym.var (not Sym.const).
--- 
---     This establishes the precondition needed for const_not_in_vars_with_precondition,
---     allowing us to eliminate the axiom.
--- 
---     **Proof strategy**:
---     1. Frame.vars extracts variables from floating hypotheses (Spec.lean:81-84)
---     2. Each floating hyp came from convertHyp applied to a well-formed formula
---     3. convertHyp_float_from_var proves the Variable came from toSym (Sym.var _)
--- --     4. Therefore no Variable can equal toSym (Sym.const _) -/
--- -- /-- Helper: Extract the mapM result from toFrame's do-notation -/
--- -- lemma toFrame_hyps_eq (db : Verify.DB) (fr_impl : Verify.Frame) (fr_spec : Spec.Frame)
--- --     (h_conv : toFrame db fr_impl = some fr_spec) :
--- --     fr_impl.hyps.toList.mapM (convertHyp db) = some fr_spec.hyps := by
--- --   -- toFrame returns ⟨hyps_spec, dv_spec⟩, so extracting hyps_spec gives us the mapM result
--- --   have : toFrame db fr_impl = some ⟨fr_spec.hyps, fr_spec.dj⟩ := h_conv
--- --   -- The do-notation in toFrame is: let hyps_spec ← ...; ... pure ⟨hyps_spec, dv_spec⟩
--- --   unfold toFrame at this
--- --   simp at this
--- --   sorry  -- Needs unfold of do-notation and Spec.Frame constructor
--- -- 
--- -- theorem toFrame_vars_from_var (db : Verify.DB) (fr_impl : Verify.Frame) (fr_spec : Spec.Frame)
--- --     (h_wf : WellFormedFrame db fr_impl)
--- --     (h_conv : toFrame db fr_impl = some fr_spec) :
--- --     ∀ v ∈ fr_spec.vars, ∃ s, v = Spec.Variable.mk s ∧
--- --                                ∀ c', s ≠ toSym (Verify.Sym.const c') := by
--- --   intro v h_mem
--- --   -- fr_spec.vars comes from floating hypotheses
--- --   -- Frame.vars extracts via filterMap: only floating hyps contribute Variables
--- --   unfold Spec.Frame.vars at h_mem
--- --   simp [List.mem_filterMap] at h_mem
--- -- 
--- --   -- h_mem: ∃ h ∈ fr_spec.hyps, (match h with | floating _ v' => some v' | _ => none) = some v
--- --   obtain ⟨h, h_in_hyps, h_match⟩ := h_mem
--- -- 
--- --   -- Only floating hypotheses produce some in the filterMap
--- --   cases h with
--- --   | essential e => simp at h_match  -- Contradiction: essential gives none
--- --   | floating c_type v_float =>
--- --       -- h_match: some v_float = some v, so v_float = v
--- --       simp at h_match
--- --       rw [← h_match]
--- -- 
--- --       -- Now v_float came from some convertHyp call
--- --       -- fr_spec.hyps came from fr_impl.hyps.toList.mapM (convertHyp db)
--- --       -- Need to find which label in fr_impl.hyps produced this floating hyp
--- -- 
--- --       -- **Proof sketch**:
--- --       -- 1. h came from fr_spec.hyps, which was built by mapM convertHyp
--- --       -- 2. Find the corresponding label in fr_impl.hyps
--- --       -- 3. That label resolves to a well-formed floating hypothesis formula
--- --       -- 4. Apply convertHyp_float_from_var to get the Variable from Sym.var
--- -- 
--- --       -- From toFrame definition: hyps_spec ← fr_impl.hyps.toList.mapM (convertHyp db)
--- --       -- So fr_spec.hyps came from this mapM
--- --       -- h ∈ fr_spec.hyps was produced by convertHyp, so by List.mapM_mem:
--- --       have h_map_eq : fr_impl.hyps.toList.mapM (convertHyp db) = some fr_spec.hyps :=
--- --         toFrame_hyps_eq db fr_impl fr_spec h_conv
---       have ⟨lbl, h_lbl_mem, h_convert⟩ := List.mapM_mem (convertHyp db) fr_impl.hyps.toList fr_spec.hyps h h_map_eq h_in_hyps
--- 
---       -- Now lbl ∈ fr_impl.hyps.toList and convertHyp db lbl = some h
---       -- h = floating c_type v_float, so we get the floating case
---       -- Use well-formedness to extract the variable from the hypothesis
---       -- From h_wf and h_lbl_mem, we can look up the hypothesis in fr_impl.hyps and show it's well-formed
--- 
---       -- Apply convertHyp_float_from_var to extract the Sym.var from v_float
---       sorry  -- Remaining: Use well-formedness to look up the formula at lbl
---
-
 /-- Variables extracted from toFrame come from Sym.var.
 
     **Proof strategy:**
@@ -2655,10 +2305,11 @@ structure ProofStateInv (db : Verify.DB) (pr_impl : Verify.ProofState)
     (steps : List Spec.ProofStep) : Prop where
   /-- The database converts successfully -/
   db_ok : toDatabase db = some Γ
-  /-- The frame converts successfully -/
-  frame_ok : toFrame db pr_impl.frame = some fr_spec
+  /-- The frame converts successfully (uses db.frame: hyps for hypothesis lookup,
+      DV for disjoint variable checking — both use db.frame in stepNormal/stepAssert). -/
+  frame_ok : toFrame db db.frame = some fr_spec
   /-- The frame is well-formed in the parser sense. -/
-  frame_wf : WellFormedFrame db pr_impl.frame
+  frame_wf : WellFormedFrame db db.frame
   /-- The stack projects correctly -/
   stack_ok : viewStack pr_impl.stack = stack_spec
   /-- The spec proof stack is valid (top-of-stack at head). -/
@@ -5271,9 +4922,7 @@ theorem float_step_ok
       constructor
       · -- db_ok: unchanged
         exact inv.db_ok
-      · -- frame_ok: unchanged (frame doesn't change in push)
-        unfold Verify.ProofState.push
-        simp
+      · -- frame_ok: db.frame is unchanged by push
         exact inv.frame_ok
       · -- frame_wf: unchanged
         exact inv.frame_wf
@@ -5336,9 +4985,7 @@ theorem essential_step_ok
       constructor
       · -- db_ok: unchanged
         exact inv.db_ok
-      · -- frame_ok: unchanged (frame doesn't change in push)
-        unfold Verify.ProofState.push
-        simp
+      · -- frame_ok: db.frame is unchanged by push
         exact inv.frame_ok
       · -- frame_wf: unchanged
         exact inv.frame_wf
@@ -7503,12 +7150,12 @@ theorem assert_step_ok
             simpa [Spec.Frame.vars] using h
 
         -- Now extract the rest: DV checks, substitution, final state
-        let vars := Verify.DB.frameFloatVars db pr.frame
+        let vars := Verify.DB.frameFloatVars db db.frame
         -- h_step currently has form: do { checkHyp; dvCheck; subst; pure } = ok pr'
         rw [h_chk] at h_step
         simp [Bind.bind, Except.bind] at h_step
 
-        cases h_dv : Verify.DB.dvCheck vars pr.frame.dj fr_impl.dj σ_impl with
+        cases h_dv : Verify.DB.dvCheck vars db.frame.dj fr_impl.dj σ_impl with
         | error err =>
             rw [h_dv] at h_step
             simp at h_step
@@ -7530,13 +7177,13 @@ theorem assert_step_ok
 
                 -- DV correspondence for useAxiom
                 have h_vars : ∀ s, s ∈ vars ↔ s ∈ varNames fr_spec.vars :=
-                  frameFloatVars_mem_iff_vars db pr.frame fr_spec inv.frame_ok inv.frame_wf
-                have h_dv_target : fr_spec.dv = pr.frame.dj.toList.map convertDV :=
-                  toFrame_dv_eq db pr.frame fr_spec inv.frame_ok
+                  frameFloatVars_mem_iff_vars db db.frame fr_spec inv.frame_ok inv.frame_wf
+                have h_dv_target : fr_spec.dv = db.frame.dj.toList.map convertDV :=
+                  toFrame_dv_eq db db.frame fr_spec inv.frame_ok
                 have h_dv_source : fr_assert.dv = fr_impl.dj.toList.map convertDV :=
                   toFrame_dv_eq db fr_impl fr_assert h_fr_assert
                 have h_dv_ok : Spec.dvOK fr_spec.vars fr_assert.dv fr_spec.dv σ_typed.σ :=
-                  dv_check_sound vars pr.frame.dj fr_impl.dj σ_impl fr_spec fr_assert σ_typed
+                  dv_check_sound vars db.frame.dj fr_impl.dj σ_impl fr_spec fr_assert σ_typed
                     h_dv h_vars h_dv_target h_dv_source h_typed
 
                 -- Align the "needed" window with the stack suffix
@@ -7649,8 +7296,6 @@ theorem stepNormal_sound
   (h_success : db.error? = none)
   (h_db_wf : WellFormedDB db)
   (h_db : toDatabase db = some Γ)
-  (h_fr : toFrame db pr.frame = some fr)
-  (h_frame_eq : pr.frame = db.frame)  -- Frame equality: impl checks db.frame, proof uses pr.frame
   (h_step : Verify.DB.stepNormal db pr label = Except.ok pr') :
   ∃ stack_new steps_new, ProofStateInv db pr' Γ fr stack_new steps_new := by
   -- Dispatch on what db.find? label returns
@@ -7675,11 +7320,9 @@ theorem stepNormal_sound
           cases this
 
       -- Convert the hypothesis and locate it in the spec frame
-      -- Use frame equality to convert db.frame membership to pr.frame membership
-      have h_mem_pr : label ∈ pr.frame.hyps.toList := by
-        simpa [h_frame_eq] using h_mem
+      -- Both hyp lookup AND DV checking use db.frame, so spec frame = toFrame db db.frame
       obtain ⟨h_spec, h_conv, h_in_hyps⟩ :=
-        convertHyp_mem_hyps db pr.frame fr label h_fr h_mem_pr
+        convertHyp_mem_hyps db db.frame fr label h_inv.frame_ok h_mem
 
       cases ess
       · -- Floating hypothesis
@@ -7899,15 +7542,14 @@ theorem fold_maintains_provable
   db.error? = none →
   WellFormedDB db →
   toDatabase db = some Γ →
-  toFrame db pr_init.frame = some fr →
-  WellFormedFrame db pr_init.frame →
-  pr_init.frame = db.frame →  -- Frame equality: proof state frame = database frame
+  toFrame db db.frame = some fr →
+  WellFormedFrame db db.frame →
   proof.foldlM (fun pr step => Verify.DB.stepNormal db pr step) pr_init = Except.ok pr_final →
   pr_init.stack = #[] →  -- Start with empty stack
   pr_final.stack.size = 1 →  -- End with singleton stack
   pr_final.stack[0]? = some e_final →  -- Extract the final expression
   Spec.Provable Γ fr (toExpr e_final) := by
-  intro h_success h_db_wf h_db h_fr h_wf h_frame_eq h_fold h_init h_size h_final
+  intro h_success h_db_wf h_db h_fr h_wf h_fold h_init h_size h_final
 
   unfold Spec.Provable
 
@@ -7938,12 +7580,11 @@ theorem fold_maintains_provable
   clear h_proof_list  -- Work with the list now
 
   -- Induction on proof_list
-  -- The invariant includes frame equality, which is preserved by stepNormal
+  -- ProofStateInv uses db.frame (not pr.frame) so no frame equality tracking needed
   have h_inv_final :
       ∀ (pl : List String) (pr_init' pr_final : Verify.ProofState)
         (stack_spec : List Spec.Expr) (steps : List Spec.ProofStep),
         ProofStateInv db pr_init' Γ fr stack_spec steps →
-        pr_init'.frame = db.frame →  -- Frame equality invariant
         pl.foldlM (fun pr step => Verify.DB.stepNormal db pr step) pr_init' =
           Except.ok pr_final →
         ∃ stack_final steps_final, ProofStateInv db pr_final Γ fr stack_final steps_final := by
@@ -7952,7 +7593,7 @@ theorem fold_maintains_provable
   | nil =>
       -- Base case: empty proof
       -- foldlM [] pr_init = ok pr_init, so pr_final = pr_init
-      intro pr_init' pr_final stack_spec steps h_inv h_frame_eq' h_fold
+      intro pr_init' pr_final stack_spec steps h_inv h_fold
       simp [List.foldlM] at h_fold
       cases h_fold
       exact ⟨stack_spec, steps, h_inv⟩
@@ -7960,7 +7601,7 @@ theorem fold_maintains_provable
   | cons label rest ih =>
       -- Inductive case: label :: rest
       -- foldlM (label :: rest) pr_init = foldlM rest (stepNormal pr_init label)
-      intro pr_init' pr_final stack_spec steps h_inv h_frame_eq' h_fold
+      intro pr_init' pr_final stack_spec steps h_inv h_fold
       simp only [List.foldlM_cons] at h_fold
       -- Split on the result of stepNormal
       cases h_step : Verify.DB.stepNormal db pr_init' label with
@@ -7970,21 +7611,18 @@ theorem fold_maintains_provable
       | ok pr_next =>
           -- stepNormal succeeded, continue with rest
           simp [h_step] at h_fold
-          -- Frame is preserved by stepNormal
-          have h_frame_eq_next : pr_next.frame = db.frame :=
-            (stepNormal_preserves_frame db pr_init' pr_next label h_step).trans h_frame_eq'
           obtain ⟨stack_next, steps_next, h_inv_next⟩ :=
             stepNormal_sound db pr_init' pr_next label Γ fr stack_spec steps h_inv
-              h_success h_db_wf h_inv.db_ok h_inv.frame_ok h_frame_eq' h_step
+              h_success h_db_wf h_inv.db_ok h_step
           have h_fold' :
               rest.foldlM (fun pr step => Verify.DB.stepNormal db pr step) pr_next =
                 Except.ok pr_final := by
             simpa using h_fold
-          exact ih pr_next pr_final stack_next steps_next h_inv_next h_frame_eq_next h_fold'
+          exact ih pr_next pr_final stack_next steps_next h_inv_next h_fold'
 
   -- Use the fold invariant to get a proof-valid witness
   obtain ⟨stack_final, steps_final, h_inv_final⟩ :=
-    h_inv_final proof_list pr_init pr_final [] [] h_inv_init h_frame_eq h_list_fold
+    h_inv_final proof_list pr_init pr_final [] [] h_inv_init h_list_fold
 
   -- Compute the final stack view from the array facts
   have h_view_final : viewStack pr_final.stack = [toExpr e_final] := by
@@ -8035,13 +7673,11 @@ If the Metamath verifier accepts a proof, then the assertion is semantically pro
 precondition. This makes the theorem modular: it proves that the VERIFIER is sound
 (given a well-formed database, successful verification implies provability).
 
-The parser correctness is handled separately: a future `parser_sound` theorem will
-establish that successful parsing produces a well-formed database. The end-to-end
-soundness then follows by composition:
+The parser correctness is handled separately: `parser_construction_wellformed`
+(ParserCorrectness.lean) establishes that successful parsing produces a well-formed
+database. The end-to-end soundness follows by composition:
   successful parse → WellFormedDB → (this theorem) → provable
-
-This separation of concerns is the standard approach in verified compiler/interpreter
-projects (e.g., CompCert separates parsing, type-checking, and compilation soundness).
+See `verify_parser_acceptance_iff_spec_provable` for the composed biconditional.
 -/
 theorem verify_impl_sound
     (db : Verify.DB)
@@ -8077,12 +7713,11 @@ theorem verify_impl_sound
   obtain ⟨fr, h_frame⟩ := h_frame
 
   -- Step 3: Use fold_maintains_provable to get Provable directly!
-  -- The initial proof state has frame = db.frame, so frame equality is rfl
   have h_provable : Spec.Provable Γ fr (toExpr f) :=
     fold_maintains_provable db proof
       ⟨⟨0, 0⟩, label, f, db.frame, #[], #[], Verify.ProofTokenParser.normal⟩
       pr_final Γ fr f
-      h_success h_db_wf h_db h_frame h_db_wf.1 rfl h_fold rfl h_size h_stack
+      h_success h_db_wf h_db h_frame h_db_wf.1 h_fold rfl h_size h_stack
 
   -- Step 4: Package the result
   exact ⟨Γ, fr, h_db, h_frame, h_provable⟩
@@ -8124,7 +7759,7 @@ theorem verify_impl_sound_semantic
     fold_maintains_provable db proof
       ⟨⟨0, 0⟩, label, f_init, db.frame, #[], #[], Verify.ProofTokenParser.normal⟩
       pr_final Γ fr f_final
-      h_success h_db_wf h_db h_frame h_db_wf.1 rfl h_fold rfl h_size h_stack
+      h_success h_db_wf h_db h_frame h_db_wf.1 h_fold rfl h_size h_stack
   exact ⟨Γ, fr, h_db, h_frame, h_provable⟩
 
 /-! ## PHASE 8: Compressed Proof Support
@@ -9807,6 +9442,7 @@ theorem stepNormal_assert_success
       (djTarget := pr.frame.dj) (djSource := fr_impl.dj)
       (σ_impl := σ_impl) (fr_spec := fr_spec) (fr_assert := fr_assert) (σ_typed := σ_typed)
       h_dvOK h_vars h_dv_target h_dv_source h_typed h_dv_vars h_dv_ordered
+  rw [h_frame_eq] at h_dv_ok
 
   -- Finish stepAssert by simplification
   refine ⟨{ pr with stack := (pr.stack.extract 0 (pr.stack.size - fr_impl.hyps.size)).push concl }, ?_⟩
@@ -9930,6 +9566,7 @@ theorem stepNormal_assert_success_eq
     dv_check_complete (vars := Verify.DB.frameFloatVars db pr.frame) (djTarget := pr.frame.dj) (djSource := fr_impl.dj)
       (σ_impl := σ_impl) (fr_spec := fr_spec) (fr_assert := fr_assert) (σ_typed := σ_typed)
       h_dvOK h_vars h_dv_target h_dv_source h_typed h_dv_vars h_dv_ordered
+  rw [h_frame_eq] at h_dv_ok
   -- Final simplification
   unfold Verify.DB.stepAssert
   simp [off, h_hyp_size, h_head, h_syms_ok, h_chk_ok, h_dv_ok, h_subst, Bind.bind, Except.bind]
@@ -11071,7 +10708,7 @@ theorem verify_impl_complete
     (db : Verify.DB)
     (label : String)
     (f : Verify.Formula)
-    (_h_success : db.error? = none)  -- TODO: May be needed for parser well-formedness
+    (_h_success : db.error? = none)  -- Available for downstream use (e.g., parser composition)
     (h_db_wf : WellFormedDB db)
     (h_scoped_facts : CompletenessScopedFacts db)
     (Γ : Spec.Database) (fr : Spec.Frame)

@@ -2575,8 +2575,8 @@ def stepAssert (db : DB) (pr : ProofState) (f : Formula) : Frame → Except Proo
         let off : {off // off + hyps.size = pr.stack.size} :=
           ⟨pr.stack.size - hyps.size, Nat.sub_add_cancel h⟩
         let subst ← checkHyp db hyps pr.stack off 0 ∅
-        let vars := frameFloatVars db pr.frame
-        dvCheck vars pr.frame.dj dj subst
+        let vars := frameFloatVars db db.frame
+        dvCheck vars db.frame.dj dj subst
         let concl ←
           match f.subst subst with
           | .ok concl => Except.ok concl

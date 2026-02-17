@@ -329,15 +329,7 @@ theorem idRun_forIn_yield_eq_foldl
 
 /-- Array.foldl with start parameter equals List.foldl on the suffix (drop start).
 
-    **TODO:** This should be provable using existing Batteries infrastructure:
-    1. Show Array.foldl = Id.run of foldlM (definitional)
-    2. Show foldlM relates to forIn (use forIn characterization)
-    3. Apply idRun_forIn_yield_eq_foldl (already proven above!)
-    4. Use Array.toList_extract + List.extract (both exist in Batteries)
-    5. Simplify take to identity (List.take_of_length_le)
-
-    **Current blocker:** After unfold Array.foldl, the pattern doesn't match what
-    idRun_forIn_yield_eq_foldl expects. Need to find the right Batteries lemmas.
+    Proven via Array.extract + Array.toList_extract + List.drop_eq_extract.
 -/
 theorem foldl_eq_list_foldl_drop
     {α β} (arr   : Array α)

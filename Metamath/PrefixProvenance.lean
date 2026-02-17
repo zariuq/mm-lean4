@@ -112,7 +112,7 @@ theorem checkHyp_ext (db₁ db₂ : DB) (hyps : Array String) (stack : Array For
     (The `frame` parameter is for API compatibility with `stepNormal_ext`.) -/
 theorem stepAssert_ext (db₁ db₂ : DB) (pr : ProofState) (f : Formula) (fr : Frame)
     (h_find : ∀ k, db₁.find? k = db₂.find? k)
-    (_h_frame : db₁.frame = db₂.frame) :
+    (h_db_frame : db₁.frame = db₂.frame) :
     db₁.stepAssert pr f fr = db₂.stepAssert pr f fr := by
   unfold DB.stepAssert
   cases fr with
@@ -125,7 +125,7 @@ theorem stepAssert_ext (db₁ db₂ : DB) (pr : ProofState) (f : Formula) (fr : 
         split
         · rfl
         · rw [checkHyp_ext db₁ db₂ hyps _ _ h_find]
-          rw [frameFloatVars_ext db₁ db₂ pr.frame h_find]
+          rw [h_db_frame, frameFloatVars_ext db₁ db₂ db₂.frame h_find]
     · rfl
 
 /-! ## Part 2: stepNormal / stepProof Congruence
@@ -462,7 +462,7 @@ theorem stepNormal_preserves_label (db : DB) (pr pr' : ProofState) (l : String)
             | error e => simp [h_chk] at h_ok
             | ok σ =>
               simp only [h_chk] at h_ok
-              cases h_dv : DB.dvCheck (db.frameFloatVars frame) frame.dj fr'.dj σ with
+              cases h_dv : DB.dvCheck (db.frameFloatVars db.frame) db.frame.dj fr'.dj σ with
               | error e => simp [h_dv] at h_ok
               | ok u =>
                 simp only [h_dv] at h_ok
@@ -514,7 +514,7 @@ theorem stepNormal_preserves_ptp (db : DB) (pr pr' : ProofState) (l : String)
             | error e => simp [h_chk] at h_ok
             | ok σ =>
               simp only [h_chk] at h_ok
-              cases h_dv : DB.dvCheck (db.frameFloatVars frame) frame.dj fr'.dj σ with
+              cases h_dv : DB.dvCheck (db.frameFloatVars db.frame) db.frame.dj fr'.dj σ with
               | error e => simp [h_dv] at h_ok
               | ok u =>
                 simp only [h_dv] at h_ok
@@ -525,19 +525,19 @@ theorem stepNormal_preserves_ptp (db : DB) (pr pr' : ProofState) (l : String)
       · exact absurd h_ok nofun
 
 set_option maxHeartbeats 6400000 in
-/-- `stepAssert` reads only `pr.stack` and `pr.frame`. If two ProofStates
-    agree on these fields and stepAssert succeeds for one, it succeeds for
-    the other with the same resulting stack. -/
+/-- `stepAssert` reads only `pr.stack` (not `pr.frame`) for computation.
+    If two ProofStates agree on stack and stepAssert succeeds for one,
+    it succeeds for the other with the same resulting stack. -/
 theorem stepAssert_transfer (db : DB) (pr₁ pr₂ r₁ : ProofState)
     (f : Formula) (fr : Frame)
-    (h_stack : pr₁.stack = pr₂.stack) (h_frame : pr₁.frame = pr₂.frame)
+    (h_stack : pr₁.stack = pr₂.stack)
     (h_ok : db.stepAssert pr₁ f fr = .ok r₁) :
     ∃ r₂, db.stepAssert pr₂ f fr = .ok r₂ ∧ r₂.stack = r₁.stack := by
-  -- Destructure ProofStates so stack/frame become free variables for subst
+  -- Destructure ProofStates so stack becomes a free variable for subst
   obtain ⟨pos₁, label₁, fmla₁, frame₁, heap₁, stack₁, ptp₁⟩ := pr₁
   obtain ⟨pos₂, label₂, fmla₂, frame₂, heap₂, stack₂, ptp₂⟩ := pr₂
-  simp only at h_stack h_frame
-  subst h_stack; subst h_frame
+  simp only at h_stack
+  subst h_stack
   -- Now both ProofStates share the same stack₁ and frame₁.
   -- stepAssert's computation is identical; only the result wrapper differs.
   simp only [DB.stepAssert] at h_ok ⊢
@@ -558,7 +558,7 @@ theorem stepAssert_transfer (db : DB) (pr₁ pr₂ r₁ : ProofState)
             ⟨stack₁.size - fr.hyps.size, Nat.sub_add_cancel h_le⟩ 0 ∅ with
         | ok σ =>
           simp only [h_chk] at h_ok ⊢
-          cases h_dv : DB.dvCheck (db.frameFloatVars frame₁) frame₁.dj fr.dj σ with
+          cases h_dv : DB.dvCheck (db.frameFloatVars db.frame) db.frame.dj fr.dj σ with
           | ok u =>
             simp only [h_dv] at h_ok ⊢
             -- Split on `match f.subst σ with ...` (same computation for both)
@@ -576,19 +576,18 @@ theorem stepAssert_transfer (db : DB) (pr₁ pr₂ r₁ : ProofState)
         | error e => simp only [h_chk] at h_ok; exact absurd h_ok nofun
   · rename_i h_nle; rw [dif_neg h_nle] at h_ok; exact absurd h_ok nofun
 
-/-- **Single-step transfer**: if two ProofStates agree on stack and frame,
+/-- **Single-step transfer**: if two ProofStates agree on stack,
     and `stepNormal` succeeds for one, it succeeds for the other with
-    the same resulting stack. Frame is also preserved (from `stepNormal_preserves_frame`). -/
+    the same resulting stack. (stepNormal uses only pr.stack, not pr.frame.) -/
 theorem stepNormal_transfer (db : DB) (pr₁ pr₂ r₁ : ProofState) (l : String)
     (h_stack : pr₁.stack = pr₂.stack)
-    (h_frame : pr₁.frame = pr₂.frame)
     (h_ok : db.stepNormal pr₁ l = .ok r₁) :
     ∃ r₂, db.stepNormal pr₂ l = .ok r₂ ∧ r₂.stack = r₁.stack := by
-  -- Same technique: destructure to make stack/frame substitutable
+  -- Destructure to make stack substitutable
   obtain ⟨pos₁, label₁, fmla₁, frame₁, heap₁, stack₁, ptp₁⟩ := pr₁
   obtain ⟨pos₂, label₂, fmla₂, frame₂, heap₂, stack₂, ptp₂⟩ := pr₂
-  simp only at h_stack h_frame
-  subst h_stack; subst h_frame
+  simp only at h_stack
+  subst h_stack
   -- Now both share the same stack₁ and frame₁
   unfold DB.stepNormal at h_ok ⊢
   cases h_find : db.find? l with
@@ -623,8 +622,8 @@ theorem stepNormal_transfer (db : DB) (pr₁ pr₂ r₁ : ProofState) (l : Strin
     | assert f' fr' _ =>
       exact stepAssert_transfer db
         ⟨pos₁, label₁, fmla₁, frame₁, heap₁, stack₁, ptp₁⟩
-        ⟨pos₂, label₂, fmla₂, frame₁, heap₂, stack₁, ptp₂⟩
-        r₁ f' fr' rfl rfl h_ok
+        ⟨pos₂, label₂, fmla₂, frame₂, heap₂, stack₁, ptp₂⟩
+        r₁ f' fr' rfl h_ok
 
 /-! ### Part 7b: foldlM Frame Preservation and Transfer
 
@@ -650,12 +649,11 @@ private theorem foldlM_preserves_frame (db : DB) (labels : List String)
       rw [ih mid h_fold, h_mid_frame]
 
 /-- **Fold transfer**: if `foldlM stepNormal` succeeds starting from `init₁`,
-    it also succeeds starting from `init₂` (same stack and frame),
-    and the resulting stacks match. -/
+    it also succeeds starting from `init₂` (same stack),
+    and the resulting stacks match. (stepNormal uses only pr.stack.) -/
 theorem foldlM_stepNormal_transfer (db : DB) (labels : List String)
     (init₁ init₂ r₁ : ProofState)
     (h_stack : init₁.stack = init₂.stack)
-    (h_frame : init₁.frame = init₂.frame)
     (h_fold : labels.foldlM (fun pr step => db.stepNormal pr step) init₁ = .ok r₁) :
     ∃ r₂, labels.foldlM (fun pr step => db.stepNormal pr step) init₂ = .ok r₂ ∧
       r₂.stack = r₁.stack := by
@@ -672,25 +670,20 @@ theorem foldlM_stepNormal_transfer (db : DB) (labels : List String)
       rw [h_step] at h_fold
       -- Transfer the first step
       obtain ⟨mid₂, h_step₂, h_mid_stack⟩ :=
-        stepNormal_transfer db init₁ init₂ mid₁ l h_stack h_frame h_step
+        stepNormal_transfer db init₁ init₂ mid₁ l h_stack h_step
       rw [h_step₂]
-      -- Frame preservation for the induction
-      have h_mid_frame : mid₁.frame = mid₂.frame :=
-        (stepNormal_preserves_frame db init₁ mid₁ l h_step).trans
-          (h_frame.trans (stepNormal_preserves_frame db init₂ mid₂ l h_step₂).symm)
       -- Apply induction hypothesis
-      exact ih mid₁ mid₂ r₁ h_mid_stack.symm h_mid_frame h_fold
+      exact ih mid₁ mid₂ r₁ h_mid_stack.symm h_fold
 
 /-- Array version of fold transfer. -/
 theorem foldlM_stepNormal_transfer_array (db : DB) (proof : Array String)
     (init₁ init₂ r₁ : ProofState)
     (h_stack : init₁.stack = init₂.stack)
-    (h_frame : init₁.frame = init₂.frame)
     (h_fold : proof.foldlM (fun pr step => db.stepNormal pr step) init₁ = .ok r₁) :
     ∃ r₂, proof.foldlM (fun pr step => db.stepNormal pr step) init₂ = .ok r₂ ∧
       r₂.stack = r₁.stack := by
   rw [← Array.foldlM_toList] at h_fold ⊢
-  exact foldlM_stepNormal_transfer db proof.toList init₁ init₂ r₁ h_stack h_frame h_fold
+  exact foldlM_stepNormal_transfer db proof.toList init₁ init₂ r₁ h_stack h_fold
 
 /-! ### Part 7c: Ghost Array Invariant
 
@@ -729,19 +722,13 @@ private theorem foldlM_append_step (db : DB) (labels : Array String)
 theorem NormalProofReachable_step (db : DB) (label : String) (fmla : Formula)
     (pr pr' : ProofState) (l : String)
     (h_reach : NormalProofReachable db label fmla pr.stack)
-    (h_frame : pr.frame = db.frame)
     (h_step : db.stepNormal pr l = .ok pr') :
     NormalProofReachable db label fmla pr'.stack := by
   obtain ⟨old_labels, ghost_final, h_ghost_fold, h_ghost_stack⟩ := h_reach
-  -- ghost_final has: stack = pr.stack, frame = db.frame (from fold)
-  have h_ghost_frame : ghost_final.frame = db.frame := by
-    rw [← Array.foldlM_toList] at h_ghost_fold
-    exact foldlM_preserves_frame db old_labels.toList _ ghost_final h_ghost_fold
-  -- Transfer stepNormal from pr to ghost_final
-  -- (they agree on stack and frame)
+  -- Transfer stepNormal from pr to ghost_final (they agree on stack)
   obtain ⟨ghost_next, h_ghost_step, h_ghost_next_stack⟩ :=
     stepNormal_transfer db pr ghost_final pr' l
-      h_ghost_stack.symm (by rw [h_frame, h_ghost_frame]) h_step
+      h_ghost_stack.symm h_step
   -- Extend the fold with one more step
   exact ⟨old_labels.push l, ghost_next,
     foldlM_append_step db old_labels _ ghost_final l ghost_next h_ghost_fold h_ghost_step,
@@ -845,8 +832,7 @@ theorem feedProof_normal_maintains_reachable
     (h_success : (s.feedProof tk pr).db.error? = none)
     (h_normal : pr.ptp = .normal)
     (h_not_q : ¬ tk.eqArray "?".toAscii)
-    (h_reach : NormalProofReachable s.db pr.label pr.fmla pr.stack)
-    (h_frame : pr.frame = s.db.frame) :
+    (h_reach : NormalProofReachable s.db pr.label pr.fmla pr.stack) :
     ∃ pr_mid,
       (s.feedProof tk pr).tokp = .proof pr_mid ∧
       pr_mid.label = pr.label ∧
@@ -882,7 +868,7 @@ theorem feedProof_normal_maintains_reachable
     have h_core := feedProof_goNormal_ok_preserves_core s tk pr pr' h_goNormal
     -- Step 6: Apply NormalProofReachable_step
     have h_reach' := NormalProofReachable_step s.db pr.label pr.fmla pr pr'
-      (toLabel tk).2 h_reach h_frame h_step
+      (toLabel tk).2 h_reach h_step
     -- Step 7: ptp preservation
     have h_ptp : pr'.ptp = ProofTokenParser.normal :=
       (stepNormal_preserves_ptp s.db pr pr' (toLabel tk).2 h_step).trans h_normal
@@ -927,8 +913,7 @@ theorem feedProof_start_establishes_reachable
     (h_start : pr.ptp = .start)
     (h_not_open : ¬ tk.eqArray "(".toAscii)
     (h_not_q : ¬ tk.eqArray "?".toAscii)
-    (h_stack_empty : pr.stack = #[])
-    (h_frame : pr.frame = s.db.frame) :
+    (h_stack_empty : pr.stack = #[]) :
     ∃ pr_mid,
       (s.feedProof tk pr).tokp = .proof pr_mid ∧
       pr_mid.label = pr.label ∧
@@ -970,7 +955,7 @@ theorem feedProof_start_establishes_reachable
       rw [h_stack_empty]; exact NormalProofReachable_init s.db pr.label pr.fmla
     have h_reach' := NormalProofReachable_step s.db pr.label pr.fmla
       { pr with ptp := .normal } pr' (toLabel tk).2
-      (by simpa using h_reach_init) h_frame h_step
+      (by simpa using h_reach_init) h_step
     -- Step 9: Package result
     refine ⟨pr', ?_, ?_, h_core.1.symm ▸ rfl, h_core.2.symm ▸ rfl, h_ptp, h_reach'⟩
     · -- tokp = .proof pr'
@@ -1004,7 +989,6 @@ theorem NormalTokensOK_preserves_invariant
     (pr₀ pr_final : ProofState)
     (h_tokens : NormalTokensOK s pr₀ tokens pr_final)
     (h_reach : NormalProofReachable s.db pr₀.label pr₀.fmla pr₀.stack)
-    (h_frame : pr₀.frame = s.db.frame)
     (h_normal : pr₀.ptp = ProofTokenParser.normal) :
     NormalProofReachable s.db pr_final.label pr_final.fmla pr_final.stack ∧
     pr_final.label = pr₀.label ∧
@@ -1023,7 +1007,7 @@ theorem NormalTokensOK_preserves_invariant
     obtain ⟨pr_mid, h_succ, h_tokp, h_ptp, h_not_q, h_rest⟩ := h_tokens
     -- Apply feedProof_normal_maintains_reachable
     obtain ⟨pr_mid', h_tokp', h_label', h_fmla', h_frame', h_ptp', h_reach'⟩ :=
-      feedProof_normal_maintains_reachable s tk pr₀ h_succ h_ptp h_not_q h_reach h_frame
+      feedProof_normal_maintains_reachable s tk pr₀ h_succ h_ptp h_not_q h_reach
     -- pr_mid' = pr_mid (from tokp equality)
     have h_eq : pr_mid = pr_mid' := by
       have : (s.feedProof tk pr₀).tokp = .proof pr_mid' := h_tokp'
@@ -1033,8 +1017,7 @@ theorem NormalTokensOK_preserves_invariant
     -- Rewrite label/fmla to match pr_mid (they're preserved by feedProof)
     rw [← h_label', ← h_fmla'] at h_reach'
     -- Apply IH
-    have ih_result := ih pr_mid h_rest h_reach'
-      (by rw [h_frame', h_frame]) h_ptp'
+    have ih_result := ih pr_mid h_rest h_reach' h_ptp'
     exact ⟨ih_result.1,
       ih_result.2.1.trans h_label',
       ih_result.2.2.1.trans h_fmla',
@@ -1061,7 +1044,6 @@ theorem normal_proof_full_provenance
     (pr₀ pr₁ pr_final : ProofState)
     -- Initial ProofState from resumeThm
     (h_init_stack : pr₀.stack = #[])
-    (h_init_frame : pr₀.frame = s.db.frame)
     (h_init_start : pr₀.ptp = ProofTokenParser.start)
     -- First token: non-"(", non-"?"
     (h_first_ok : (s.feedProof tk₀ pr₀).db.error? = none)
@@ -1084,7 +1066,7 @@ theorem normal_proof_full_provenance
   -- Step 1: First token establishes NormalProofReachable
   obtain ⟨pr₁', h_tokp₁, h_label₁, h_fmla₁, h_frame₁, h_ptp₁, h_reach₁⟩ :=
     feedProof_start_establishes_reachable s tk₀ pr₀
-      h_first_ok h_init_start h_first_not_open h_first_not_q h_init_stack h_init_frame
+      h_first_ok h_init_start h_first_not_open h_first_not_q h_init_stack
   -- pr₁ = pr₁'
   have h_eq₁ : pr₁ = pr₁' := by
     rw [h_first_tokp] at h_tokp₁
@@ -1095,7 +1077,7 @@ theorem normal_proof_full_provenance
   -- Step 2: Multi-step maintains invariant
   obtain ⟨h_reach_final, h_label_final, h_fmla_final, h_frame_final, _h_ptp_final⟩ :=
     NormalTokensOK_preserves_invariant s tokens pr₁ pr_final h_tokens
-      h_reach₁ (by rw [h_frame₁, h_init_frame]) h_ptp₁
+      h_reach₁ h_ptp₁
   -- Step 3: Apply prefix_provable_normal_proof (h_hyp_disjoint now derived internally)
   exact prefix_provable_normal_proof s pr_final h_finish h_s_ok h_wf
     h_reach_final h_stack_one h_stack_fmla
@@ -1222,7 +1204,7 @@ theorem compressed_to_normal_reachable (db : DB) (label : String) (fmla : Formul
   obtain ⟨r₂, h_fold₂, h_r₂_stack⟩ :=
     foldlM_stepNormal_transfer db (steps.map (fun n => labels[n]!))
       pr_preload pr_init pr_final
-      h_preload_stack h_preload_frame h_normal_fold
+      h_preload_stack h_normal_fold
   -- Build NormalProofReachable: proof array is (steps.map labels[·]!).toArray
   rw [← h_stack, ← h_r₂_stack]
   refine ⟨(steps.map (fun n => labels[n]!)).toArray, r₂, ?_, rfl⟩
@@ -1425,7 +1407,7 @@ theorem stepAssert_prepend_stack
       | error e => simp [h_chk] at h_ok
       | ok subst =>
         simp only [h_chk] at h_ok ⊢
-        cases h_dv : DB.dvCheck (db.frameFloatVars pr.frame) pr.frame.dj dj subst with
+        cases h_dv : DB.dvCheck (db.frameFloatVars db.frame) db.frame.dj dj subst with
         | error e => simp [h_dv] at h_ok
         | ok u =>
           simp only [h_dv] at h_ok ⊢
@@ -1529,7 +1511,7 @@ theorem stepAssert_prepend_stack_le
       | error e => simp [h_chk] at h_ok
       | ok subst =>
         simp only [h_chk] at h_ok ⊢
-        cases h_dv : DB.dvCheck (db.frameFloatVars pr.frame) pr.frame.dj dj subst with
+        cases h_dv : DB.dvCheck (db.frameFloatVars db.frame) db.frame.dj dj subst with
         | error e => simp [h_dv] at h_ok
         | ok u =>
           simp only [h_dv] at h_ok ⊢
@@ -1915,7 +1897,6 @@ theorem compose_derivcert_step (db : DB)
     (acc_labels : List String) (acc_pr : ProofState)
     (init : ProofState)
     (h_acc_fold : acc_labels.foldlM (fun p l => db.stepNormal p l) init = .ok acc_pr)
-    (h_acc_frame : acc_pr.frame = db.frame)
     (h_init_frame : init.frame = db.frame)
     (f : Formula) (h_cert : DerivCert db f) :
     ∃ (all_labels : List String) (pr_final : ProofState),
@@ -1938,7 +1919,7 @@ theorem compose_derivcert_step (db : DB)
     foldlM_stepNormal_transfer db cert_labels
       ({init₀ with stack := acc_pr.stack}) acc_pr
       ({cert_pr with stack := acc_pr.stack.push f})
-      rfl h_acc_frame.symm h_cert_prepend
+      rfl h_cert_prepend
   obtain ⟨r₂, h_r₂_fold, h_r₂_stack⟩ := h_transfer
   -- Compose folds: (acc_labels ++ cert_labels) from init
   refine ⟨acc_labels ++ cert_labels, r₂, ?_, ?_, ?_⟩
@@ -1980,7 +1961,7 @@ theorem compose_derivcerts (db : DB) (fs : List Formula)
     have h_transfer := foldlM_stepNormal_transfer db rest_labels
       ({init with stack := #[f]}) f_pr
       ({rest_pr with stack := #[f] ++ rest.toArray})
-      (by simp [h_f_stack]) (by dsimp; exact h_f_frame.symm) h_prepend
+      (by simp [h_f_stack]) h_prepend
     obtain ⟨r₂, h_r₂_fold, h_r₂_stack⟩ := h_transfer
     -- 5. Compose: f_labels ++ rest_labels from init
     refine ⟨f_labels ++ rest_labels, r₂, ?_, ?_, ?_⟩
@@ -2010,8 +1991,7 @@ execution, `pr.frame = db.frame` throughout (stepProof preserves frame). -/
 theorem stepProof_assert_preserves_certs (db : DB) (pr pr' : ProofState) (n : Nat)
     (h_step : db.stepProof pr n = .ok pr')
     (h_sc : StackCert db pr.stack) (h_hc : HeapCert db pr.heap)
-    (h_assert : ∃ f fr, pr.heap[n]? = some (.assert f fr))
-    (h_frame : pr.frame = db.frame) :
+    (h_assert : ∃ f fr, pr.heap[n]? = some (.assert f fr)) :
     StackCert db pr'.stack ∧ HeapCert db pr'.heap := by
   obtain ⟨f_a, fr_a, h_a⟩ := h_assert
   -- stepProof with .assert calls stepAssert
@@ -2072,7 +2052,7 @@ theorem stepProof_assert_preserves_certs (db : DB) (pr pr' : ProofState) (n : Na
         ({pr with stack :=
             pr.stack.extract (pr.stack.size - fr_a.hyps.size) pr.stack.size})
         pr₁ ({pr with stack := #[concl]})
-        (by simp [h_stack₁_args]) (by simp [h_frame, h_frame₁]) h_fold_la
+        (by simp [h_stack₁_args]) h_fold_la
       -- Step 8: Compose labels₁ ++ [l_a] → DerivCert for concl
       refine ⟨labels₁ ++ [l_a], r₂, ?_, h_r₂_stack⟩
       rw [List.foldlM_append, h_fold₁]
@@ -2170,12 +2150,10 @@ private theorem stepProof_heap_cases (db : DB) (pr pr' : ProofState) (n : Nat)
 
 /-! ### Part 15d: Cert Preservation for One Action -/
 
-/-- One step-or-save action preserves StackCert and HeapCert.
-    Requires `pr.frame = db.frame` for the assert case. -/
+/-- One step-or-save action preserves StackCert and HeapCert. -/
 theorem execStepSave_preserves_certs (db : DB) (pr pr' : ProofState) (act : StepSaveAction)
     (h_ok : execStepSave db pr act = .ok pr')
-    (h_sc : StackCert db pr.stack) (h_hc : HeapCert db pr.heap)
-    (h_frame : pr.frame = db.frame) :
+    (h_sc : StackCert db pr.stack) (h_hc : HeapCert db pr.heap) :
     StackCert db pr'.stack ∧ HeapCert db pr'.heap := by
   cases act with
   | step n =>
@@ -2184,7 +2162,7 @@ theorem execStepSave_preserves_certs (db : DB) (pr pr' : ProofState) (act : Step
     | inl h_fmla =>
       exact stepProof_fmla_preserves_certs db pr pr' n h_ok h_sc h_hc h_fmla
     | inr h_assert =>
-      exact stepProof_assert_preserves_certs db pr pr' n h_ok h_sc h_hc h_assert h_frame
+      exact stepProof_assert_preserves_certs db pr pr' n h_ok h_sc h_hc h_assert
   | save =>
     simp [execStepSave] at h_ok
     cases h_save : pr.save with
@@ -2213,7 +2191,7 @@ theorem execStepSave_fold_preserves_certs (db : DB)
     | ok pr' =>
       simp [h_step] at h_fold
       have ⟨h_sc', h_hc'⟩ :=
-        execStepSave_preserves_certs db pr pr' act h_step h_sc h_hc h_frame
+        execStepSave_preserves_certs db pr pr' act h_step h_sc h_hc
       have h_frame' : pr'.frame = db.frame :=
         (execStepSave_preserves_frame db pr pr' act h_step).trans h_frame
       exact ih pr' h_fold h_sc' h_hc' h_frame'
@@ -2320,7 +2298,7 @@ theorem DerivCert_to_NormalProofReachable
   obtain ⟨r₂, h_r₂_fold, h_r₂_stack⟩ := foldlM_stepNormal_transfer db labels
     (⟨⟨0,0⟩, "", #[], db.frame, #[], #[], .normal⟩)
     (⟨⟨0,0⟩, label, fmla, db.frame, #[], #[], .normal⟩)
-    pr_final rfl rfl h_fold
+    pr_final rfl h_fold
   rw [← h_stack, ← h_r₂_stack]
   refine ⟨labels.toArray, r₂, ?_, rfl⟩
   rw [← Array.foldlM_toList, List.toList_toArray]
