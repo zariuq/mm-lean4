@@ -59,6 +59,38 @@ open Metamath.ParserAnyModeEquivalence (finishProof_success_stack_conditions)
 open Metamath.ParserOps (preloadMandatoryHyps_ok_preserves_core
   preload_ok_preserves_core applyCompressedActions_ok_preserves_core)
 
+/-! ## trimFrame hyps subset
+
+The output of `trimFrame'` filters `db.frame.hyps`, so its hyps are a subset. -/
+
+/-- Elements of `trimFrameHyps` output come from the input array. -/
+private theorem trimFrameHyps_mem (db : DB) (vars : Std.HashSet String) (hyps : Array String) :
+    ∀ s, s ∈ (DB.trimFrameHyps db vars hyps).toList → s ∈ hyps.toList := by
+  intro s h_mem
+  simp [DB.trimFrameHyps, DB.trimFrameHypsPairs, DB.trimFrameHypsPairsList] at h_mem
+  obtain ⟨⟨idx, h_in⟩, _⟩ := h_mem
+  have h_map : s ∈ List.map Prod.fst (hyps.toList.zipIdx) :=
+    List.mem_map.mpr ⟨(s, idx), h_in, rfl⟩
+  rwa [List.zipIdx_map_fst] at h_map
+
+/-- `trimFrame'` output hyps ⊆ `db.frame.hyps`. -/
+private theorem trimFrame'_hyps_subset (db : DB) (fmla : Verify.Formula) (fr : Frame)
+    (h_ok : db.trimFrame' fmla = .ok fr) :
+    ∀ lbl ∈ fr.hyps.toList, lbl ∈ db.frame.hyps.toList := by
+  intro lbl h_mem
+  have h_eq : fr = (db.trimFrame fmla).2 := by
+    unfold DB.trimFrame' at h_ok
+    generalize db.trimFrame fmla = result at h_ok
+    obtain ⟨ok, fr'⟩ := result
+    simp at h_ok
+    split at h_ok
+    · exact (Except.ok.inj h_ok).symm
+    · exact absurd h_ok (by nofun)
+  have ⟨vars, h_hyps⟩ : ∃ vars, (db.trimFrame fmla).2.hyps = DB.trimFrameHyps db vars db.frame.hyps := by
+    unfold DB.trimFrame; simp only [Id.run]; exact ⟨_, rfl⟩
+  rw [h_eq] at h_mem
+  exact trimFrameHyps_mem db vars db.frame.hyps lbl (h_hyps ▸ h_mem)
+
 /-! ## ProofGhost: Ghost invariant for proof-mode execution
 
 Tracks `NormalProofReachable` during normal-mode proof execution and initial
@@ -88,6 +120,7 @@ private def PreloadPhaseGhost (db : DB) (pr : ProofState) : Prop :=
     pr_start.stack = #[] ∧
     pr_start.heap = #[] ∧
     pr_start.ptp = .start ∧
+    (∀ lbl ∈ pr_start.frame.hyps.toList, lbl ∈ db.frame.hyps.toList) ∧
     db.preloadMandatoryHyps pr_start = .ok pr_mand ∧
     preloads.foldlM (DB.preload db) pr_mand = .ok pr_preload ∧
     pr_preload.stack = pr.stack ∧
@@ -108,6 +141,7 @@ private def CompressedFoldGhost (db : DB) (pr : ProofState) : Prop :=
     pr_start.stack = #[] ∧
     pr_start.heap = #[] ∧
     pr_start.ptp = .start ∧
+    (∀ lbl ∈ pr_start.frame.hyps.toList, lbl ∈ db.frame.hyps.toList) ∧
     db.preloadMandatoryHyps pr_start = .ok pr_mand ∧
     preloads.foldlM (DB.preload db) pr_mand = .ok pr_preload ∧
     actions.foldlM (fun p a => execStepSave db p a) pr_preload = .ok pr_fold ∧
@@ -121,7 +155,8 @@ private def CompressedFoldGhost (db : DB) (pr : ProofState) : Prop :=
     - `.preload`: `PreloadPhaseGhost` (mandatory + individual preloads, no actions)
     - `.compressed n`: `CompressedFoldGhost` (preloads + step/save actions) -/
 private def proofGhostCore (db : DB) (pr : ProofState) : Prop :=
-  (pr.ptp = .start → pr.stack = #[] ∧ pr.heap = #[]) ∧
+  (pr.ptp = .start → pr.stack = #[] ∧ pr.heap = #[] ∧
+    ∀ lbl ∈ pr.frame.hyps.toList, lbl ∈ db.frame.hyps.toList) ∧
   (pr.ptp = .normal →
     NormalProofReachable db pr.label pr.fmla pr.stack) ∧
   (pr.ptp = .preload → PreloadPhaseGhost db pr) ∧
@@ -343,11 +378,13 @@ to all modes, then compose through feed/feedAll to get checkBytes-level coverage
     all mode-specific conjuncts vacuously true (ptp = .start ≠ .normal/etc.).
     Used when proof mode is entered from `.math .thm` via `resumeThm`. -/
 private theorem proofGhostCore_of_mkProofState (db db' : DB) (pos : Pos) (l : String)
-    (fmla : Verify.Formula) (fr : Verify.Frame) :
+    (fmla : Verify.Formula) (fr : Verify.Frame)
+    (h_scope : ∀ lbl ∈ fr.hyps.toList, lbl ∈ db.frame.hyps.toList) :
     proofGhostCore db (db'.mkProofState pos l fmla fr) := by
   refine ⟨?_, ?_, ?_, ?_⟩
   · intro _; exact ⟨by simp [DB.mkProofState, Id.run],
-                     by simp [DB.mkProofState, Id.run]⟩
+                     by simp [DB.mkProofState, Id.run],
+                     by simpa [DB.mkProofState, Id.run] using h_scope⟩
   · simp [DB.mkProofState, Id.run]
   · simp [DB.mkProofState, Id.run]
   · simp [DB.mkProofState, Id.run]
@@ -421,18 +458,19 @@ private theorem preloadPhaseGhost_extend
     PreloadPhaseGhost db pr' := by
   obtain ⟨preloads, pr_start, pr_mand, pr_preload,
     h_start_lbl, h_start_fmla, h_start_frame, h_start_stack, h_start_heap, h_start_ptp,
-    h_mand, h_fold, h_stack_eq, h_heap_eq⟩ := h_ghost
+    h_scope, h_mand, h_fold, h_stack_eq, h_heap_eq⟩ := h_ghost
   -- Replay: DB.preload succeeds on pr_preload too with matching heaps
   obtain ⟨pr_preload', h_ok₂, h_stack₂, h_heap₂⟩ :=
     DB_preload_replays db pr pr_preload pr' lbl h_preload h_heap_eq.symm
   -- Construct extended fold
-  refine ⟨preloads ++ [lbl], pr_start, pr_mand, pr_preload', ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨preloads ++ [lbl], pr_start, pr_mand, pr_preload', ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · exact h_start_lbl.trans h_label.symm
   · exact h_start_fmla.trans h_fmla.symm
   · exact h_start_frame.trans h_frame.symm
   · exact h_start_stack
   · exact h_start_heap
   · exact h_start_ptp
+  · exact h_scope
   · exact h_mand
   · -- (preloads ++ [lbl]).foldlM ... = .ok pr_preload'
     rw [foldlM_append_preload, h_fold]
@@ -657,7 +695,7 @@ private theorem compressedFoldGhost_extend
   unfold CompressedFoldGhost
   obtain ⟨preloads, old_actions, pr_start, pr_mand, pr_preload, pr_fold,
     h_start_lbl, h_start_fmla, h_start_frame, h_start_stack, h_start_heap, h_start_ptp,
-    h_mand, h_pre, h_old_fold, h_stack_eq, h_heap_eq⟩ := h_ghost
+    h_scope, h_mand, h_pre, h_old_fold, h_stack_eq, h_heap_eq⟩ := h_ghost
   -- Frame is preserved by applyCompressedActions
   have h_core := applyCompressedActions_ok_preserves_core db pr pr_mid acts h_apply
   have h_frame := h_core.2
@@ -677,6 +715,7 @@ private theorem compressedFoldGhost_extend
     h_start_stack,
     h_start_heap,
     h_start_ptp,
+    h_scope,
     h_mand,
     h_pre,
     by rw [foldlM_append_execStepSave, h_old_fold]; simp only [bind, Except.bind]; exact h_fold',
@@ -794,27 +833,96 @@ private theorem map_toStepSave_stepSaveToCompressed (acts : List StepSaveAction)
   | cons a rest ih =>
     cases a <;> simp [stepSaveToCompressed, toStepSave, ih]
 
+/-- Bridge: `preloadMandatoryHyps` success + scope → `DB.preload` fold over same
+    labels from a canonical state (with `db.frame`) produces matching heap. -/
+private theorem preloadMandatoryHyps_to_preload_fold
+    (db : DB) (pr_start pr_mand : ProofState)
+    (h_mand : db.preloadMandatoryHyps pr_start = .ok pr_mand)
+    (h_heap_empty : pr_start.heap = #[])
+    (h_scope : ∀ lbl ∈ pr_start.frame.hyps.toList, lbl ∈ db.frame.hyps.toList)
+    (canonical : ProofState)
+    (h_can_heap : canonical.heap = #[]) :
+    ∃ pr_result,
+      pr_start.frame.hyps.toList.foldlM (DB.preload db) canonical = .ok pr_result ∧
+      pr_result.heap = pr_mand.heap ∧
+      pr_result.stack = canonical.stack := by
+  let body : String → ProofState → Except ProofCheckFail (ForInStep ProofState) :=
+    fun lbl acc =>
+      match db.find? lbl with
+      | some (.hyp _ f _) => pure (.yield (acc.pushHeap (.fmla f)))
+      | _ => throw (.proofCheck (.mandatoryHypothesisNotFoundInDatabase lbl))
+  have h_for_list : forIn pr_start.frame.hyps.toList pr_start body = Except.ok pr_mand := by
+    have h_for₁ : forIn pr_start.frame.hyps pr_start body = Except.ok pr_mand := by
+      unfold DB.preloadMandatoryHyps at h_mand; simpa [body] using h_mand
+    rwa [Array.forIn_toList]
+  suffices ∀ (labels : List String) (acc₁ acc₂ acc₁' : ProofState),
+      forIn labels acc₁ body = Except.ok acc₁' →
+      acc₁.heap = acc₂.heap →
+      (∀ lbl ∈ labels, lbl ∈ db.frame.hyps.toList) →
+      ∃ acc₂', labels.foldlM (DB.preload db) acc₂ = .ok acc₂' ∧
+        acc₂'.heap = acc₁'.heap ∧ acc₂'.stack = acc₂.stack by
+    exact this pr_start.frame.hyps.toList pr_start canonical pr_mand
+      h_for_list (by rw [h_heap_empty, h_can_heap]) h_scope
+  intro labels
+  induction labels with
+  | nil =>
+    intro acc₁ acc₂ acc₁' h_for h_heap h_scope'
+    simp [List.forIn_nil, pure, Except.pure] at h_for; subst h_for
+    exact ⟨acc₂, rfl, h_heap.symm, rfl⟩
+  | cons lbl rest ih =>
+    intro acc₁ acc₂ acc₁' h_for h_heap h_scope'
+    simp [List.forIn_cons, body] at h_for
+    have h_in_scope := h_scope' lbl (.head rest)
+    cases h_find : db.find? lbl with
+    | none => simp [h_find, Bind.bind, Except.bind] at h_for
+    | some obj =>
+      cases obj with
+      | const _ => simp [h_find, Bind.bind, Except.bind] at h_for
+      | var _ => simp [h_find, Bind.bind, Except.bind] at h_for
+      | assert _ _ _ => simp [h_find, Bind.bind, Except.bind] at h_for
+      | hyp ess f origin =>
+        have h_tail : forIn rest (acc₁.pushHeap (.fmla f)) body = .ok acc₁' := by
+          simpa [h_find, pure, Except.pure] using h_for
+        have h_push_heap_eq : (acc₁.pushHeap (.fmla f)).heap =
+            (acc₂.pushHeap (.fmla f)).heap := by
+          simp [ProofState.pushHeap, h_heap]
+        obtain ⟨acc₂', h_fold₂, h_heap₂, h_stack₂⟩ :=
+          ih (acc₁.pushHeap (.fmla f)) (acc₂.pushHeap (.fmla f)) acc₁'
+            h_tail h_push_heap_eq (fun l hl => h_scope' l (.tail lbl hl))
+        refine ⟨acc₂', ?_, h_heap₂, ?_⟩
+        · simp only [List.foldlM]
+          simp [DB.preload, h_find, h_in_scope, pure, Except.pure, bind, Except.bind]
+          exact h_fold₂
+        · rw [h_stack₂]; simp [ProofState.pushHeap]
+
 /-- Bridge theorem: compressed ghost witness gives `ProofReachableZ`.
-    Requires frame alignment with `db.frame` and finishProof stack conditions. -/
+    Scope condition extracted from ghost; no external `h_frame` needed. -/
 theorem CompressedFoldGhost_to_ProofReachableZ
     (db : DB) (pr : ProofState)
     (h_ghost : CompressedFoldGhost db pr)
-    (h_wf : WellFormedDB db)
-    (h_frame : pr.frame = db.frame)
-    (h_stack_one : pr.stack.size = 1)
-    (h_stack_fmla : pr.stack[0]? = some pr.fmla) :
+    (_h_wf : WellFormedDB db)
+    (_h_stack_one : pr.stack.size = 1)
+    (_h_stack_fmla : pr.stack[0]? = some pr.fmla) :
     ProofReachableZ db pr.label pr.fmla pr.stack := by
   obtain ⟨preloads, old_actions, pr_start, pr_mand, pr_preload, pr_fold,
     h_start_lbl, h_start_fmla, h_start_frame, h_start_stack, h_start_heap, h_start_ptp,
-    h_mand, h_pre, h_old_fold, h_stack_eq, h_heap_eq⟩ := h_ghost
-  let pr_init : ProofState := ⟨⟨0,0⟩, pr.label, pr.fmla, db.frame, #[], #[], .start⟩
-  have h_start_frame_db : pr_start.frame = db.frame := h_start_frame.trans h_frame
-  have h_start_heap_init : pr_start.heap = pr_init.heap := by
-    simp [pr_init, h_start_heap]
-  obtain ⟨pr_mand0, h_mand0, h_mand0_stack, h_mand0_heap⟩ :=
-    preloadMandatoryHyps_replays db pr_start pr_init pr_mand h_mand h_start_frame_db h_start_heap_init
+    h_scope, h_mand, h_pre, h_old_fold, h_stack_eq, h_heap_eq⟩ := h_ghost
+  -- Canonical initial state (with db.frame, empty heap/stack)
+  let pr_init : ProofState := ⟨⟨0,0⟩, pr.label, pr.fmla, db.frame, #[], #[], .normal⟩
+  -- Step 1: Convert preloadMandatoryHyps to DB.preload fold from canonical state
+  obtain ⟨pr_mand0, h_mand0_fold, h_mand0_heap, h_mand0_stack⟩ :=
+    preloadMandatoryHyps_to_preload_fold db pr_start pr_mand
+      h_mand h_start_heap h_scope pr_init (by simp [pr_init])
+  -- Step 2: Replay user preloads from pr_mand0 (matching heap with pr_mand)
   obtain ⟨pr_preload0, h_pre0, h_pre0_stack, h_pre0_heap⟩ :=
     foldlM_preload_replays db preloads pr_mand pr_mand0 pr_preload h_pre h_mand0_heap.symm
+  -- Step 3: Combined preload fold = mandatory labels ++ user preloads
+  let all_preloads := pr_start.frame.hyps.toList ++ preloads
+  have h_combined : all_preloads.foldlM (DB.preload db) pr_init = .ok pr_preload0 := by
+    rw [show all_preloads = pr_start.frame.hyps.toList ++ preloads from rfl,
+        foldlM_append_preload, h_mand0_fold]
+    simp only [bind, Except.bind]; exact h_pre0
+  -- Step 4: Replay action fold from pr_preload to pr_preload0
   have h_mand_stack : pr_mand.stack = pr_start.stack :=
     Metamath.PrefixProvenance.preloadMandatoryHyps_preserves_stack db pr_start pr_mand h_mand
   have h_pre_stack : pr_preload.stack = pr_mand.stack :=
@@ -831,34 +939,13 @@ theorem CompressedFoldGhost_to_ProofReachableZ
   obtain ⟨pr_fold0, h_old_fold0, h_fold_stack_eq, _h_fold_heap_eq⟩ :=
     foldlM_execStepSave_compatible db pr_preload pr_preload0 pr_fold old_actions
       h_preload_stack_eq h_preload_heap_eq h_old_fold
-  let cacts : List ParserState.CompressedAction := old_actions.map stepSaveToCompressed
-  have h_no_unk : ∀ a ∈ cacts, a ≠ ParserState.CompressedAction.unknown := by
-    intro a h_mem
-    rw [show cacts = old_actions.map stepSaveToCompressed from rfl] at h_mem
-    obtain ⟨act, h_act_mem, rfl⟩ := List.mem_map.mp h_mem
-    cases act <;> simp [stepSaveToCompressed]
-  have h_apply0 : ParserState.applyCompressedActions db pr_preload0 cacts = .ok pr_fold0 := by
-    have h_eq :=
-      applyCompressedActions_eq_execStepSave_fold db pr_preload0 cacts h_no_unk
-    rw [h_eq, map_toStepSave_stepSaveToCompressed old_actions]
-    exact h_old_fold0
+  -- Step 5: Construct ZCompressedProofReachable directly
   have h_fold0_stack : pr_fold0.stack = pr.stack := by
-    calc
-      pr_fold0.stack = pr_fold.stack := h_fold_stack_eq.symm
+    calc pr_fold0.stack = pr_fold.stack := h_fold_stack_eq.symm
       _ = pr.stack := h_stack_eq
-  have h_fold0_stack_one : pr_fold0.stack.size = 1 := by
-    rw [h_fold0_stack]
-    exact h_stack_one
-  have h_fold0_stack_fmla : pr_fold0.stack[0]? = some pr.fmla := by
-    rw [h_fold0_stack]
-    exact h_stack_fmla
-  have h_reach0 : ProofReachableZ db pr.label pr.fmla pr_fold0.stack :=
-    Metamath.PrefixProvenance.compressed_full_bridge
-      db pr.label pr.fmla pr_init pr_mand0 pr_preload0 pr_fold0
-      preloads cacts
-      rfl h_mand0 h_pre0 h_apply0 h_no_unk
-      h_wf h_fold0_stack_one h_fold0_stack_fmla
-  simpa [h_fold0_stack] using h_reach0
+  apply ProofReachableZ.zcompressed
+  exact ⟨all_preloads, old_actions, pr_preload0, pr_fold0,
+    h_combined, h_old_fold0, h_fold0_stack⟩
 
 /-! ## Ghost propagation: proof mode
 
@@ -936,7 +1023,7 @@ theorem feedToken_proof_maintains_ghost
         -- Sub-case analysis on pr.ptp
         by_cases h_start : pr.ptp = .start
         · -- pr.ptp = .start → first proof step
-          have ⟨h_stack_empty, _h_heap_empty⟩ := h_start_ghost h_start
+          have ⟨h_stack_empty, _h_heap_empty, _h_scope⟩ := h_start_ghost h_start
           by_cases h_open_paren : tk.eqArray "(".toAscii
           · -- "(" starts compressed mode (.preload) → contradiction with .normal
             exfalso
@@ -1003,7 +1090,7 @@ theorem feedToken_proof_maintains_ghost
         cases h_ptp : pr.ptp with
         | start =>
           -- .start + "(" → establish PreloadPhaseGhost
-          have ⟨h_stack_empty, _h_heap_empty⟩ := h_start_ghost h_ptp
+          have ⟨h_stack_empty, _h_heap_empty, h_scope⟩ := h_start_ghost h_ptp
           -- "(" must hold (otherwise goNormal → .normal, not .preload)
           have h_open_paren : tk.eqArray "(".toAscii := by
             by_contra h_no_open
@@ -1023,13 +1110,14 @@ theorem feedToken_proof_maintains_ghost
           rw [h_eq]; show PreloadPhaseGhost s.db {mid with ptp := .preload}
           unfold PreloadPhaseGhost
           -- Witnesses: start state is original `pr`; mandatory preload gives `mid`.
-          refine ⟨[], pr, mid, mid, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+          refine ⟨[], pr, mid, mid, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
           · exact h_mid_label.symm
           · exact h_mid_core.1.symm
           · exact h_mid_core.2.symm
           · exact h_stack_empty
-          · exact h_start_ghost h_ptp |>.2
+          · exact _h_heap_empty
           · exact h_ptp
+          · exact h_scope
           · exact h_mand_s
           · simp [List.foldlM, pure, Except.pure]
           · rfl
@@ -1111,10 +1199,10 @@ theorem feedToken_proof_maintains_ghost
             show CompressedFoldGhost s.db {pr with ptp := .compressed 0}
             obtain ⟨preloads, pr_start, pr_mand, pr_preload,
               h_start_lbl, h_start_fmla, h_start_frame, h_start_stack, h_start_heap, h_start_ptp,
-              h_mand, h_fold, h_stack, h_heap⟩ := h_pghost
+              h_scope, h_mand, h_fold, h_stack, h_heap⟩ := h_pghost
             exact ⟨preloads, [], pr_start, pr_mand, pr_preload, pr_preload,
               h_start_lbl, h_start_fmla, h_start_frame, h_start_stack, h_start_heap, h_start_ptp,
-              h_mand, h_fold,
+              h_scope, h_mand, h_fold,
               by simp [List.foldlM, pure, Except.pure],
               h_stack, h_heap⟩
           · -- label → stays .preload, not .compressed
@@ -1279,6 +1367,7 @@ private theorem feedTokens_ghost
       rw [h_tokp, h_db_eq]
       -- proofGhostCore: ptp=.start → all conjuncts vacuously true
       exact proofGhostCore_of_mkProofState s.db s.db pos l arr fr
+        (trimFrame'_hyps_subset s.db arr fr h_trim)
 
 /-- Ghost propagation through `feedToken` for **all** token-parser modes.
     Combines proof-mode handling (`feedToken_proof_maintains_ghost`) with
@@ -1403,12 +1492,11 @@ theorem feedToken_finishProofEvent_prefixProvable
     (h_inv : ParserStateInv s)
     (h_ghost : ProofGhost s.db s.tokp)
     (h_no_err : s.db.error? = none)
-    (h_frame : pr.frame = s.db.frame)
     (h_evt : FinishProofEvent s i tk pr) :
     ∃ (Γ : Spec.Database) (fr : Spec.Frame),
       toDatabase s.db = some Γ ∧
       toFrame s.db s.db.frame = some fr ∧
-  Spec.Provable Γ fr (toExpr pr.fmla) := by
+      Spec.Provable Γ fr (toExpr pr.fmla) := by
   rcases h_evt with ⟨h_tokp, h_open, h_end, h_success⟩
   rw [h_tokp] at h_ghost
   change proofGhostCore s.db pr at h_ghost
@@ -1427,7 +1515,7 @@ theorem feedToken_finishProofEvent_prefixProvable
     | inr h_ptp_comp0 =>
       have h_cghost : CompressedFoldGhost s.db pr := h_compressed ⟨0, h_ptp_comp0⟩
       exact CompressedFoldGhost_to_ProofReachableZ s.db pr
-        h_cghost h_wf h_frame h_stack_one h_stack_fmla
+        h_cghost h_wf h_stack_one h_stack_fmla
   simpa [s0] using
     (finishProof_any_mode_prefix_provable s0 pr h_reach h_wf h_no_err0 h_finish)
 
