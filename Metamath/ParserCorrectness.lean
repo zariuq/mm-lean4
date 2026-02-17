@@ -542,7 +542,7 @@ theorem for_loop_mkError_preserves_error (db : DB) (pos : Pos) (hyps : Array Str
     let mut db := db
     for _ in hyps do
       -- Some condition that might trigger mkError
-      if true then  -- Placeholder condition
+      if true then  -- Always triggers (unconditional error propagation)
         db := db.mkError pos "some error"
     db).error = true := by
   intro h_err
@@ -760,9 +760,7 @@ theorem insert_findable (db : DB) (pos : Pos) (label : String) (obj : String →
   (db.insert pos label obj).find? label = some (obj label) :=
   DB.insert_find?_self db pos label obj
 
-/-- Insert preserves other objects (if no collision).
-   TODO: Needs HashMap lemma about insert at different keys not affecting lookup.
-   Proof strategy: Use DB.insert_no_dup_objects + HashMap property. -/
+/-- Insert preserves other objects (if no collision). -/
 theorem insert_preserves_others (db : DB) (pos : Pos) (label label' : String) (obj : String → Object) :
   label ≠ label' →
   db.error = false →
@@ -790,9 +788,7 @@ theorem insert_preserves_others (db : DB) (pos : Pos) (label label' : String) (o
       simp [h_no_err, h_not_found', DB.find?]
       exact HashMap.find?_insert_ne db.objects label label' (Object.assert f fr lbl) h_ne
 
-/-- Duplicate insert creates error.
-   TODO: Need to handle const check + var-var special case.
-   Proof strategy: Unfold DB.insert, case split on obj and existing types. -/
+/-- Duplicate insert creates error (unless both are variables). -/
 theorem insert_duplicate_error (db : DB) (pos : Pos) (label : String) (obj : String → Object) (existing : Object) :
   db.error = false →
   db.find? label = some existing →

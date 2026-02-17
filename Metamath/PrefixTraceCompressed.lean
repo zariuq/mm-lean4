@@ -361,7 +361,7 @@ private theorem stepAssert_ptp_ok (db : DB) (pr : ProofState) (f : Formula) (fr 
           | error err =>
             simp [off, h_chk, Bind.bind, Except.bind] at h_ok
           | ok subst =>
-            cases h_dv : DB.dvCheck (db.frameFloatVars pr.frame) pr.frame.dj dj subst with
+            cases h_dv : DB.dvCheck (db.frameFloatVars db.frame) db.frame.dj dj subst with
             | error err =>
               simp [off, h_chk, h_dv, Bind.bind, Except.bind] at h_ok
             | ok _ =>
@@ -580,7 +580,7 @@ private theorem stepAssert_preserves_label (db : DB) (pr : ProofState) (f : Form
           cases h_chk : db.checkHyp hyps pr.stack off 0 ∅ with
           | error err => simp [off, h_chk, Bind.bind, Except.bind] at h_ok
           | ok subst =>
-            cases h_dv : DB.dvCheck (db.frameFloatVars pr.frame) pr.frame.dj dj subst with
+            cases h_dv : DB.dvCheck (db.frameFloatVars db.frame) db.frame.dj dj subst with
             | error err => simp [off, h_chk, h_dv, Bind.bind, Except.bind] at h_ok
             | ok _ =>
               cases h_subst : Metamath.Verify.Formula.subst subst f with
@@ -852,7 +852,7 @@ theorem NormalProofReachable_same_db_provable
     fold_maintains_provable db labels
       ⟨⟨0,0⟩, label, fmla, db.frame, #[], #[], .normal⟩
       pr_final Γ fr fmla
-      h_ok h_wf h_db h_fr h_wf.1 rfl h_fold rfl h_pr_size h_pr_fmla⟩
+      h_ok h_wf h_db h_fr h_wf.1 h_fold rfl h_pr_size h_pr_fmla⟩
 
 /-- Any `ProofReachableZ` mode produces `Spec.Provable` against the **same** DB.
     All three modes (normal, compressed, z-compressed) reduce to
@@ -948,5 +948,98 @@ theorem verify_any_mode_sound
   · -- Compressed mode: ProofReachableZ → same-DB bridge
     exact ProofReachableZ_same_db_provable db label fmla stack
       h_reach h_ok h_wf h_size h_fmla
+
+/-- **PREFIX PROVENANCE (compressed, pre-insert DB)**: Compressed trace execution on a
+    well-formed DB produces `Spec.Provable` against the **same** (pre-insert) database.
+    Follows `compressed_proof_full_provenance` exactly but applies
+    `ProofReachableZ_same_db_provable` instead of `prefix_provable_any_proof_z`. -/
+theorem compressed_proof_prefix_provenance
+    (s : ParserState) (label : String) (fmla : Formula)
+    (tk_open : ByteSlice) (preload_toks : List ByteSlice)
+    (tk_close : ByteSlice) (comp_toks : List ByteSlice)
+    (all_acts : List ParserState.CompressedAction)
+    (pr₀ pr₁ pr₂ pr₃ pr_final : ProofState)
+    (h_init : pr₀ = ⟨⟨0,0⟩, label, fmla, s.db.frame, #[], #[], .start⟩)
+    (h_open_ok : (s.feedProof tk_open pr₀).db.error? = none)
+    (h_open : tk_open.eqArray "(".toAscii)
+    (h_open_tokp : (s.feedProof tk_open pr₀).tokp = .proof pr₁)
+    (h_preload : PreloadTokensOK s pr₁ preload_toks pr₂)
+    (h_close_ok : (s.feedProof tk_close pr₂).db.error? = none)
+    (h_close : tk_close.eqArray ")".toAscii)
+    (h_close_tokp : (s.feedProof tk_close pr₂).tokp = .proof pr₃)
+    (h_comp : CompressedTokensOK s pr₃ comp_toks pr_final all_acts)
+    (_h_finish : (s.finishProof pr_final).db.error? = none)
+    (h_s_ok : s.db.error? = none)
+    (h_wf : WellFormedDB s.db)
+    (h_stack_one : pr_final.stack.size = 1)
+    (h_stack_fmla : pr_final.stack[0]? = some pr_final.fmla) :
+    ∃ (Γ : Spec.Database) (spec_fr : Spec.Frame),
+      toDatabase s.db = some Γ ∧
+      toFrame s.db s.db.frame = some spec_fr ∧
+      Spec.Provable Γ spec_fr (toExpr pr_final.fmla) := by
+  -- Phase A: "(" → preloadMandatoryHyps
+  obtain ⟨pr₁', h_go_open, h_tokp_open⟩ := feedProof_success_go_ok s tk_open pr₀ h_open_ok
+  have h_eq₁ : pr₁ = pr₁' := by
+    rw [h_open_tokp] at h_tokp_open; exact TokenParser.proof.inj h_tokp_open
+  subst h_eq₁
+  obtain ⟨pr_mand, h_mand, h_pr₁_eq⟩ :=
+    go_start_open_extracts s tk_open pr₀ pr₁ h_go_open (by subst h_init; rfl) h_open
+  -- Phase B: preload labels
+  let user_labels := preload_toks.map (fun tk => (toLabel tk).snd)
+  obtain ⟨h_preload_fold, h_ptp₂, h_fmla₂, h_frame₂, h_label₂⟩ :=
+    PreloadTokensOK_extracts_fold s preload_toks pr₁ pr₂ h_preload
+  -- Phase B→C: ")" closes preload
+  obtain ⟨pr₃', h_go_close, h_tokp_close⟩ := feedProof_success_go_ok s tk_close pr₂ h_close_ok
+  have h_eq₃ : pr₃ = pr₃' := by
+    rw [h_close_tokp] at h_tokp_close; exact TokenParser.proof.inj h_tokp_close
+  subst h_eq₃
+  have h_ptp₂_val : pr₂.ptp = .preload := by rw [h_ptp₂, h_pr₁_eq]
+  have h_pr₃_eq : pr₃ = {pr₂ with ptp := .compressed 0} :=
+    go_preload_close_extracts s tk_close pr₂ pr₃ h_go_close h_ptp₂_val h_close
+  -- Phase C: compressed body extracts actions
+  obtain ⟨pr_result, h_applyCA₃, h_stack_eq, h_heap_eq, h_fmla_eq, h_frame_eq, h_no_unk⟩ :=
+    CompressedTokensOK_extracts_applyCA s comp_toks pr₃ pr_final all_acts h_comp
+  -- Bridge to compressed_full_bridge via ptp irrelevance
+  have h_user_fold : user_labels.foldlM (DB.preload s.db) pr_mand =
+      .ok {pr₂ with ptp := pr_mand.ptp} := by
+    rw [h_pr₁_eq] at h_preload_fold
+    exact preload_fold_ptp_rev s.db user_labels pr_mand .preload pr₂ h_preload_fold
+  let pr_pre : ProofState := {pr₂ with ptp := pr_mand.ptp}
+  have h_pr₃_as_pre : pr₃ = {pr_pre with ptp := .compressed 0} := by
+    rw [h_pr₃_eq]
+  have h_applyCA_pre : ParserState.applyCompressedActions s.db pr_pre all_acts =
+      .ok {pr_result with ptp := pr_pre.ptp} := by
+    rw [h_pr₃_as_pre] at h_applyCA₃
+    exact applyCA_ptp_rev s.db pr_pre all_acts (.compressed 0) pr_result h_applyCA₃
+  let pr_bridge : ProofState := {pr_result with ptp := pr_pre.ptp}
+  have h_bridge_stack : pr_bridge.stack = pr_final.stack := h_stack_eq.symm
+  have h_bridge_stack_one : pr_bridge.stack.size = 1 := by rw [h_bridge_stack]; exact h_stack_one
+  -- Derive pr_final.fmla = fmla
+  have h_fmla_chain : pr_final.fmla = fmla := by
+    have : pr_result.fmla = pr₃.fmla :=
+      (Metamath.ParserOps.applyCompressedActions_ok_preserves_core
+        s.db pr₃ pr_result all_acts h_applyCA₃).1
+    rw [h_fmla_eq, this, h_pr₃_eq, h_fmla₂, h_pr₁_eq]
+    exact ((preloadMandatoryHyps_ok_preserves_core s.db pr₀ pr_mand h_mand).1).trans
+      (by subst h_init; rfl)
+  have h_bridge_stack_fmla : pr_bridge.stack[0]? = some fmla := by
+    rw [h_bridge_stack]; rwa [h_fmla_chain] at h_stack_fmla
+  -- Derive ProofReachableZ
+  have h_reach : ProofReachableZ s.db label fmla pr_bridge.stack :=
+    compressed_full_bridge s.db label fmla pr₀ pr_mand pr_pre pr_bridge
+      user_labels all_acts h_init h_mand h_user_fold h_applyCA_pre h_no_unk
+      h_wf h_bridge_stack_one h_bridge_stack_fmla
+  rw [h_bridge_stack] at h_reach
+  have h_label_chain : pr_final.label = label := by
+    have h1 : pr_final.label = pr₃.label :=
+      CompressedTokensOK_preserves_label s comp_toks pr₃ pr_final all_acts h_comp
+    rw [h1, h_pr₃_eq]; simp
+    rw [h_label₂, h_pr₁_eq]; simp
+    exact (preloadMandatoryHyps_preserves_label s.db pr₀ pr_mand h_mand).trans
+      (by subst h_init; rfl)
+  -- Apply ProofReachableZ_same_db_provable (PRE-INSERT, not prefix_provable_any_proof_z)
+  rw [← h_label_chain, ← h_fmla_chain] at h_reach
+  exact ProofReachableZ_same_db_provable s.db pr_final.label pr_final.fmla pr_final.stack
+    h_reach h_s_ok h_wf h_stack_one h_stack_fmla
 
 end Metamath.PrefixTraceCompressed

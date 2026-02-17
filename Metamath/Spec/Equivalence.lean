@@ -2889,10 +2889,8 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
         exact marioSubstToSpec_float_typecode h_floatUnique h_float
 
       -- PART C: DV constraint preservation (DJ.subst → dvOK)
-      -- The inverse direction of the bridge theorem is complex.
-      -- For now, we leave this as a TODO with a clear proof strategy.
-      -- The key insight: h_dj ensures variables in substituted expressions
-      -- from disjoint axiom variables are disjoint in the theorem's context.
+      -- h_dj ensures variables in substituted expressions from disjoint axiom
+      -- variables are disjoint in the theorem's context.
       have h_dvOK : Spec.dvOK fr.vars frAx.dv fr.dv σ' := by
         -- Rewrite h_dj using h_ctx_eq to work with dvListToMarioDJ
         have h_ctx_dj : (frameToContext frAx).dj = dvListToMarioDJ vmAx frAx.dv := rfl
@@ -2969,13 +2967,8 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
                 have h_sigma_w' : σ' w' = ⟨⟨vr_w'.type⟩, fromMarioExpr vm (σ vr_w')⟩ :=
                   marioSubstToSpec_findVR h_findVR_w'
 
-                -- Step 4: Prepare well-formedness for const separation using provable_const_separation
-                -- For VR vr_v', h_hyps_var gives us Provable ... (vr_v'.type, σ vr_v')
-                -- We need to show vr_v' ∈ ax.vars (implicit ax). This follows from the fact that:
-                -- - vr_v' participates in a DJ constraint
-                -- - ax.ctx.dj includes this constraint (from h_dj_vr)
-                -- - Statement.WellFormed ensures DJ constraints only involve used variables
-                -- TODO: Formally derive membership from WellFormed and DJ structure
+                -- Step 4: Show vr_v' ∈ ax.vars via floating hypothesis membership,
+                -- then use h_hyps_var to get Provable for the substituted expression.
                 have h_vr_v'_prov := h_hyps_var vr_v' (by
                   -- Show vr_v' ∈ ax.vars via floating hypothesis membership
                   -- 1. findVR success implies v' ∈ frAx.vars

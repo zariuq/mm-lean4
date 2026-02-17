@@ -2786,7 +2786,7 @@ theorem trimFrame_preserves_uniqueness {db : DB} {fr : Frame}
   exact h_unique i' j' hi' hj' h_i'_ne_j' fi fj lbli lblj h_fi h_fj hsizei hsizej
 
 -- Similarly for insertAxiom (full)
--- TODO: Need to prove frame well-formedness from trimFrame'
+-- Frame well-formedness from trimFrame' success:
 theorem trimFrame'_success_implies_wellformed_frame
     (db : DB) (fmla : Formula) (fr : Frame)
     (h_wf : WellFormedDB db)
@@ -4006,10 +4006,8 @@ theorem insertAxiom_full_maintains_scoped
         · exact formulaSymbolsDeclared_preserved_by_insert
             db pos l (.assert arr fr) f h_old.2 h_fresh_db
 
--- Phase B: feedTokens correctness (blocked on Phase A completion)
--- TODO: Complete after proving insertHyp_full and insertAxiom_full
+-- Phase B: feedTokens correctness (depends on insertHyp_full and insertAxiom_full)
 -- Helper: feedTokens .ax case reduces to insertAxiom for the .db field
--- TODO: This helper would enable completing the .ax case
 -- The proof requires simplifying through:
 -- 1. feedTokens definition
 -- 2. Verify.withAt wrapper
@@ -7654,7 +7652,7 @@ theorem stepAssert_ok_preserves_core
             | error err =>
                 simp [off, h_chk, Bind.bind, Except.bind, Pure.pure] at h_ok
             | ok subst =>
-                cases h_dv : DB.dvCheck (db.frameFloatVars pr.frame) pr.frame.dj dj subst with
+                cases h_dv : DB.dvCheck (db.frameFloatVars db.frame) db.frame.dj dj subst with
                 | error err =>
                     simp [off, h_chk, h_dv, Bind.bind, Except.bind, Pure.pure] at h_ok
                 | ok _ =>
