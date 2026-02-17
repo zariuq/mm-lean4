@@ -56,7 +56,7 @@ Review boundary:
 Compatibility and reproduction:
 
 - `lake build`
-- `metamath-test/run-testsuite-all` (see `metamath-test` repo)
+- Full executable test suite (repo: https://github.com/zariuq/metamath-test, local path: `../metamath-test`): `cd ../metamath-test && ulimit -Sv 6291456 && ./run-testsuite-all ./test-mm-lean4`
 
 ## Build
 

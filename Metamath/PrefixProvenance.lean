@@ -2177,8 +2177,7 @@ theorem execStepSave_preserves_certs (db : DB) (pr pr' : ProofState) (act : Step
 theorem execStepSave_fold_preserves_certs (db : DB)
     (acts : List StepSaveAction) (pr result : ProofState)
     (h_fold : acts.foldlM (fun p a => execStepSave db p a) pr = .ok result)
-    (h_sc : StackCert db pr.stack) (h_hc : HeapCert db pr.heap)
-    (h_frame : pr.frame = db.frame) :
+    (h_sc : StackCert db pr.stack) (h_hc : HeapCert db pr.heap) :
     StackCert db result.stack ∧ HeapCert db result.heap := by
   induction acts generalizing pr with
   | nil =>
@@ -2192,9 +2191,7 @@ theorem execStepSave_fold_preserves_certs (db : DB)
       simp [h_step] at h_fold
       have ⟨h_sc', h_hc'⟩ :=
         execStepSave_preserves_certs db pr pr' act h_step h_sc h_hc
-      have h_frame' : pr'.frame = db.frame :=
-        (execStepSave_preserves_frame db pr pr' act h_step).trans h_frame
-      exact ih pr' h_fold h_sc' h_hc' h_frame'
+      exact ih pr' h_fold h_sc' h_hc'
 
 /-! ### Part 15f: Preload HeapCert -/
 
@@ -2357,12 +2354,10 @@ theorem z_compressed_to_normal_reachable (db : DB) (label : String) (fmla : Form
   have h_hc_init : HeapCert db pr_preload.heap :=
     preload_fold_preserves_heapCert db preloads pr_init pr_preload
       h_preload (HeapCert_empty db) h_wf
-  have h_frame_init : pr_preload.frame = db.frame :=
-    (preload_fold_preserves_frame db preloads pr_init pr_preload h_preload).trans rfl
   -- 2. Actions preserve certs
   have ⟨h_sc_final, _⟩ :=
     execStepSave_fold_preserves_certs db actions pr_preload pr_final
-      h_actions h_sc_init h_hc_init h_frame_init
+      h_actions h_sc_init h_hc_init
   -- 3. Extract DerivCert from final stack
   have h_fmla_final : pr_final.stack[0]? = some fmla := h_stack ▸ h_stack_fmla
   have h_cert : DerivCert db fmla :=
@@ -2676,8 +2671,6 @@ theorem compressed_full_bridge
     preload_fold_preserves_heapCert db user_preloads pr_mand pr_preload
       h_user h_mand_hc h_wf
   -- Combined properties
-  have h_pre_frame_db : pr_preload.frame = db.frame := by
-    rw [h_pre_frame, h_mand_frame, h_init_frame]
   have h_pre_stack_empty : pr_preload.stack = #[] := by
     rw [h_pre_stack, h_mand_stack, h_init_stack]
   -- Convert actions to StepSaveAction fold
@@ -2689,7 +2682,7 @@ theorem compressed_full_bridge
     execStepSave_fold_preserves_certs db (all_cacts.map compressedToStepSave)
       pr_preload pr_final h_ss_actions
       (by rw [h_pre_stack_empty]; exact StackCert_empty db)
-      h_pre_hc h_pre_frame_db
+      h_pre_hc
   -- Extract DerivCert from final stack → NormalProofReachable
   have h_cert : DerivCert db fmla :=
     compressed_final_cert db pr_final h_sc_final fmla h_stack_fmla
