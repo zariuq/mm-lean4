@@ -1,4 +1,3 @@
-import Lean.Elab.Term
 import Metamath.Verify
 
 /-!
@@ -38,30 +37,6 @@ accepts exactly those proofs that are valid under Mario's declarative semantics.
 -/
 
 namespace Metamath
-open Lean Elab
-open Verify in
-partial def foo : TermElabM Unit := do
-  let h ← IO.FS.Handle.mk "/home/mario/Documents/metamath/mm/iset.mm" IO.FS.Mode.read
-  let rec loop (s : ParserState) (base : Nat) : IO (Except ParserState DB) := do
-    let buf ← h.read 1024
-    if buf.isEmpty then
-      pure <| .ok <| s.done base
-    else
-      let s := s.feedAll base buf
-      if s.db.error?.isSome then pure <| .error s
-      else loop s (base + buf.size)
-  match ← loop Inhabited.default 0 with
-  | .ok _ => pure ()
-  | .error s' => match s'.db.error? with
-    | some ⟨.ax _pos l f fr, _i⟩ =>
-      IO.println s!"axiom {l}: {fr} |- {f}"
-    | some ⟨.thm _pos l f fr, _i⟩ =>
-      IO.println s!"theorem {l}: {fr} |- {f}"
-    | some ⟨.error pos msg, _⟩ =>
-      IO.println s!"at {pos}: {msg}"
-    | _ => pure ()
-
--- #eval foo
 
 /-! ## Core Types (§4.2.2)
 
@@ -637,4 +612,3 @@ def Expr.ty (e) {axs c} [Typed axs c e] {Γ} : Provable axs Γ (c, e) := Typed.t
 -- Demo section archived to docs_archive/MarioDemo.md
 
 end Metamath
-
