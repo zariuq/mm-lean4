@@ -1519,6 +1519,68 @@ theorem feedToken_finishProofEvent_prefixProvable
   simpa [s0] using
     (finishProof_any_mode_prefix_provable s0 pr h_reach h_wf h_no_err0 h_finish)
 
+/-! ## Event-lift definitions
+
+`EventProvableAt s` says: any feedToken finishProof event at state `s` yields
+`Spec.Provable` in the pre-insertion database.
+
+`AllFeedEventsProvable` mirrors `feed`'s recursion, conjoining `EventProvableAt`
+at every feedToken call site. -/
+
+/-- A feedToken call at state `s` is prefix-provable for any finishProof event. -/
+def EventProvableAt (s : ParserState) : Prop :=
+  ∀ (pos : Nat) (tk : ByteSlice) (pr : ProofState),
+    FinishProofEvent s pos tk pr →
+    ∃ (Γ : Spec.Database) (fr : Spec.Frame),
+      toDatabase s.db = some Γ ∧
+      toFrame s.db s.db.frame = some fr ∧
+      Spec.Provable Γ fr (toExpr pr.fmla)
+
+/-- `EventProvableAt` follows from ghost + invariant + no-error. -/
+theorem eventProvableAt_of_ghost_inv (s : ParserState)
+    (h_ghost : ProofGhost s.db s.tokp)
+    (h_inv : ParserStateInv s)
+    (h_no_err : s.db.error? = none) :
+    EventProvableAt s :=
+  fun pos tk pr h_evt =>
+    feedToken_finishProofEvent_prefixProvable s pos tk pr h_inv h_ghost h_no_err h_evt
+
+/-- Every feedToken finishProof event during `s.feed base arr i rs` yields
+    `Spec.Provable`. Mirrors `feed`'s control flow exactly. -/
+private def AllFeedEventsProvable (base : Nat) (arr : ByteArray) (i : Nat)
+    (rs : ParserState.FeedState) (s : ParserState) : Prop :=
+  if _ : i < arr.size then
+    let c := arr[i]
+    if isWhitespace c then
+      match rs with
+      | .ws =>
+          AllFeedEventsProvable base arr (i + 1) .ws (s.updateLine (base + i) c)
+      | .token ot =>
+          let s0 := match ot with
+            | .this off => s.feedToken (base + off) (ByteSlice.mk arr off (i - off))
+            | .old base' off arr' => s.feedToken (base' + off)
+                (ByteSlice.mk (arr.copySlice 0 arr' arr'.size i false) off (arr'.size - off + i))
+          EventProvableAt s ∧
+          let s1 := s0.updateLine (base + i) c
+          if s1.db.error? = none then
+            AllFeedEventsProvable base arr (i + 1) .ws s1
+          else True
+    else
+      match rs with
+      | .ws => AllFeedEventsProvable base arr (i + 1) (.token (.this i)) s
+      | .token ot => AllFeedEventsProvable base arr (i + 1) (.token ot) s
+  else True
+termination_by arr.size - i
+
+/-- All feedToken finishProof events during `s.feedAll base arr`. -/
+def AllFeedAllEventsProvable (base : Nat) (arr : ByteArray) (s : ParserState) : Prop :=
+  match s.charp with
+  | .ws => AllFeedEventsProvable base arr 0 .ws s
+  | .token base' tk =>
+      AllFeedEventsProvable base arr 0
+        (.token (.old base' tk.start tk.byteArray))
+        { s with charp := default }
+
 /-! ## Ghost propagation through the feed loop
 
 Parallel structure to `feed_maintains_stateInv` (ParserOperations.lean).
@@ -1705,6 +1767,163 @@ theorem feed_maintains_ghost
         have h_ws' : isWhitespace arr[i] = false := by simpa [c] using h_ws
         simpa [hi, h_ws'] using h_rec
 
+/-- Successful `feed` produces prefix-provable events at every feedToken call site.
+    Same induction as `feed_maintains_ghost`; at each feedToken call,
+    `eventProvableAt_of_ghost_inv` gives `EventProvableAt`. -/
+theorem feed_events_provable
+    (base : Nat) (arr : ByteArray) (i : Nat) (rs : ParserState.FeedState) (s : ParserState)
+    (h_ghost : ProofGhost s.db s.tokp)
+    (h_inv : ParserStateInv s)
+    (h_no_err : s.db.error? = none)
+    (h_no_dup : s.db.config.allowDuplicateFloat = false)
+    (h_strict : s.db.config.rejectUnknownSteps = true)
+    (h_success : (s.feed base arr i rs).db.error? = none) :
+    AllFeedEventsProvable base arr i rs s := by
+  refine Nat.rec
+    (motive := fun m =>
+      ∀ i rs (s : ParserState),
+        arr.size - i = m →
+        ProofGhost s.db s.tokp →
+        ParserStateInv s →
+        s.db.error? = none →
+        s.db.config.allowDuplicateFloat = false →
+        s.db.config.rejectUnknownSteps = true →
+        (s.feed base arr i rs).db.error? = none →
+        AllFeedEventsProvable base arr i rs s)
+    ?base ?step (arr.size - i) i rs s rfl h_ghost h_inv h_no_err h_no_dup h_strict h_success
+  · -- Base case: ¬ i < arr.size → AllFeedEventsProvable = True
+    intro i rs s hs _h_ghost _h_inv _h_no_err _h_no_dup _h_strict _h_success
+    have hi : ¬ i < arr.size := by
+      intro hi; have hpos : arr.size - i > 0 := Nat.sub_pos_of_lt hi; simp [hs] at hpos
+    unfold AllFeedEventsProvable; simp [hi]
+  · -- Inductive step
+    intro m ih i rs s hs h_ghost h_inv h_no_err h_no_dup h_strict h_success
+    have hi : i < arr.size := by
+      by_cases hi' : i < arr.size
+      · exact hi'
+      · have := Nat.sub_eq_zero_of_le (Nat.le_of_not_gt hi'); omega
+    have hs' : arr.size - (i + 1) = m := by
+      simp only [Nat.add_one, Nat.sub_succ, hs, Nat.pred_succ]
+    let c := arr[i]
+    by_cases h_ws : isWhitespace c
+    · -- Whitespace
+      have h_ws' : isWhitespace arr[i] = true := h_ws
+      cases rs with
+      | ws =>
+        let s1 : ParserState := s.updateLine (base + i) c
+        have h_ghost1 : ProofGhost s1.db s1.tokp := by
+          simp [s1, updateLine_tokp]; exact h_ghost
+        have h_inv1 : ParserStateInv s1 := by simpa [ParserStateInv, s1] using h_inv
+        have h_no_err1 : s1.db.error? = none := by simpa [s1] using h_no_err
+        have h_no_dup1 : s1.db.config.allowDuplicateFloat = false := by simpa [s1] using h_no_dup
+        have h_strict1 : s1.db.config.rejectUnknownSteps = true := by simpa [s1] using h_strict
+        have h_success_rec : (s1.feed base arr (i + 1) .ws).db.error? = none := by
+          unfold ParserState.feed at h_success; simpa [hi, h_ws', s1] using h_success
+        have h_rec := ih (i + 1) .ws s1 hs' h_ghost1 h_inv1 h_no_err1 h_no_dup1 h_strict1 h_success_rec
+        unfold AllFeedEventsProvable; simp only [hi, ↓reduceDIte, h_ws', ↓reduceIte]
+        exact h_rec
+      | token ot =>
+        cases ot with
+        | this off =>
+          let s0 := s.feedToken (base + off) (ByteSlice.mk arr off (i - off))
+          let s1 : ParserState := s0.updateLine (base + i) arr[i]
+          cases h_err : s1.db.error? with
+          | some intr =>
+            have h_err0 : s0.db.error? = some intr := by simpa [s1] using h_err
+            have h_bad : (s.feed base arr i (.token (.this off))).db.error? ≠ none := by
+              unfold ParserState.feed; simp [hi, h_ws', s0, h_err0]
+            exact (h_bad h_success).elim
+          | none =>
+            have h_tok_ok : s0.db.error? = none := by simpa [s1] using h_err
+            have h_event : EventProvableAt s :=
+              eventProvableAt_of_ghost_inv s h_ghost h_inv h_no_err
+            have h_ghost0 : ProofGhost s0.db s0.tokp :=
+              feedToken_maintains_ghost s (base + off) (ByteSlice.mk arr off (i - off))
+                h_ghost h_inv h_no_err h_strict h_tok_ok
+            have h_inv0 : ParserStateInv s0 :=
+              feedToken_maintains_stateInv s (base + off) (ByteSlice.mk arr off (i - off))
+                h_inv h_no_err h_no_dup h_tok_ok
+            have h_ghost1 : ProofGhost s1.db s1.tokp := by
+              simp [s1, updateLine_tokp]; exact h_ghost0
+            have h_inv1 : ParserStateInv s1 := by simpa [ParserStateInv, s1] using h_inv0
+            have h_no_err1 : s1.db.error? = none := by simpa [s1] using h_err
+            have h_no_dup1 : s1.db.config.allowDuplicateFloat = false := by
+              have := ParserState.feedToken_db_config s (base + off) (ByteSlice.mk arr off (i - off))
+              simpa [s1, s0, this] using h_no_dup
+            have h_strict1 : s1.db.config.rejectUnknownSteps = true := by
+              have := ParserState.feedToken_db_config s (base + off) (ByteSlice.mk arr off (i - off))
+              simpa [s1, s0, this] using h_strict
+            have h_success_rec : (s1.feed base arr (i + 1) .ws).db.error? = none := by
+              unfold ParserState.feed at h_success
+              have h_err0 : s0.db.error? = none := by simpa [s1] using h_err
+              simp [hi, h_ws', s0, h_err0] at h_success; exact h_success
+            have h_rec := ih (i + 1) .ws s1 hs' h_ghost1 h_inv1 h_no_err1 h_no_dup1 h_strict1 h_success_rec
+            unfold AllFeedEventsProvable; simp only [hi, ↓reduceDIte, h_ws', ↓reduceIte]
+            refine ⟨h_event, ?_⟩
+            show if s1.db.error? = none then
+              AllFeedEventsProvable base arr (i + 1) .ws s1 else True
+            rw [if_pos h_err]; exact h_rec
+        | old base' off arr' =>
+          let s0 := s.feedToken (base' + off)
+            (ByteSlice.mk (arr.copySlice 0 arr' arr'.size i false) off (arr'.size - off + i))
+          let s1 : ParserState := s0.updateLine (base + i) arr[i]
+          cases h_err : s1.db.error? with
+          | some intr =>
+            have h_err0 : s0.db.error? = some intr := by simpa [s1] using h_err
+            have h_bad :
+                (s.feed base arr i (.token (.old base' off arr'))).db.error? ≠ none := by
+              unfold ParserState.feed; simp [hi, h_ws', s0, h_err0]
+            exact (h_bad h_success).elim
+          | none =>
+            have h_tok_ok : s0.db.error? = none := by simpa [s1] using h_err
+            have h_event : EventProvableAt s :=
+              eventProvableAt_of_ghost_inv s h_ghost h_inv h_no_err
+            have h_ghost0 : ProofGhost s0.db s0.tokp :=
+              feedToken_maintains_ghost s (base' + off)
+                (ByteSlice.mk (arr.copySlice 0 arr' arr'.size i false) off (arr'.size - off + i))
+                h_ghost h_inv h_no_err h_strict h_tok_ok
+            have h_inv0 : ParserStateInv s0 :=
+              feedToken_maintains_stateInv s (base' + off)
+                (ByteSlice.mk (arr.copySlice 0 arr' arr'.size i false) off (arr'.size - off + i))
+                h_inv h_no_err h_no_dup h_tok_ok
+            have h_ghost1 : ProofGhost s1.db s1.tokp := by
+              simp [s1, updateLine_tokp]; exact h_ghost0
+            have h_inv1 : ParserStateInv s1 := by simpa [ParserStateInv, s1] using h_inv0
+            have h_no_err1 : s1.db.error? = none := by simpa [s1] using h_err
+            have h_no_dup1 : s1.db.config.allowDuplicateFloat = false := by
+              have := ParserState.feedToken_db_config s (base' + off)
+                (ByteSlice.mk (arr.copySlice 0 arr' arr'.size i false) off (arr'.size - off + i))
+              simpa [s1, s0, this] using h_no_dup
+            have h_strict1 : s1.db.config.rejectUnknownSteps = true := by
+              have := ParserState.feedToken_db_config s (base' + off)
+                (ByteSlice.mk (arr.copySlice 0 arr' arr'.size i false) off (arr'.size - off + i))
+              simpa [s1, s0, this] using h_strict
+            have h_success_rec : (s1.feed base arr (i + 1) .ws).db.error? = none := by
+              unfold ParserState.feed at h_success
+              have h_err0 : s0.db.error? = none := by simpa [s1] using h_err
+              simp [hi, h_ws', s0, h_err0] at h_success; exact h_success
+            have h_rec := ih (i + 1) .ws s1 hs' h_ghost1 h_inv1 h_no_err1 h_no_dup1 h_strict1 h_success_rec
+            unfold AllFeedEventsProvable; simp only [hi, ↓reduceDIte, h_ws', ↓reduceIte]
+            refine ⟨h_event, ?_⟩
+            show if s1.db.error? = none then
+              AllFeedEventsProvable base arr (i + 1) .ws s1 else True
+            rw [if_pos h_err]; exact h_rec
+    · -- Non-whitespace: no feedToken call, just recurse
+      have h_ws' : isWhitespace arr[i] = false := by simpa [c] using h_ws
+      cases rs with
+      | ws =>
+        have h_success_rec : (s.feed base arr (i + 1) (.token (.this i))).db.error? = none := by
+          unfold ParserState.feed at h_success; simpa [hi, h_ws'] using h_success
+        have h_rec := ih (i + 1) (.token (.this i)) s hs' h_ghost h_inv h_no_err h_no_dup h_strict h_success_rec
+        unfold AllFeedEventsProvable; simp only [hi, ↓reduceDIte, h_ws']
+        exact h_rec
+      | token ot =>
+        have h_success_rec : (s.feed base arr (i + 1) (.token ot)).db.error? = none := by
+          unfold ParserState.feed at h_success; simpa [hi, h_ws'] using h_success
+        have h_rec := ih (i + 1) (.token ot) s hs' h_ghost h_inv h_no_err h_no_dup h_strict h_success_rec
+        unfold AllFeedEventsProvable; simp only [hi, ↓reduceDIte, h_ws']
+        exact h_rec
+
 /-- Successful `feedAll` preserves ProofGhost. -/
 theorem feedAll_maintains_ghost
     (s : ParserState) (base : Nat) (arr : ByteArray)
@@ -1733,5 +1952,174 @@ theorem feedAll_maintains_ghost
       (.token (.old base' tk.start tk.byteArray)) s0
       h_ghost0 h_inv0 h_no_err0 h_no_dup0 h_strict0 h_success0
     simpa [ParserState.feedAll, h_charp, s0] using h_ghost_feed
+
+/-! ## Event-lift: feedAll and top-level theorem -/
+
+/-- Successful `feedAll` produces prefix-provable events at every feedToken call site. -/
+theorem feedAll_events_provable
+    (s : ParserState) (base : Nat) (arr : ByteArray)
+    (h_ghost : ProofGhost s.db s.tokp)
+    (h_inv : ParserStateInv s)
+    (h_no_err : s.db.error? = none)
+    (h_no_dup : s.db.config.allowDuplicateFloat = false)
+    (h_strict : s.db.config.rejectUnknownSteps = true)
+    (h_success : (s.feedAll base arr).db.error? = none) :
+    AllFeedAllEventsProvable base arr s := by
+  cases h_charp : s.charp with
+  | ws =>
+    simp [AllFeedAllEventsProvable, h_charp]
+    simp [ParserState.feedAll, h_charp] at h_success
+    exact feed_events_provable base arr 0 .ws s h_ghost h_inv h_no_err h_no_dup h_strict h_success
+  | token base' tk =>
+    simp [AllFeedAllEventsProvable, h_charp]
+    let s0 : ParserState := { s with charp := default }
+    have h_ghost0 : ProofGhost s0.db s0.tokp := by simpa [s0] using h_ghost
+    have h_inv0 : ParserStateInv s0 := by simpa [ParserStateInv, s0] using h_inv
+    have h_no_err0 : s0.db.error? = none := by simpa [s0] using h_no_err
+    have h_no_dup0 : s0.db.config.allowDuplicateFloat = false := by simpa [s0] using h_no_dup
+    have h_strict0 : s0.db.config.rejectUnknownSteps = true := by simpa [s0] using h_strict
+    have h_success0 :
+        (s0.feed base arr 0 (.token (.old base' tk.start tk.byteArray))).db.error? = none := by
+      simpa [ParserState.feedAll, h_charp, s0] using h_success
+    have h_events := feed_events_provable base arr 0
+      (.token (.old base' tk.start tk.byteArray)) s0
+      h_ghost0 h_inv0 h_no_err0 h_no_dup0 h_strict0 h_success0
+    simpa [s0] using h_events
+
+open Metamath.ParserOps (done_no_error_implies_db_no_error feedAll_maintains_stateInv) in
+/-- **Prefix Provenance Event-Lift**: In a successful `checkBytesCore` run,
+    every feedToken finishProof event (during feed AND the done trailing flush)
+    yields `Spec.Provable` in the pre-insertion database.
+
+    This is the top-level event-lift theorem: it bridges the local
+    `feedToken_finishProofEvent_prefixProvable` to the entire `checkBytesCore` execution. -/
+theorem checkBytesCore_prefix_provenance (arr : ByteArray) (config : ModeConfig)
+    (h_strict : config.rejectUnknownSteps = true)
+    (h_no_dup : config.allowDuplicateFloat = false)
+    (h_success : (checkBytesCore arr config).error? = none) :
+    let s₀ : ParserState := { (default : ParserState) with
+      db := { (default : DB) with config := config } }
+    AllFeedAllEventsProvable 0 arr s₀ ∧
+    EventProvableAt (s₀.feedAll 0 arr) := by
+  intro s₀
+  -- Extract: checkBytesCore success → feedAll output has no error
+  have h_feedAll_no_err : (s₀.feedAll 0 arr).db.error? = none := by
+    have h_core : (checkBytesCore arr config).error? = none := h_success
+    have h_done_ok : ((s₀.feedAll 0 arr).done arr.size).error? = none := by
+      show (checkBytesCore arr config).error? = none
+      exact h_core
+    exact done_no_error_implies_db_no_error (s₀.feedAll 0 arr) arr.size h_done_ok
+  -- Initial state properties
+  have h_init_ghost : ProofGhost s₀.db s₀.tokp := trivial
+  have h_init_inv : ParserStateInv s₀ :=
+    Metamath.ParserOps.initState_inv config
+  have h_init_no_err : s₀.db.error? = none := rfl
+  have h_init_no_dup : s₀.db.config.allowDuplicateFloat = false := h_no_dup
+  have h_init_strict : s₀.db.config.rejectUnknownSteps = true := h_strict
+  -- Feed events
+  have h_feed_events := feedAll_events_provable s₀ 0 arr
+    h_init_ghost h_init_inv h_init_no_err h_init_no_dup h_init_strict h_feedAll_no_err
+  -- Done flush event
+  have h_ghost_out := feedAll_maintains_ghost s₀ 0 arr
+    h_init_ghost h_init_inv h_init_no_err h_init_no_dup h_init_strict h_feedAll_no_err
+  have h_inv_out := feedAll_maintains_stateInv s₀ 0 arr
+    h_init_inv h_init_no_err h_init_no_dup h_feedAll_no_err
+  have h_done_event := eventProvableAt_of_ghost_inv (s₀.feedAll 0 arr)
+    h_ghost_out h_inv_out h_feedAll_no_err
+  exact ⟨h_feed_events, h_done_event⟩
+
+/-- Wrapper: `checkBytes` success implies the same prefix-provenance event-lift
+    established for `checkBytesCore`. -/
+theorem checkBytes_prefix_provenance (arr : ByteArray) (config : ModeConfig)
+    (h_strict : config.rejectUnknownSteps = true)
+    (h_no_dup : config.allowDuplicateFloat = false)
+    (h_success : (checkBytes arr config).error? = none) :
+    let s₀ : ParserState := { (default : ParserState) with
+      db := { (default : DB) with config := config } }
+    AllFeedAllEventsProvable 0 arr s₀ ∧
+    EventProvableAt (s₀.feedAll 0 arr) := by
+  have h_core_success : (checkBytesCore arr config).error? = none := by
+    by_cases h_core : (checkBytesCore arr config).error? = none
+    · exact h_core
+    · unfold checkBytes at h_success
+      simp [h_core] at h_success
+  exact checkBytesCore_prefix_provenance arr config h_strict h_no_dup h_core_success
+
+/-- Public eliminator (core): after successful `checkBytesCore`, any concrete
+    `FinishProofEvent` at the final `feedAll` state yields pre-insert `Spec.Provable`. -/
+theorem checkBytesCore_done_finishProofEvent_prefix_provable
+    (arr : ByteArray) (config : ModeConfig)
+    (h_strict : config.rejectUnknownSteps = true)
+    (h_no_dup : config.allowDuplicateFloat = false)
+    (h_success : (checkBytesCore arr config).error? = none) :
+    let s₀ : ParserState := { (default : ParserState) with
+      db := { (default : DB) with config := config } }
+    ∀ (pos : Nat) (tk : ByteSlice) (pr : ProofState),
+      FinishProofEvent (s₀.feedAll 0 arr) pos tk pr →
+      ∃ (Γ : Spec.Database) (fr : Spec.Frame),
+        toDatabase (s₀.feedAll 0 arr).db = some Γ ∧
+        toFrame (s₀.feedAll 0 arr).db (s₀.feedAll 0 arr).db.frame = some fr ∧
+        Spec.Provable Γ fr (toExpr pr.fmla) := by
+  intro s₀ pos tk pr h_evt
+  exact (checkBytesCore_prefix_provenance arr config h_strict h_no_dup h_success).2 pos tk pr h_evt
+
+/-- Public eliminator (`checkBytes`): after successful `checkBytes`, any concrete
+    `FinishProofEvent` at the final `feedAll` state yields pre-insert `Spec.Provable`. -/
+theorem checkBytes_done_finishProofEvent_prefix_provable
+    (arr : ByteArray) (config : ModeConfig)
+    (h_strict : config.rejectUnknownSteps = true)
+    (h_no_dup : config.allowDuplicateFloat = false)
+    (h_success : (checkBytes arr config).error? = none) :
+    let s₀ : ParserState := { (default : ParserState) with
+      db := { (default : DB) with config := config } }
+    ∀ (pos : Nat) (tk : ByteSlice) (pr : ProofState),
+      FinishProofEvent (s₀.feedAll 0 arr) pos tk pr →
+      ∃ (Γ : Spec.Database) (fr : Spec.Frame),
+        toDatabase (s₀.feedAll 0 arr).db = some Γ ∧
+        toFrame (s₀.feedAll 0 arr).db (s₀.feedAll 0 arr).db.frame = some fr ∧
+        Spec.Provable Γ fr (toExpr pr.fmla) := by
+  intro s₀ pos tk pr h_evt
+  exact (checkBytes_prefix_provenance arr config h_strict h_no_dup h_success).2 pos tk pr h_evt
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- Certified API: prefix-provenance under ModeConfig.prefixCertified
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+/-- Certified prefix provenance (`checkBytesCore`): under a `prefixCertified` config,
+    every feedToken finishProof event yields `Spec.Provable` in the pre-insertion DB. -/
+theorem checkBytesCore_prefix_provenance_certified (arr : ByteArray) (config : ModeConfig)
+    (h_cfg : config.prefixCertified)
+    (h_success : (checkBytesCore arr config).error? = none) :
+    let s₀ : ParserState := { (default : ParserState) with
+      db := { (default : DB) with config := config } }
+    AllFeedAllEventsProvable 0 arr s₀ ∧
+    EventProvableAt (s₀.feedAll 0 arr) :=
+  checkBytesCore_prefix_provenance arr config h_cfg.1 h_cfg.2 h_success
+
+/-- Certified prefix provenance (`checkBytes`): under a `prefixCertified` config,
+    every feedToken finishProof event yields `Spec.Provable` in the pre-insertion DB. -/
+theorem checkBytes_prefix_provenance_certified (arr : ByteArray) (config : ModeConfig)
+    (h_cfg : config.prefixCertified)
+    (h_success : (checkBytes arr config).error? = none) :
+    let s₀ : ParserState := { (default : ParserState) with
+      db := { (default : DB) with config := config } }
+    AllFeedAllEventsProvable 0 arr s₀ ∧
+    EventProvableAt (s₀.feedAll 0 arr) :=
+  checkBytes_prefix_provenance arr config h_cfg.1 h_cfg.2 h_success
+
+/-- Certified eliminator (`checkBytes`): under a `prefixCertified` config, any concrete
+    `FinishProofEvent` at the final `feedAll` state yields pre-insert `Spec.Provable`. -/
+theorem checkBytes_done_finishProofEvent_certified (arr : ByteArray) (config : ModeConfig)
+    (h_cfg : config.prefixCertified)
+    (h_success : (checkBytes arr config).error? = none) :
+    let s₀ : ParserState := { (default : ParserState) with
+      db := { (default : DB) with config := config } }
+    ∀ (pos : Nat) (tk : ByteSlice) (pr : ProofState),
+      FinishProofEvent (s₀.feedAll 0 arr) pos tk pr →
+      ∃ (Γ : Spec.Database) (fr : Spec.Frame),
+        toDatabase (s₀.feedAll 0 arr).db = some Γ ∧
+        toFrame (s₀.feedAll 0 arr).db (s₀.feedAll 0 arr).db.frame = some fr ∧
+        Spec.Provable Γ fr (toExpr pr.fmla) :=
+  checkBytes_done_finishProofEvent_prefix_provable arr config h_cfg.1 h_cfg.2 h_success
 
 end Metamath.PrefixWitnessCheckBytes

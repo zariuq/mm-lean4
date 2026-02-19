@@ -119,6 +119,34 @@ def permissive : ModeConfig := {
   allowTokenSplicing := true
 }
 
+/-- Sound default: Zar mode + reject incomplete proofs.
+    Minimal restriction needed for prefix-provenance (every accepted `$p` theorem
+    is `Spec.Provable` in the pre-insertion database). -/
+def soundDefault : ModeConfig := {
+  rejectUnknownSteps := true
+}
+
+/-- A config is prefix-certified when it rejects `?` steps and does not allow
+    duplicate `$f` hypotheses. These are the minimal conditions under which the
+    prefix-provenance event-lift theorems hold (see `PrefixWitnessCheckBytes`). -/
+def prefixCertified (c : ModeConfig) : Prop :=
+  c.rejectUnknownSteps = true ∧ c.allowDuplicateFloat = false
+
+theorem soundDefault_prefixCertified : prefixCertified soundDefault :=
+  ⟨rfl, rfl⟩
+
+theorem knife_prefixCertified : prefixCertified knife :=
+  ⟨rfl, rfl⟩
+
+theorem not_zar_prefixCertified : ¬ prefixCertified zar :=
+  fun ⟨h, _⟩ => by simp [zar] at h
+
+theorem not_exe_prefixCertified : ¬ prefixCertified exe :=
+  fun ⟨h, _⟩ => by simp [exe] at h
+
+theorem not_permissive_prefixCertified : ¬ prefixCertified permissive :=
+  fun ⟨h, _⟩ => by simp [permissive] at h
+
 end ModeConfig
 
 /-- Legacy enum for CLI convenience -/
@@ -127,6 +155,7 @@ inductive VerifierMode where
   | knife
   | exe
   | permissive
+  | soundDefault
   deriving DecidableEq, Repr, Inhabited
 
 namespace VerifierMode
@@ -136,6 +165,7 @@ def toConfig : VerifierMode → ModeConfig
   | .knife => ModeConfig.knife
   | .exe => ModeConfig.exe
   | .permissive => ModeConfig.permissive
+  | .soundDefault => ModeConfig.soundDefault
 
 end VerifierMode
 

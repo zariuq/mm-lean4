@@ -1887,15 +1887,26 @@ theorem toFrame_vars_from_var (db : Verify.DB) (fr_impl : Verify.Frame) (fr_spec
       -- Now we have v_hyp = Variable.mk (toSym (Sym.var v_str))
       refine ⟨v_str, h_v_from_var⟩
 
-/-- ✅ Phase 4: Convert DB to spec Database (IMPLEMENTED) -/
-def toDatabase (db : Verify.DB) : Option Spec.Database :=
-  some (fun label : String =>
+/-- ✅ Phase 4: Total conversion from implementation DB to spec Database.
+
+`toDatabaseTotal` is total by construction. The legacy `toDatabase : Option _`
+wrapper is retained for backwards compatibility with existing theorem statements. -/
+def toDatabaseTotal (db : Verify.DB) : Spec.Database :=
+  fun label : String =>
     match db.find? label with
     | some (.assert f fr_impl _) =>
         match toFrame db fr_impl, toExprOpt f with
         | some fr_spec, some e_spec => some (fr_spec, e_spec)
         | _, _ => none
-    | _ => none)
+    | _ => none
+
+/-- Backward-compatible Option wrapper around `toDatabaseTotal`. -/
+def toDatabase (db : Verify.DB) : Option Spec.Database :=
+  some (toDatabaseTotal db)
+
+/-- `toDatabase` is definitionally `some` of the total conversion. -/
+theorem toDatabase_eq_some_total (db : Verify.DB) :
+    toDatabase db = some (toDatabaseTotal db) := rfl
 
 /-- Extract the global constant set from the implementation DB. -/
 def toConsts (db : Verify.DB) : Spec.ConstSet :=
@@ -1913,7 +1924,7 @@ theorem toDatabase_lookup
   unfold toDatabase at h_db
   injection h_db with h_Γ
   rw [← h_Γ] at h_lookup
-  simp only at h_lookup
+  simp [toDatabaseTotal] at h_lookup
   cases h_find : db.find? l with
   | none =>
       simp [h_find] at h_lookup
@@ -7426,7 +7437,7 @@ theorem stepNormal_sound
       obtain ⟨fr_assert, h_fr_assert⟩ := toFrame_some_of_wfFrame_any db fr_impl h_frame_wf
       have h_db_lookup : Γ label = some (fr_assert, e_assert) := by
         cases h_db
-        simp [h_find, h_fr_assert, h_expr]
+        simp [toDatabaseTotal, h_find, h_fr_assert, h_expr]
       obtain ⟨stack_new, _e_concl, steps_new, h_inv', _h_stack⟩ :=
         assert_step_ok db pr pr' label Γ fr stack_spec steps fr_assert e_assert f_impl fr_impl name
           h_inv h_success h_db_wf h_frame_wf h_find h_fr_assert h_expr h_formula_wf h_db_lookup h_step
@@ -9992,7 +10003,7 @@ theorem foldlM_proofSteps_complete
         -- Now Γ_arg = (fun label => match db_arg.find? label with ...)
         -- So h_Γ_lookup : Γ_arg l_arg = some (fr'_arg, e'_arg)
         rw [← h_Γ_def] at h_Γ_lookup
-        simp only at h_Γ_lookup
+        simp [toDatabaseTotal] at h_Γ_lookup
         -- Case analysis on db_arg.find? l_arg
         cases h_find : db_arg.find? l_arg with
         | none => simp [h_find] at h_Γ_lookup
@@ -11333,7 +11344,7 @@ theorem toDatabase_insert_subset
     unfold toDatabase at h_Γ
     injection h_Γ with h_Γ_eq
     rw [← h_Γ_eq] at h_lookup
-    simp only at h_lookup
+    simp [toDatabaseTotal] at h_lookup
     rw [h_eq] at h_lookup
     cases h_find : db.find? new_label with
     | none => simp [h_find] at h_lookup
@@ -11347,7 +11358,7 @@ theorem toDatabase_insert_subset
     injection h_Γ' with h_Γ'_eq
     rw [← h_Γ_eq] at h_lookup
     rw [← h_Γ'_eq]
-    simp only at h_lookup ⊢
+    simp [toDatabaseTotal] at h_lookup ⊢
     rw [Metamath.ParserCorrectness.insert_preserves_find?_ne db pos new_label l obj h_eq]
     cases h_find : db.find? l with
     | none => simp [h_find] at h_lookup
@@ -11382,4 +11393,3 @@ theorem provable_lifts_across_insert
 end PhaseC1_InsertMonotonicity
 
 end Metamath.Kernel
-

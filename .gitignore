@@ -47,3 +47,9 @@ results/
 .parserops_*.log
 .kernelclean_*.log
 .full_build_*.log
+
+# LaTeX build artifacts
+lean-mm4.aux
+lean-mm4.log
+lean-mm4.out
+lean-mm4.toc
