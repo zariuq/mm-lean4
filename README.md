@@ -34,7 +34,7 @@ Pinned in `lakefile.lean`:
 - **Build**: 129 jobs, 0 errors
 - **Test suite**: 151/151 (default), 141/141 (small-only)
 
-Detailed status: `CURRENT_STATUS.md`. To verify directly: `rg -n "sorry" Metamath/`
+To verify directly: `rg -n "sorry" Metamath/`
 
 ## Correctness
 
