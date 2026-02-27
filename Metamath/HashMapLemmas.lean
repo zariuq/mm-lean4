@@ -11,6 +11,7 @@ of insertions, we can find what we inserted. This module provides the machinery.
 
 import Batteries.Data.HashMap
 import Metamath.Verify
+import Metamath.VerifyDBThms
 import Metamath.ParserInvariants
 import Metamath.WellFormedness
 
@@ -680,4 +681,3 @@ theorem subst_preserved_on_success
     fmla #[] h_success
 
 end Metamath.HashMapLemmas
-

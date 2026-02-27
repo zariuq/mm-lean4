@@ -22,6 +22,7 @@ assumption. This mirrors `normal_proof_full_provenance` for compressed proofs.
 -/
 
 import Metamath.PrefixProvenance
+import Metamath.VerifyParserStateThms
 
 set_option autoImplicit false
 

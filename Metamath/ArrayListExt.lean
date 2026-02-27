@@ -15,6 +15,32 @@ import Batteries.Data.Array.Lemmas
 set_option linter.unnecessarySimpa false
 set_option linter.unusedSimpArgs false
 
+namespace Array
+
+/-- Total index equals partial index when in-bounds (Nat version). -/
+@[simp] theorem getBang_eq_get_nat (a : Array α) (i : Nat) (h : i < a.size) [Inhabited α] :
+  a[i]! = a[i]'h := by
+  simp only [getElem!_pos, h]
+
+/-- Length bridge: arrays and their lists have the same length. -/
+@[simp] theorem toList_length (a : Array α) : a.toList.length = a.size := by
+  rfl
+
+/-- Characterize `get? = some` without `Inhabited`: unfold `get?`. -/
+@[simp] theorem get?_eq_some_iff {a : Array α} {i : Nat} {x : α} :
+    a[i]? = some x ↔ ∃ h : i < a.size, a[i]'h = x := by
+  simp only [getElem?_def]
+  by_cases h : i < a.size
+  · simp [h]
+  · simp [h]
+
+/-- Bridge `Array.get!` to `List.get!` under a bound. -/
+@[simp] theorem get!_toList' {α} [Inhabited α]
+    (a : Array α) (i : Nat) (h : i < a.size) :
+    a[i]! = a.toList[i]! := by
+  simp [getElem_toList, h]
+
+end Array
 
 /-! ## List helpers -/
 
@@ -815,4 +841,3 @@ theorem window_toList_map {α β} (a : Array α) (off len : Nat)
   simp [List.extract]
 
 end Array
-

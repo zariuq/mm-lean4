@@ -17,6 +17,7 @@ Future parser refactors can adopt these incrementally, one gate at a time.
 -/
 
 import Metamath.Verify
+import Metamath.VerifyDBThms
 
 namespace Metamath.Guard
 

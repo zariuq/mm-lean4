@@ -14,6 +14,7 @@ Goal: eliminate sorries without introducing axioms.
 import Metamath.Spec
 import Metamath.Spec.Equivalence
 import Metamath.Verify
+import Metamath.VerifyDBThms
 import Metamath.KernelExtras
 import Metamath.HashMapLemmas
 import Metamath.Bridge.Basics

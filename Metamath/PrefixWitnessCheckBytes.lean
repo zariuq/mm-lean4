@@ -32,6 +32,7 @@ Key changes:
 -/
 
 import Metamath.ParserEquivalence
+import Metamath.VerifyParserStateThms
 
 set_option autoImplicit false
 

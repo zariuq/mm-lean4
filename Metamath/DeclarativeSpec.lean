@@ -439,7 +439,7 @@ inductive Provable (axs : Statement → Prop) (Γ : Context) : Formula → Prop
   /-- Use an essential hypothesis directly -/
   | hyp (h) : h ∈ Γ.hyps → Provable axs Γ h
   /-- Use a floating hypothesis (variable typing) -/
-  | var (v:VR) : v.vhyp ∈ Γ.hyps → Provable axs Γ v
+  | var (v:VR) : Provable axs Γ v
   /-- Apply an axiom with substitution σ, proving all hypotheses -/
   | ax (σ) {ax} : axs ax → ax.ctx.dj.subst σ Γ.dj →
     (∀ h ∈ ax.ctx.hyps, Provable axs Γ (h.subst σ)) →
@@ -450,7 +450,7 @@ theorem Provable.mono {axs₁ axs₂} (haxs : ∀ a, axs₁ a → axs₂ a)
     {Γ₁ Γ₂} (hΓ : Γ₁ ≤ Γ₂) {e} (pr : Provable axs₁ Γ₁ e) : Provable axs₂ Γ₂ e := by
   induction pr with
   | hyp e h => exact hyp e (hΓ.1 _ h)
-  | var v h => exact var v (hΓ.1 _ h)
+  | var v => exact var v
   | ax σ ha h₁ _ _ IH_h IH_v =>
     exact ax σ (haxs _ ha) (h₁.mono (DJ.refl _) hΓ.2)
       (fun h hm => IH_h h hm) (fun v vm => IH_v v vm)
@@ -492,7 +492,7 @@ def Statement.WellFormed (s : Statement) : Prop :=
   ∀ v ∈ s.vars, v.vhyp ∈ s.ctx.hyps
 
 theorem Provable.ax_self (axs : Statement → Prop) {ax} (H : axs ax)
-    (h_wf : ax.WellFormed) : ax.Provable' axs := by
+    (_h_wf : ax.WellFormed) : ax.Provable' axs := by
   have := Provable.ax (Γ := ax.ctx) VR.expr H ?disj ?hyp ?var
   rw [Formula.subst_id] at this; exact this
   case disj =>
@@ -505,20 +505,19 @@ theorem Provable.ax_self (axs : Statement → Prop) {ax} (H : axs ax)
     exact .hyp h h_in
   case var =>
     intro v v_in
-    -- VR.expr v = [var v], so (v.type, VR.expr v) = v.vhyp
-    -- By h_wf: v ∈ ax.vars → v.vhyp ∈ ax.ctx.hyps
     show Provable axs ax.ctx (v.type, VR.expr v)
-    exact .var v (h_wf v v_in)
+    exact .var v
 
-/-- Substitution through a proof. With the new `var` requiring membership,
-    the variable case is subsumed by the hypothesis case. -/
+/-- Substitution through a proof. -/
 theorem Provable.trans' {axs Γ} (σ) {Γ' fmla} (pr : Provable axs Γ' fmla)
     (dj : Γ'.dj.subst σ Γ.dj)
-    (hh : ∀ h ∈ Γ'.hyps, Provable axs Γ (h.subst σ)) :
+    (hh : ∀ h ∈ Γ'.hyps, Provable axs Γ (h.subst σ))
+    (hv : ∀ v, Provable axs Γ (v.type, σ v)) :
     Provable axs Γ (fmla.subst σ) := by
   induction pr with
   | hyp f h => exact hh f h
-  | var v h_in => exact hh v.vhyp h_in
+  | var v =>
+      simpa [VR.vhyp, Formula.subst, Expr.subst, Expr, List.append_nil] using (hv v)
   | @ax σ' a ha dj' _ _ IH_h IH_v =>
     rw [← Formula.subst_tr]
     apply ax (subst.trans σ' σ) ha
@@ -541,6 +540,7 @@ theorem Provable.trans' {axs Γ} (σ) {Γ' fmla} (pr : Provable axs Γ' fmla)
 theorem Provable.trans'' {axs Γ σ} (s : Statement) : s.Provable' axs →
     s.ctx.dj.subst σ Γ.dj →
     (∀ h ∈ s.ctx.hyps, Provable axs Γ (h.subst σ)) →
+    (∀ v, Provable axs Γ (v.type, σ v)) →
     Provable axs Γ (s.fmla.subst σ) :=
   Provable.trans' (axs := axs) σ
 
@@ -562,8 +562,8 @@ instance (s : String) [Subst σ e e'] : Subst σ (e ++ s) (e' ++ s) :=
 
 def subst.ok (axs Γ) (σ : VR → Expr) := ∀ v, Provable axs Γ (v.type, σ v)
 
-theorem subst.ok.nil {axs Γ} (h : ∀ v : VR, v.vhyp ∈ Γ.hyps) : subst.ok axs Γ (subst_of []) :=
-  fun v => Provable.var v (h v)
+theorem subst.ok.nil {axs Γ} : subst.ok axs Γ (subst_of []) :=
+  fun v => Provable.var v
 theorem subst.ok.cons {axs Γ e σ} (x) (h₁ : Provable axs Γ (x.type, e))
     (h₂ : subst.ok axs Γ (subst_of σ)) : subst.ok axs Γ (subst_of ((x, e)::σ)) := by
   intro v
@@ -574,14 +574,12 @@ theorem subst.ok.cons {axs Γ e σ} (x) (h₁ : Provable axs Γ (x.type, e))
 
 theorem Provable.thm {axs} {Γ : Context}
     {σ : VR → Expr} {dj hyps c s} (pr : Provable axs (Context.mk' dj hyps) (c, s))
-    (_hv : subst.ok axs Γ σ)  -- No longer needed: variable typing now in ax constructor
+    (hv : subst.ok axs Γ σ)
     (dj : (DJ.mk' dj).subst σ Γ.dj)
     (hh : ∀ h ∈ hyps, Provable axs Γ (h.subst σ))
     {e} [inst : Subst σ s e] : Provable axs Γ (c, e) := by
   rw [← inst.out]
-  -- The source context is Context.mk' dj hyps, so its hyps field is exactly `hyps`
-  -- Provable.var now requires v.vhyp ∈ hyps, so all hyps are covered by hh
-  refine Metamath.Provable.trans' σ pr dj ?_
+  refine Metamath.Provable.trans' σ pr dj ?_ hv
   intro h h_in
   exact hh h h_in
 

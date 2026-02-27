@@ -15,6 +15,12 @@ error-code ↔ evidence-shape correspondence.
 -/
 
 import Metamath.Verify
+import Metamath.VerifyDBSemanticThms
+import Metamath.VerifyDBPayloadThms
+import Metamath.VerifyIncludeThms
+import Metamath.VerifyPackagingThms
+import Metamath.VerifyProofGuardThms
+import Metamath.VerifyScopeThms
 
 set_option autoImplicit false
 

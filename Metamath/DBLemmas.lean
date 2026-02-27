@@ -6,6 +6,7 @@ These lemmas establish basic properties of mkError, find?, withHyps, etc.
 -/
 
 import Metamath.Verify
+import Metamath.VerifyDBThms
 
 namespace Metamath.DBLemmas
 
@@ -215,4 +216,3 @@ theorem insert_preserves_no_error (db : DB) (pos : Pos) (label : String) (obj : 
     simp_all
 
 end Metamath.DBLemmas
-

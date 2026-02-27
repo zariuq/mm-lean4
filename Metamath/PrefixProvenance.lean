@@ -26,6 +26,7 @@ multiple feedToken calls to the foldlM hypothesis of verify_impl_sound.
 -/
 
 import Metamath.Verify
+import Metamath.VerifyDBThms
 import Metamath.KernelClean
 import Metamath.ParserOperations
 
