@@ -450,8 +450,9 @@ theorem checkExpandedResult_insideStatement_implies_frontendNotAdmissible_of_gat
     simp [h_allow, h_stmt]
   simp [h_rhs_true] at h_rhs_false
 
-/-- IO-entry include in-inner-scope expansion error binds `check` result and front-end inadmissibility. -/
-theorem check_inInnerScope_of_expandIncludes_error_implies_frontendNotAdmissible
+/-- Two-pass legacy bridge: include in-inner-scope expansion error binds result and
+front-end inadmissibility. -/
+theorem checkTwoPassLegacy_inInnerScope_error_implies_frontendNotAdmissible
     (fname : String) (config : ModeConfig) (pos depth : Nat) (inStatement : Bool)
     (h_expand :
       expandIncludes fname
@@ -459,12 +460,12 @@ theorem check_inInnerScope_of_expandIncludes_error_implies_frontendNotAdmissible
         pure (.error (.inInnerScope pos depth inStatement config.allowIncludeInnerScope)))
     (h_allow : config.allowIncludeInnerScope = false)
     (h_depth : depth ≠ 0) :
-    check fname config =
+    checkTwoPassLegacy fname config =
       pure (checkExpandedResult config
         (.error (.inInnerScope pos depth inStatement config.allowIncludeInnerScope))) ∧
     ¬ IncludeDirectiveAdmissible (ModeConfig.toIncludePolicy config) depth inStatement := by
   constructor
-  · unfold check
+  · unfold checkTwoPassLegacy
     rw [h_expand]
     rfl
   · have h_code :
@@ -475,8 +476,27 @@ theorem check_inInnerScope_of_expandIncludes_error_implies_frontendNotAdmissible
     exact checkExpandedResult_inInnerScope_implies_frontendNotAdmissible
       config pos depth inStatement h_allow h_depth h_code
 
-/-- IO-entry include inside-statement expansion error binds `check` result and front-end inadmissibility. -/
-theorem check_insideStatement_of_expandIncludes_error_implies_frontendNotAdmissible
+/-- Backward-compatible legacy theorem alias.
+Prefer `checkSinglePass_inInnerScope_error_implies_frontendNotAdmissible`
+for new single-pass integrations. -/
+theorem check_inInnerScope_of_expandIncludes_error_implies_frontendNotAdmissible
+    (fname : String) (config : ModeConfig) (pos depth : Nat) (inStatement : Bool)
+    (h_expand :
+      expandIncludes fname
+        (Std.HashSet.emptyWithCapacity 16) (Std.HashSet.emptyWithCapacity 16) config =
+        pure (.error (.inInnerScope pos depth inStatement config.allowIncludeInnerScope)))
+    (h_allow : config.allowIncludeInnerScope = false)
+    (h_depth : depth ≠ 0) :
+    checkTwoPassLegacy fname config =
+      pure (checkExpandedResult config
+        (.error (.inInnerScope pos depth inStatement config.allowIncludeInnerScope))) ∧
+    ¬ IncludeDirectiveAdmissible (ModeConfig.toIncludePolicy config) depth inStatement :=
+  checkTwoPassLegacy_inInnerScope_error_implies_frontendNotAdmissible
+    fname config pos depth inStatement h_expand h_allow h_depth
+
+/-- Two-pass legacy bridge: include inside-statement expansion error binds result and
+front-end inadmissibility. -/
+theorem checkTwoPassLegacy_insideStatement_error_implies_frontendNotAdmissible
     (fname : String) (config : ModeConfig) (pos scopeDepth : Nat) (inStatement : Bool)
     (h_expand :
       expandIncludes fname
@@ -484,12 +504,12 @@ theorem check_insideStatement_of_expandIncludes_error_implies_frontendNotAdmissi
         pure (.error (.insideStatement pos scopeDepth inStatement config.allowTokenSplicing)))
     (h_allow : config.allowTokenSplicing = false)
     (h_stmt : inStatement = true) :
-    check fname config =
+    checkTwoPassLegacy fname config =
       pure (checkExpandedResult config
         (.error (.insideStatement pos scopeDepth inStatement config.allowTokenSplicing))) ∧
     ¬ IncludeDirectiveAdmissible (ModeConfig.toIncludePolicy config) scopeDepth inStatement := by
   constructor
-  · unfold check
+  · unfold checkTwoPassLegacy
     rw [h_expand]
     rfl
   · have h_code :
@@ -499,6 +519,78 @@ theorem check_insideStatement_of_expandIncludes_error_implies_frontendNotAdmissi
       simp [checkExpandedResult, includePreprocessErrorDB_parseErrorCode, IncludeError.code]
     exact checkExpandedResult_insideStatement_implies_frontendNotAdmissible
       config pos scopeDepth inStatement h_allow h_stmt h_code
+
+/-- Single-pass bridge: include in-inner-scope result binds output DB and
+front-end inadmissibility. -/
+theorem checkSinglePass_inInnerScope_error_implies_frontendNotAdmissible
+    (fname : String) (config : ModeConfig) (pos depth : Nat) (inStatement : Bool)
+    (h_run :
+      singlePassInitialResult fname config =
+        pure (.error (.inInnerScope pos depth inStatement config.allowIncludeInnerScope)))
+    (h_allow : config.allowIncludeInnerScope = false)
+    (h_depth : depth ≠ 0) :
+    checkSinglePass fname config =
+      pure (includePreprocessErrorDB config
+        (.inInnerScope pos depth inStatement config.allowIncludeInnerScope)) ∧
+    ¬ IncludeDirectiveAdmissible (ModeConfig.toIncludePolicy config) depth inStatement := by
+  constructor
+  · unfold checkSinglePass
+    rw [h_run]
+    rfl
+  · have h_code :
+        (checkExpandedResult config
+          (.error (.inInnerScope pos depth inStatement config.allowIncludeInnerScope))).parseErrorCode? =
+          some .includeInInnerScope := by
+      simp [checkExpandedResult, includePreprocessErrorDB_parseErrorCode, IncludeError.code]
+    exact checkExpandedResult_inInnerScope_implies_frontendNotAdmissible
+      config pos depth inStatement h_allow h_depth h_code
+
+/-- Single-pass bridge: include inside-statement result binds output DB and
+front-end inadmissibility. -/
+theorem checkSinglePass_insideStatement_error_implies_frontendNotAdmissible
+    (fname : String) (config : ModeConfig) (pos scopeDepth : Nat) (inStatement : Bool)
+    (h_run :
+      singlePassInitialResult fname config =
+        pure (.error (.insideStatement pos scopeDepth inStatement config.allowTokenSplicing)))
+    (h_allow : config.allowTokenSplicing = false)
+    (h_stmt : inStatement = true) :
+    checkSinglePass fname config =
+      pure (includePreprocessErrorDB config
+        (.insideStatement pos scopeDepth inStatement config.allowTokenSplicing)) ∧
+    ¬ IncludeDirectiveAdmissible (ModeConfig.toIncludePolicy config) scopeDepth inStatement := by
+  constructor
+  · unfold checkSinglePass
+    rw [h_run]
+    rfl
+  · have h_code :
+        (checkExpandedResult config
+          (.error (.insideStatement pos scopeDepth inStatement config.allowTokenSplicing))).parseErrorCode? =
+          some .includeInsideStatement := by
+      simp [checkExpandedResult, includePreprocessErrorDB_parseErrorCode, IncludeError.code]
+    exact checkExpandedResult_insideStatement_implies_frontendNotAdmissible
+      config pos scopeDepth inStatement h_allow h_stmt h_code
+
+/-- Backward-compatible legacy theorem alias.
+Prefer `checkSinglePass_insideStatement_error_implies_frontendNotAdmissible`
+for new single-pass integrations. -/
+theorem check_insideStatement_of_expandIncludes_error_implies_frontendNotAdmissible
+    (fname : String) (config : ModeConfig) (pos scopeDepth : Nat) (inStatement : Bool)
+    (h_expand :
+      expandIncludes fname
+        (Std.HashSet.emptyWithCapacity 16) (Std.HashSet.emptyWithCapacity 16) config =
+        pure (.error (.insideStatement pos scopeDepth inStatement config.allowTokenSplicing)))
+    (h_allow : config.allowTokenSplicing = false)
+    (h_stmt : inStatement = true) :
+    checkTwoPassLegacy fname config =
+      pure (checkExpandedResult config
+        (.error (.insideStatement pos scopeDepth inStatement config.allowTokenSplicing))) ∧
+    ¬ IncludeDirectiveAdmissible (ModeConfig.toIncludePolicy config) scopeDepth inStatement :=
+  checkTwoPassLegacy_insideStatement_error_implies_frontendNotAdmissible
+    fname config pos scopeDepth inStatement h_expand h_allow h_stmt
+
+/-- Default IO checker aliases the single-pass include driver. -/
+@[simp] theorem check_eq_checkSinglePass (fname : String) (config : ModeConfig) :
+    check fname config = checkSinglePass fname config := rfl
 
 end Metamath.Verify.FrontendBridge
 
@@ -540,7 +632,8 @@ export Metamath.Verify.FrontendBridge
    checkExpandedResult_inInnerScope_implies_frontendNotAdmissible_of_gate
    checkExpandedResult_insideStatement_implies_frontendNotAdmissible
    checkExpandedResult_insideStatement_implies_frontendNotAdmissible_of_gate
-   check_inInnerScope_of_expandIncludes_error_implies_frontendNotAdmissible
-   check_insideStatement_of_expandIncludes_error_implies_frontendNotAdmissible)
+   checkSinglePass_inInnerScope_error_implies_frontendNotAdmissible
+   checkSinglePass_insideStatement_error_implies_frontendNotAdmissible
+   check_eq_checkSinglePass)
 
 end Metamath.FrontendBridge
