@@ -2218,9 +2218,26 @@ end AllCodeRuleClauseTheorems
 -- Two sets track include state:
 -- - `processing`: Files currently being processed (call stack) - for cycle detection
 -- - `seen`: All files ever fully processed - for duplicate ignore
+/-- Pure include scanner output:
+- `.bytes chunk`: emit parser bytes directly.
+- `.needInclude path`: request include expansion of `path` relative to current file. -/
+inductive IncludeScanChunk where
+  | bytes (chunk : ByteArray)
+  | needInclude (path : String)
+  deriving Inhabited
+
+/-- Explicit include-driver stack frame for single-pass include processing. -/
+structure IncludeDriverFrame where
+  fname : String
+  canonStr : String
+  chunks : List IncludeScanChunk
+  nextDepth : Nat
+  needsSep : Bool := false
+  deriving Inhabited
+
 def scanIncludes (contents : ByteArray) (fname : String) (config : ModeConfig := {}) :
-    Except IncludeError (List (Sum ByteArray String)) := Id.run do
-  let mut chunks : List (Sum ByteArray String) := []
+    Except IncludeError (List IncludeScanChunk) := Id.run do
+  let mut chunks : List IncludeScanChunk := []
   let mut buf : ByteArray := ByteArray.empty
   let mut i := 0
   let mut scopeDepth := 0  -- Track ${ $} nesting
@@ -2312,16 +2329,16 @@ def scanIncludes (contents : ByteArray) (fname : String) (config : ModeConfig :=
 
       -- Flush buffered bytes before the include
       if !buf.isEmpty then
-        chunks := chunks.concat (.inl buf)
+        chunks := chunks.concat (.bytes buf)
         buf := ByteArray.empty
-      chunks := chunks.concat (.inr includeFile)
+      chunks := chunks.concat (.needInclude includeFile)
       continue
     else
       buf := buf.push contents[i]!
       i := i + 1
 
   if !buf.isEmpty then
-    chunks := chunks.concat (.inl buf)
+    chunks := chunks.concat (.bytes buf)
   return .ok chunks
 
 def expandIncludes (fname : String) (processing seen : HashSet String)
@@ -2362,9 +2379,9 @@ def expandIncludes (fname : String) (processing seen : HashSet String)
           let mut seen := seen  -- Make seen mutable to thread through
           for chunk in chunks do
             match chunk with
-            | .inl bytes =>
+            | .bytes bytes =>
                 result := result ++ bytes
-            | .inr includeFile =>
+            | .needInclude includeFile =>
                 -- Resolve relative path (relative to current file's directory)
                 let baseDir := System.FilePath.parent fname |>.getD "."
                 let fullPath := baseDir / includeFile
@@ -2401,12 +2418,178 @@ def checkExpandedResult (config : ModeConfig)
   | .error err => includePreprocessErrorDB config err
   | .ok (processed, _) => checkBytes processed config
 
-def check (fname : String) (config : ModeConfig := {}) : IO DB := do
+/-- Feed one contiguous byte chunk into the parser state and advance absolute base offset. -/
+@[inline] def flushChunkToParser (s : ParserState) (base : Nat) (chunk : ByteArray) :
+    ParserState × Nat :=
+  if chunk.isEmpty then
+    (s, base)
+  else
+    let s := s.feedAll base chunk
+    (s, base + chunk.size)
+
+/-- Single-pass include-aware parser driver parameterized by filesystem hooks.
+Reads each file once, scans `$[ ... $]` directives on the fly, and streams non-include
+bytes directly into `ParserState.feedAll`. Recursive include traversal is bounded by
+`depth` (from `ModeConfig.maxIncludeDepth`). -/
+def processFileSinglePassWithIO
+    (realPath : String → IO System.FilePath)
+    (readFile : String → IO ByteArray)
+    (fname : String) (processing seen : HashSet String)
+    (config : ModeConfig) (depth : Nat)
+    (s0 : ParserState) (base0 : Nat) :
+    IO (Except IncludeError (ParserState × Nat × HashSet String)) := do
+  let prepareFrame (fname : String) (depth : Nat)
+      (processing seen : HashSet String) :
+      IO (Except IncludeError
+        (Option IncludeDriverFrame × HashSet String × HashSet String)) := do
+    match depth with
+    | 0 =>
+        return .error (.cycleDetected s!"include depth limit exceeded in {fname}")
+    | depth + 1 =>
+        let canonPath ← realPath fname
+        let canonStr := canonPath.toString
+        if processing.contains canonStr then
+          return .error (.cycleDetected canonStr)
+        if seen.contains canonStr then
+          return .ok (none, processing, seen)
+        let processing := processing.insert canonStr
+        let seen := seen.insert canonStr
+        let contents ← readFile fname
+        match scanIncludes contents fname config with
+        | .error err =>
+            return .error err
+        | .ok chunks =>
+            return .ok
+              (some {
+                fname := fname
+                canonStr := canonStr
+                chunks := chunks
+                nextDepth := depth
+              }, processing, seen)
+
+  match ← prepareFrame fname depth processing seen with
+  | .error err =>
+      return .error err
+  | .ok (none, _, seen) =>
+      return .ok (s0, base0, seen)
+  | .ok (some rootFrame, processing, seen) =>
+      let mut stack : List IncludeDriverFrame := [rootFrame]
+      let mut processing := processing
+      let mut seen := seen
+      let mut s := s0
+      let mut base := base0
+
+      while !stack.isEmpty do
+        match stack with
+        | [] =>
+            pure ()
+        | frame :: rest =>
+            if frame.needsSep then
+              let sep := ByteArray.empty.push ' '.toUInt8
+              let (s1, base1) := flushChunkToParser s base sep
+              s := s1
+              base := base1
+              if s.db.error then
+                return .ok (s, base, seen)
+              stack := { frame with needsSep := false } :: rest
+            else
+              match frame.chunks with
+              | [] =>
+                  processing := processing.erase frame.canonStr
+                  stack := rest
+              | chunk :: tail =>
+                  match chunk with
+                  | .bytes bytes =>
+                      let (s1, base1) := flushChunkToParser s base bytes
+                      s := s1
+                      base := base1
+                      if s.db.error then
+                        return .ok (s, base, seen)
+                      stack := { frame with chunks := tail } :: rest
+                  | .needInclude includeFile =>
+                      let baseDir := System.FilePath.parent frame.fname |>.getD "."
+                      let fullPath := baseDir / includeFile
+                      let parentFrame := { frame with chunks := tail, needsSep := true }
+                      try
+                        match ← prepareFrame fullPath.toString frame.nextDepth processing seen with
+                        | .error err =>
+                            return .error err
+                        | .ok (none, processing', seen') =>
+                            processing := processing'
+                            seen := seen'
+                            stack := parentFrame :: rest
+                        | .ok (some childFrame, processing', seen') =>
+                            processing := processing'
+                            seen := seen'
+                            stack := childFrame :: parentFrame :: rest
+                      catch e =>
+                        return .error (.readFailure includeFile fullPath.toString e.toString)
+      return .ok (s, base, seen)
+
+/-- Default single-pass include-aware parser driver using filesystem reads. -/
+def processFileSinglePass (fname : String) (processing seen : HashSet String)
+    (config : ModeConfig) (depth : Nat)
+    (s0 : ParserState) (base0 : Nat) :
+    IO (Except IncludeError (ParserState × Nat × HashSet String)) :=
+  processFileSinglePassWithIO
+    (fun path => IO.FS.realPath path)
+    (fun path => IO.FS.readBinFile path)
+    fname processing seen config depth s0 base0
+
+/-- Pure post-processing for single-pass include results. -/
+def finalizeSinglePassResult (config : ModeConfig)
+    (result : Except IncludeError (ParserState × Nat × HashSet String)) : DB :=
+  match result with
+  | .error err =>
+      includePreprocessErrorDB config err
+  | .ok (s, base, _) =>
+      let db := s.done base
+      if db.error? = none then
+        if (db.config.allowDuplicateFloat || db.wellFormed?) && db.assertDvVarsInFrame? then
+          db
+        else
+          db.mkErrorFromEvidence ⟨0, 0⟩
+            (.internalGate db.config.allowDuplicateFloat db.wellFormed? db.assertDvVarsInFrame?)
+      else
+        db
+
+/-- Canonical initial DB used by single-pass IO entrypoints. -/
+@[inline] def singlePassInitialDB (config : ModeConfig) : DB :=
+  { (default : DB) with config := config }
+
+/-- Canonical initial parser state used by single-pass IO entrypoints. -/
+@[inline] def singlePassInitialState (config : ModeConfig) : ParserState :=
+  { (default : ParserState) with db := singlePassInitialDB config }
+
+/-- Canonical initial single-pass include-processing invocation. -/
+@[inline] def singlePassInitialResult (fname : String) (config : ModeConfig) :
+    IO (Except IncludeError (ParserState × Nat × HashSet String)) :=
+  processFileSinglePass
+    fname
+    (HashSet.emptyWithCapacity 16)
+    (HashSet.emptyWithCapacity 16)
+    config
+    config.maxIncludeDepth
+    (singlePassInitialState config)
+    0
+
+/-- IO entrypoint using single-pass include scanning + parser streaming.
+This keeps include recursion bounded and avoids materializing a fully expanded
+byte array before parsing. -/
+def checkSinglePass (fname : String) (config : ModeConfig := {}) : IO DB := do
+  let result ← singlePassInitialResult fname config
+  return finalizeSinglePassResult config result
+
+def checkTwoPassLegacy (fname : String) (config : ModeConfig := {}) : IO DB := do
   -- Expand all includes recursively with config awareness
   -- processing = {} (call stack for cycle detection)
   -- seen = {} (all files ever processed for duplicate detection)
   let expanded ← expandIncludes fname (HashSet.emptyWithCapacity 16) (HashSet.emptyWithCapacity 16) config config.maxIncludeDepth
   return checkExpandedResult config expanded
+
+/-- Default IO entrypoint (single-pass include handling). -/
+def check (fname : String) (config : ModeConfig := {}) : IO DB :=
+  checkSinglePass fname config
 
 end Verify
 end Metamath

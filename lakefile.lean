@@ -36,7 +36,7 @@ lean_lib Metamath where
   -- Tests.ParserInvariantTests: Executable verification tests
   -- PrefixWitnessCheckBytes: Ghost propagation for prefix-provenance (feed/feedAll)
   -- ParserEquivalenceExamples: Import/use example for canonical API surface
-  roots := #[`Metamath.Spec, `Metamath.ByteSliceCompat, `Metamath.Verify, `Metamath.VerifyClauseThms, `Metamath.VerifyConformanceThms, `Metamath.VerifyDBThms, `Metamath.VerifyDBConfigThms, `Metamath.VerifyDBCheckHypThms, `Metamath.VerifyDBPredicateThms, `Metamath.VerifyDBPayloadThms, `Metamath.VerifyDBSemanticThms, `Metamath.VerifyDoneThms, `Metamath.VerifyEvidenceThms, `Metamath.VerifyIncludeThms, `Metamath.VerifyPackagingThms, `Metamath.VerifyProofGuardThms, `Metamath.VerifyRuleCaseThms, `Metamath.VerifyScopeThms, `Metamath.VerifyStabilityThms, `Metamath.VerifyParserPostThms, `Metamath.VerifyParserStateThms, `Metamath.VerifyThms, `Metamath.WellFormedness, `Metamath.ParserBasics, `Metamath.ArrayListExt, `Metamath.Bridge, `Metamath.KernelExtras, `Metamath.DBLemmas, `Metamath.AllM, `Metamath.KernelClean, `Metamath.ValidateDB, `Metamath.ParserInvariants, `Metamath.HashMapLemmas, `Metamath.ParserCorrectness, `Metamath.ParserLoopInduction, `Metamath.LoopInvariant, `Metamath.DBCaseAnalysis, `Metamath.CounterexampleInsertError, `Metamath.ParserInvariantsStep1, `Metamath.ParserOperations, `Metamath.FrontendBridge, `Metamath.FrontendCertified, `Metamath.FrontendAudit, `Metamath.GuardCombinators, `Metamath.PrefixProvenance, `Metamath.PrefixTraceCompressed, `Metamath.ParserAnyModeEquivalence, `Metamath.ParserEquivalence, `Metamath.ParserEquivalenceExamples, `Metamath.ErrorCodeSemantics, `Metamath.PrefixWitnessCheckBytes]
+  roots := #[`Metamath.Spec, `Metamath.ByteSliceCompat, `Metamath.Verify, `Metamath.VerifyClauseThms, `Metamath.VerifyConformanceThms, `Metamath.VerifyDBThms, `Metamath.VerifyDBConfigThms, `Metamath.VerifyDBCheckHypThms, `Metamath.VerifyDBPredicateThms, `Metamath.VerifyDBPayloadThms, `Metamath.VerifyDBSemanticThms, `Metamath.VerifyDoneThms, `Metamath.VerifyEvidenceThms, `Metamath.VerifyIncludeThms, `Metamath.VerifyPackagingThms, `Metamath.VerifyProofGuardThms, `Metamath.VerifyRuleCaseThms, `Metamath.VerifyScopeThms, `Metamath.VerifySinglePassThms, `Metamath.VerifyStabilityThms, `Metamath.VerifyParserPostThms, `Metamath.VerifyParserStateThms, `Metamath.VerifyThms, `Metamath.WellFormedness, `Metamath.ParserBasics, `Metamath.ArrayListExt, `Metamath.Bridge, `Metamath.KernelExtras, `Metamath.DBLemmas, `Metamath.AllM, `Metamath.KernelClean, `Metamath.ValidateDB, `Metamath.ParserInvariants, `Metamath.HashMapLemmas, `Metamath.ParserCorrectness, `Metamath.ParserLoopInduction, `Metamath.LoopInvariant, `Metamath.DBCaseAnalysis, `Metamath.CounterexampleInsertError, `Metamath.ParserInvariantsStep1, `Metamath.ParserOperations, `Metamath.FrontendBridge, `Metamath.FrontendBridgeLegacy, `Metamath.FrontendCertified, `Metamath.FrontendAudit, `Metamath.GuardCombinators, `Metamath.PrefixProvenance, `Metamath.PrefixTraceCompressed, `Metamath.ParserAnyModeEquivalence, `Metamath.ParserEquivalence, `Metamath.ParserEquivalenceExamples, `Metamath.ErrorCodeSemantics, `Metamath.PrefixWitnessCheckBytes]
 
 @[default_target]
 lean_lib MetamathExperimental where
@@ -52,4 +52,8 @@ lean_exe validateDB where
 
 lean_exe testCliErrorCode where
   root := `Metamath.Tests.CliErrorCodeFormat
+  supportInterpreter := true
+
+lean_exe testCheckSinglePassParity where
+  root := `Metamath.Tests.CheckSinglePassParity
   supportInterpreter := true

@@ -261,4 +261,10 @@ theorem audit_checkBytes_scopeFamily_frontendNotAdmissible_via_certifiedRun
     exact checkBytes_tokenNotConstantOrVariable_implies_frontendNotAdmissible
       arr config h_cert h_code
 
+/-- Audit canary: default IO entrypoint is the single-pass include driver. -/
+theorem audit_check_default_is_singlePass
+    (fname : String) (config : ModeConfig) :
+    check fname config = checkSinglePass fname config :=
+  check_eq_checkSinglePass fname config
+
 end Metamath.Verify.FrontendAudit
