@@ -16,6 +16,8 @@ This bridges parser implementation → StructurePreservingOp → WellFormedDB.
 -/
 
 import Metamath.Verify
+import Metamath.VerifyParserPostThms
+import Metamath.VerifyParserStateThms
 import Metamath.ParserCorrectness
 import Metamath.WellFormedness
 import Metamath.DBCaseAnalysis
@@ -9801,4 +9803,3 @@ theorem parser_construction_wellscoped
 
 end ParserOps
 end Metamath
-

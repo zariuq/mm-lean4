@@ -6,6 +6,7 @@ These establish basic facts about DB operations that are useful building blocks.
 -/
 
 import Metamath.Verify
+import Metamath.VerifyDBThms
 
 namespace Metamath.ParserBasics
 
@@ -155,4 +156,3 @@ theorem find?_some_iff {db : DB} {label : String} :
     · exact ⟨_, rfl⟩
 
 end Metamath.ParserBasics
-

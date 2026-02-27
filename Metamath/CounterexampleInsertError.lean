@@ -16,6 +16,7 @@ Then `insert` will call `mkError` again, creating a new error? with a different 
 -/
 
 import Metamath.Verify
+import Metamath.VerifyDBThms
 
 namespace Metamath.CounterexampleInsertError
 
@@ -99,4 +100,3 @@ theorem insert_const_inner_preserves_error :
   simp [DB.mkErrorFromEvidence]
 
 end Metamath.CounterexampleInsertError
-

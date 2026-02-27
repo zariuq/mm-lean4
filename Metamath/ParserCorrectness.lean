@@ -22,6 +22,8 @@ We prove properties at each layer using only properties from layers below.
 -/
 
 import Metamath.Verify
+import Metamath.VerifyDBPredicateThms
+import Metamath.VerifyStabilityThms
 import Metamath.WellFormedness
 import Metamath.ParserBasics
 import Std.Data.HashMap.Lemmas
@@ -1903,4 +1905,3 @@ theorem db_construction_induction
 end WellFormednessInduction
 
 end Metamath.ParserCorrectness
-

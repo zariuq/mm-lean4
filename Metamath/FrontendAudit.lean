@@ -1,5 +1,6 @@
 import Metamath.FrontendBridge
 import Metamath.FrontendCertified
+import Metamath.VerifyEvidenceThms
 
 namespace Metamath.Verify.FrontendAudit
 
