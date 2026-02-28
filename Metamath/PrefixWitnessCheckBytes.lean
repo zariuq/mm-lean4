@@ -55,7 +55,7 @@ open Metamath.ParserOps (ParserStateInv TokpInv feedProof_success_db
   feedProof_success_tokpInv_core finishProof_tokp_start
   updateLine_tokp feedToken_maintains_stateInv withAt_success_eq)
 open Metamath.ParserLoopInduction (ParserState_mkErrorFromEvidence_sets_error
-  withAt_preserves_error)
+  ParserState_requestInclude_sets_error withAt_preserves_error)
 open Metamath.ParserAnyModeEquivalence (finishProof_success_stack_conditions)
 open Metamath.ParserOps (preloadMandatoryHyps_ok_preserves_core
   preload_ok_preserves_core applyCompressedActions_ok_preserves_core)
@@ -987,252 +987,265 @@ theorem feedToken_proof_maintains_ghost
       simp [ParserState.feedToken, h_tokp, h_open]
     rw [h_db_eq, h_tokp_eq]
     exact h_ghost
-  · -- Not "$(" → falls through to inner match on .proof pr
-    by_cases h_end : tk.eqArray "$.".toAscii
-    · -- Case 2: "$." → finishProof → exits proof mode
-      let s0 : ParserState := { s with tokp := default }
-      have h_tokp_result : (s.feedToken i tk).tokp = .start := by
-        have := finishProof_tokp_start s0 pr
-        simpa [ParserState.feedToken, h_tokp, h_open, h_end, s0] using this
+  · -- Not "$("
+    by_cases h_include : tk.eqArray "$[".toAscii
+    · have h_gate_none :
+        includeDirectiveViolation? s.db.config s.db.scopes.size true i = none := by
+        cases h_gate : includeDirectiveViolation? s.db.config s.db.scopes.size true i with
+        | none => rfl
+        | some err =>
+            have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+              simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate,
+                ParserState.mkErrorFromEvidence, ParserState.withDB]
+            exact (h_bad h_success).elim
+      have h_tokp_result : (s.feedToken i tk).tokp = .includePath (s.mkPos i) := by
+        simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate_none]
       simp [ProofGhost, h_tokp_result]
-    · -- Case 3: feedProof → ghost maintained
-      let s0 : ParserState := { s with tokp := default }
-      have h_success_feed :
-          (s0.feedProof tk pr).db.error? = none := by
-        simpa [ParserState.feedToken, h_tokp, h_open, h_end, s0] using h_success
-      have h_db_eq : (s.feedToken i tk).db = s.db := by
-        have := feedProof_success_db s0 tk pr h_success_feed
-        simpa [ParserState.feedToken, h_tokp, h_open, h_end, s0] using this
-      have ⟨pr_mid, h_tokp_mid_raw, h_fmla_eq, h_frame_eq⟩ :=
-        feedProof_success_tokpInv_core s0 tk pr h_success_feed
-      have h_tokp_mid : (s.feedToken i tk).tokp = .proof pr_mid := by
-        simpa [ParserState.feedToken, h_tokp, h_open, h_end, s0] using h_tokp_mid_raw
-      -- Now show ProofGhost s.db (.proof pr_mid)
-      rw [h_db_eq, h_tokp_mid]
-      show proofGhostCore s.db pr_mid
-      obtain ⟨h_start_ghost, h_normal_ghost, h_preload_ghost, h_compressed_ghost⟩ := h_ghost
-      refine ⟨?start_clause, ?normal_clause, ?preload_clause, ?compressed_clause⟩
-      case start_clause =>
-        -- .start clause: vacuously true (feedProof never produces .start)
-        intro h_start_mid
-        exfalso
-        exact feedProof_ptp_not_start s0 tk pr h_success_feed pr_mid
-          h_tokp_mid_raw h_start_mid
-      case normal_clause =>
-        -- .normal clause: NormalProofReachable maintained
-        intro h_normal_mid
-        -- Sub-case analysis on pr.ptp
-        by_cases h_start : pr.ptp = .start
-        · -- pr.ptp = .start → first proof step
-          have ⟨h_stack_empty, _h_heap_empty, _h_scope⟩ := h_start_ghost h_start
-          by_cases h_open_paren : tk.eqArray "(".toAscii
-          · -- "(" starts compressed mode (.preload) → contradiction with .normal
+    · by_cases h_end : tk.eqArray "$.".toAscii
+      · -- Case 2: "$." → finishProof → exits proof mode
+        let s0 : ParserState := { s with tokp := default }
+        have h_tokp_result : (s.feedToken i tk).tokp = .start := by
+          have := finishProof_tokp_start s0 pr
+          simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_end, s0] using this
+        simp [ProofGhost, h_tokp_result]
+      · -- Case 3: feedProof → ghost maintained
+        let s0 : ParserState := { s with tokp := default }
+        have h_success_feed :
+            (s0.feedProof tk pr).db.error? = none := by
+          simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_end, s0] using h_success
+        have h_db_eq : (s.feedToken i tk).db = s.db := by
+          have := feedProof_success_db s0 tk pr h_success_feed
+          simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_end, s0] using this
+        have ⟨pr_mid, h_tokp_mid_raw, h_fmla_eq, h_frame_eq⟩ :=
+          feedProof_success_tokpInv_core s0 tk pr h_success_feed
+        have h_tokp_mid : (s.feedToken i tk).tokp = .proof pr_mid := by
+          simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_end, s0] using h_tokp_mid_raw
+        -- Now show ProofGhost s.db (.proof pr_mid)
+        rw [h_db_eq, h_tokp_mid]
+        show proofGhostCore s.db pr_mid
+        obtain ⟨h_start_ghost, h_normal_ghost, h_preload_ghost, h_compressed_ghost⟩ := h_ghost
+        refine ⟨?start_clause, ?normal_clause, ?preload_clause, ?compressed_clause⟩
+        case start_clause =>
+          -- .start clause: vacuously true (feedProof never produces .start)
+          intro h_start_mid
+          exfalso
+          exact feedProof_ptp_not_start s0 tk pr h_success_feed pr_mid
+            h_tokp_mid_raw h_start_mid
+        case normal_clause =>
+          -- .normal clause: NormalProofReachable maintained
+          intro h_normal_mid
+          -- Sub-case analysis on pr.ptp
+          by_cases h_start : pr.ptp = .start
+          · -- pr.ptp = .start → first proof step
+            have ⟨h_stack_empty, _h_heap_empty, _h_scope⟩ := h_start_ghost h_start
+            by_cases h_open_paren : tk.eqArray "(".toAscii
+            · -- "(" starts compressed mode (.preload) → contradiction with .normal
+              exfalso
+              obtain ⟨pr', h_go, h_tokp_pr'⟩ :=
+                feedProof_success_go_ok s0 tk pr h_success_feed
+              obtain ⟨mid, _, h_eq⟩ :=
+                go_start_open_extracts s0 tk pr pr' h_go h_start h_open_paren
+              rw [h_tokp_pr'] at h_tokp_mid_raw
+              have h_pr_eq := TokenParser.proof.inj h_tokp_mid_raw; subst h_pr_eq
+              rw [h_eq] at h_normal_mid; exact absurd h_normal_mid (by nofun)
+            · -- Not "(" → goNormal path
+              by_cases h_q : tk.eqArray "?".toAscii
+              · exfalso
+                exact feedProof_q_strict_errors s0 tk pr h_q
+                  (by simpa [s0] using h_strict) (.inl h_start)
+                  (fun _ => h_open_paren)
+                  h_success_feed
+              · -- Normal label token → feedProof_start_establishes_reachable
+                have ⟨pr_mid', h_tokp_mid', h_label_mid', h_fmla_mid',
+                    _h_frame_mid', _h_ptp_mid', h_reach'⟩ :=
+                  feedProof_start_establishes_reachable s0 tk pr
+                    h_success_feed h_start h_open_paren h_q h_stack_empty
+                have h_eq : pr_mid = pr_mid' := by
+                  rw [h_tokp_mid_raw] at h_tokp_mid'
+                  exact TokenParser.proof.inj h_tokp_mid'
+                subst h_eq
+                rw [h_label_mid', h_fmla_mid']
+                simpa [s0] using h_reach'
+          · -- pr.ptp ≠ .start
+            by_cases h_normal : pr.ptp = .normal
+            · -- pr.ptp = .normal → feedProof_normal_maintains_reachable
+              have h_reach := h_normal_ghost h_normal
+              by_cases h_q : tk.eqArray "?".toAscii
+              · exfalso
+                exact feedProof_q_strict_errors s0 tk pr h_q
+                  (by simpa [s0] using h_strict) (.inr h_normal)
+                  (fun h_s => absurd h_s h_start)
+                  h_success_feed
+              · -- Normal label → maintains reachability
+                have h_reach_s0 : NormalProofReachable s0.db pr.label pr.fmla pr.stack := by
+                  simpa [s0] using h_reach
+                have ⟨pr_mid', h_tokp_mid', h_label_mid', h_fmla_mid',
+                    _h_frame_mid', _h_ptp_mid', h_reach'⟩ :=
+                  feedProof_normal_maintains_reachable s0 tk pr
+                    h_success_feed h_normal h_q h_reach_s0
+                have h_eq : pr_mid = pr_mid' := by
+                  rw [h_tokp_mid_raw] at h_tokp_mid'
+                  exact TokenParser.proof.inj h_tokp_mid'
+                subst h_eq
+                rw [h_label_mid', h_fmla_mid']
+                simpa [s0] using h_reach'
+            · -- pr.ptp ≠ .start and ≠ .normal → .preload or .compressed
+              exfalso
+              exact feedProof_compressed_pipeline_not_normal s0 tk pr h_success_feed
+                h_start h_normal pr_mid h_tokp_mid_raw h_normal_mid
+        case preload_clause =>
+          -- .preload clause: PreloadPhaseGhost maintained
+          intro h_preload_mid
+          obtain ⟨pr', h_go, h_tokp_pr'⟩ :=
+            feedProof_success_go_ok s0 tk pr h_success_feed
+          rw [h_tokp_pr'] at h_tokp_mid_raw
+          have h_pr_eq := TokenParser.proof.inj h_tokp_mid_raw; subst h_pr_eq
+          -- Sub-case analysis on pr.ptp
+          cases h_ptp : pr.ptp with
+          | start =>
+            -- .start + "(" → establish PreloadPhaseGhost
+            have ⟨h_stack_empty, _h_heap_empty, h_scope⟩ := h_start_ghost h_ptp
+            -- "(" must hold (otherwise goNormal → .normal, not .preload)
+            have h_open_paren : tk.eqArray "(".toAscii := by
+              by_contra h_no_open
+              unfold ParserState.feedProof.go at h_go
+              simp [h_ptp, h_no_open] at h_go
+              have := goNormal_ok_preserves_ptp s0 tk { pr with ptp := .normal } pr' h_go
+              simp at this; rw [this] at h_preload_mid; exact absurd h_preload_mid (by nofun)
+            obtain ⟨mid, h_pre_ok, h_eq⟩ :=
+              go_start_open_extracts s0 tk pr pr' h_go h_ptp h_open_paren
+            have h_mand_s : s.db.preloadMandatoryHyps pr = .ok mid := by
+              simpa [s0] using h_pre_ok
+            have h_mid_core := preloadMandatoryHyps_ok_preserves_core s.db pr mid h_mand_s
+            have h_mid_label :=
+              Metamath.PrefixTraceCompressed.preloadMandatoryHyps_preserves_label
+                s.db pr mid h_mand_s
+            -- pr_mid = {mid with ptp := .preload}
+            rw [h_eq]; show PreloadPhaseGhost s.db {mid with ptp := .preload}
+            unfold PreloadPhaseGhost
+            -- Witnesses: start state is original `pr`; mandatory preload gives `mid`.
+            refine ⟨[], pr, mid, mid, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+            · exact h_mid_label.symm
+            · exact h_mid_core.1.symm
+            · exact h_mid_core.2.symm
+            · exact h_stack_empty
+            · exact _h_heap_empty
+            · exact h_ptp
+            · exact h_scope
+            · exact h_mand_s
+            · simp [List.foldlM, pure, Except.pure]
+            · rfl
+            · rfl
+          | normal =>
+            -- .normal → goNormal → output .normal, not .preload
             exfalso
-            obtain ⟨pr', h_go, h_tokp_pr'⟩ :=
-              feedProof_success_go_ok s0 tk pr h_success_feed
-            obtain ⟨mid, _, h_eq⟩ :=
-              go_start_open_extracts s0 tk pr pr' h_go h_start h_open_paren
-            rw [h_tokp_pr'] at h_tokp_mid_raw
-            have h_pr_eq := TokenParser.proof.inj h_tokp_mid_raw; subst h_pr_eq
-            rw [h_eq] at h_normal_mid; exact absurd h_normal_mid (by nofun)
-          · -- Not "(" → goNormal path
-            by_cases h_q : tk.eqArray "?".toAscii
-            · exfalso
-              exact feedProof_q_strict_errors s0 tk pr h_q
-                (by simpa [s0] using h_strict) (.inl h_start)
-                (fun _ => h_open_paren)
-                h_success_feed
-            · -- Normal label token → feedProof_start_establishes_reachable
-              have ⟨pr_mid', h_tokp_mid', h_label_mid', h_fmla_mid',
-                  _h_frame_mid', _h_ptp_mid', h_reach'⟩ :=
-                feedProof_start_establishes_reachable s0 tk pr
-                  h_success_feed h_start h_open_paren h_q h_stack_empty
-              have h_eq : pr_mid = pr_mid' := by
-                rw [h_tokp_mid_raw] at h_tokp_mid'
-                exact TokenParser.proof.inj h_tokp_mid'
-              subst h_eq
-              rw [h_label_mid', h_fmla_mid']
-              simpa [s0] using h_reach'
-        · -- pr.ptp ≠ .start
-          by_cases h_normal : pr.ptp = .normal
-          · -- pr.ptp = .normal → feedProof_normal_maintains_reachable
-            have h_reach := h_normal_ghost h_normal
-            by_cases h_q : tk.eqArray "?".toAscii
-            · exfalso
-              exact feedProof_q_strict_errors s0 tk pr h_q
-                (by simpa [s0] using h_strict) (.inr h_normal)
-                (fun h_s => absurd h_s h_start)
-                h_success_feed
-            · -- Normal label → maintains reachability
-              have h_reach_s0 : NormalProofReachable s0.db pr.label pr.fmla pr.stack := by
-                simpa [s0] using h_reach
-              have ⟨pr_mid', h_tokp_mid', h_label_mid', h_fmla_mid',
-                  _h_frame_mid', _h_ptp_mid', h_reach'⟩ :=
-                feedProof_normal_maintains_reachable s0 tk pr
-                  h_success_feed h_normal h_q h_reach_s0
-              have h_eq : pr_mid = pr_mid' := by
-                rw [h_tokp_mid_raw] at h_tokp_mid'
-                exact TokenParser.proof.inj h_tokp_mid'
-              subst h_eq
-              rw [h_label_mid', h_fmla_mid']
-              simpa [s0] using h_reach'
-          · -- pr.ptp ≠ .start and ≠ .normal → .preload or .compressed
-            exfalso
-            exact feedProof_compressed_pipeline_not_normal s0 tk pr h_success_feed
-              h_start h_normal pr_mid h_tokp_mid_raw h_normal_mid
-      case preload_clause =>
-        -- .preload clause: PreloadPhaseGhost maintained
-        intro h_preload_mid
-        obtain ⟨pr', h_go, h_tokp_pr'⟩ :=
-          feedProof_success_go_ok s0 tk pr h_success_feed
-        rw [h_tokp_pr'] at h_tokp_mid_raw
-        have h_pr_eq := TokenParser.proof.inj h_tokp_mid_raw; subst h_pr_eq
-        -- Sub-case analysis on pr.ptp
-        cases h_ptp : pr.ptp with
-        | start =>
-          -- .start + "(" → establish PreloadPhaseGhost
-          have ⟨h_stack_empty, _h_heap_empty, h_scope⟩ := h_start_ghost h_ptp
-          -- "(" must hold (otherwise goNormal → .normal, not .preload)
-          have h_open_paren : tk.eqArray "(".toAscii := by
-            by_contra h_no_open
+            unfold ParserState.feedProof.go at h_go; simp [h_ptp] at h_go
+            have := goNormal_ok_preserves_ptp s0 tk pr pr' h_go
+            rw [this, h_ptp] at h_preload_mid; exact absurd h_preload_mid (by nofun)
+          | preload =>
+            -- .preload → label or ")"
+            by_cases h_close : tk.eqArray ")".toAscii
+            · -- ")" → .compressed 0, not .preload
+              have h_eq := go_preload_close_extracts s0 tk pr pr' h_go h_ptp h_close
+              rw [h_eq] at h_preload_mid; exact absurd h_preload_mid (by nofun)
+            · -- label → DB.preload extends ghost
+              have ⟨_, h_preload_ok⟩ :=
+                go_preload_label_extracts s0 tk pr pr' h_go h_ptp h_close
+              -- pr' came from db.preload, so ptp preserved
+              have h_ptp_eq := preload_preserves_ptp s0.db pr pr' (toLabel tk).snd
+                (by simpa [s0] using h_preload_ok)
+              -- Extend PreloadPhaseGhost
+              have h_pghost := h_preload_ghost h_ptp
+              have h_preload_s : s.db.preload pr (toLabel tk).snd = .ok pr' := by
+                simpa [s0] using h_preload_ok
+              have h_core := preload_ok_preserves_core s.db pr pr' (toLabel tk).snd h_preload_s
+              have h_lbl := preload_preserves_label s.db pr pr' (toLabel tk).snd h_preload_s
+              exact preloadPhaseGhost_extend s.db pr pr' (toLabel tk).snd
+                h_pghost h_preload_s h_lbl h_core.1 h_core.2
+          | compressed chr =>
+            -- .compressed → output can't be .preload
+            unfold ParserState.feedProof.go at h_go; simp [h_ptp] at h_go
+            cases h_dec : ParserState.decodeCompressed tk chr with
+            | error e => simp [h_dec, bind, Except.bind] at h_go
+            | ok dec =>
+              obtain ⟨acts, chr'⟩ := dec
+              simp [h_dec, bind, Except.bind] at h_go
+              cases h_apply : ParserState.applyCompressedActions s0.db pr acts with
+              | error e => simp [h_apply, Functor.map, Except.map] at h_go
+              | ok mid =>
+                simp [h_apply, Functor.map, Except.map] at h_go
+                subst h_go; exact absurd h_preload_mid (by nofun)
+        ·
+          -- .compressed n clause: CompressedFoldGhost maintained
+          intro ⟨n, h_compressed_mid⟩
+          obtain ⟨pr', h_go, h_tokp_pr'⟩ :=
+            feedProof_success_go_ok s0 tk pr h_success_feed
+          rw [h_tokp_pr'] at h_tokp_mid_raw
+          have h_pr_eq := TokenParser.proof.inj h_tokp_mid_raw; subst h_pr_eq
+          cases h_ptp : pr.ptp with
+          | start =>
+            -- .start → output is .normal or .preload, not .compressed
             unfold ParserState.feedProof.go at h_go
-            simp [h_ptp, h_no_open] at h_go
-            have := goNormal_ok_preserves_ptp s0 tk { pr with ptp := .normal } pr' h_go
-            simp at this; rw [this] at h_preload_mid; exact absurd h_preload_mid (by nofun)
-          obtain ⟨mid, h_pre_ok, h_eq⟩ :=
-            go_start_open_extracts s0 tk pr pr' h_go h_ptp h_open_paren
-          have h_mand_s : s.db.preloadMandatoryHyps pr = .ok mid := by
-            simpa [s0] using h_pre_ok
-          have h_mid_core := preloadMandatoryHyps_ok_preserves_core s.db pr mid h_mand_s
-          have h_mid_label :=
-            Metamath.PrefixTraceCompressed.preloadMandatoryHyps_preserves_label
-              s.db pr mid h_mand_s
-          -- pr_mid = {mid with ptp := .preload}
-          rw [h_eq]; show PreloadPhaseGhost s.db {mid with ptp := .preload}
-          unfold PreloadPhaseGhost
-          -- Witnesses: start state is original `pr`; mandatory preload gives `mid`.
-          refine ⟨[], pr, mid, mid, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
-          · exact h_mid_label.symm
-          · exact h_mid_core.1.symm
-          · exact h_mid_core.2.symm
-          · exact h_stack_empty
-          · exact _h_heap_empty
-          · exact h_ptp
-          · exact h_scope
-          · exact h_mand_s
-          · simp [List.foldlM, pure, Except.pure]
-          · rfl
-          · rfl
-        | normal =>
-          -- .normal → goNormal → output .normal, not .preload
-          exfalso
-          unfold ParserState.feedProof.go at h_go; simp [h_ptp] at h_go
-          have := goNormal_ok_preserves_ptp s0 tk pr pr' h_go
-          rw [this, h_ptp] at h_preload_mid; exact absurd h_preload_mid (by nofun)
-        | preload =>
-          -- .preload → label or ")"
-          by_cases h_close : tk.eqArray ")".toAscii
-          · -- ")" → .compressed 0, not .preload
-            have h_eq := go_preload_close_extracts s0 tk pr pr' h_go h_ptp h_close
-            rw [h_eq] at h_preload_mid; exact absurd h_preload_mid (by nofun)
-          · -- label → DB.preload extends ghost
-            have ⟨_, h_preload_ok⟩ :=
-              go_preload_label_extracts s0 tk pr pr' h_go h_ptp h_close
-            -- pr' came from db.preload, so ptp preserved
-            have h_ptp_eq := preload_preserves_ptp s0.db pr pr' (toLabel tk).snd
-              (by simpa [s0] using h_preload_ok)
-            -- Extend PreloadPhaseGhost
-            have h_pghost := h_preload_ghost h_ptp
-            have h_preload_s : s.db.preload pr (toLabel tk).snd = .ok pr' := by
-              simpa [s0] using h_preload_ok
-            have h_core := preload_ok_preserves_core s.db pr pr' (toLabel tk).snd h_preload_s
-            have h_lbl := preload_preserves_label s.db pr pr' (toLabel tk).snd h_preload_s
-            exact preloadPhaseGhost_extend s.db pr pr' (toLabel tk).snd
-              h_pghost h_preload_s h_lbl h_core.1 h_core.2
-        | compressed chr =>
-          -- .compressed → output can't be .preload
-          unfold ParserState.feedProof.go at h_go; simp [h_ptp] at h_go
-          cases h_dec : ParserState.decodeCompressed tk chr with
-          | error e => simp [h_dec, bind, Except.bind] at h_go
-          | ok dec =>
-            obtain ⟨acts, chr'⟩ := dec
-            simp [h_dec, bind, Except.bind] at h_go
-            cases h_apply : ParserState.applyCompressedActions s0.db pr acts with
-            | error e => simp [h_apply, Functor.map, Except.map] at h_go
-            | ok mid =>
-              simp [h_apply, Functor.map, Except.map] at h_go
-              subst h_go; exact absurd h_preload_mid (by nofun)
-      case compressed_clause =>
-        -- .compressed n clause: CompressedFoldGhost maintained
-        intro ⟨n, h_compressed_mid⟩
-        obtain ⟨pr', h_go, h_tokp_pr'⟩ :=
-          feedProof_success_go_ok s0 tk pr h_success_feed
-        rw [h_tokp_pr'] at h_tokp_mid_raw
-        have h_pr_eq := TokenParser.proof.inj h_tokp_mid_raw; subst h_pr_eq
-        cases h_ptp : pr.ptp with
-        | start =>
-          -- .start → output is .normal or .preload, not .compressed
-          unfold ParserState.feedProof.go at h_go
-          by_cases h_open : tk.eqArray "(".toAscii
-          · simp [h_ptp, h_open] at h_go
-            cases h_pre : s0.db.preloadMandatoryHyps pr with
-            | error e => simp [h_pre, Functor.map, Except.map] at h_go
-            | ok mid =>
-              simp [h_pre, Functor.map, Except.map] at h_go
-              subst h_go; exact absurd h_compressed_mid (by nofun)
-          · simp [h_ptp, h_open] at h_go
-            have := goNormal_ok_preserves_ptp s0 tk { pr with ptp := .normal } pr' h_go
-            simp at this; rw [this] at h_compressed_mid
-            exact absurd h_compressed_mid (by nofun)
-        | normal =>
-          -- .normal → goNormal → output .normal, not .compressed
-          exfalso
-          unfold ParserState.feedProof.go at h_go; simp [h_ptp] at h_go
-          have := goNormal_ok_preserves_ptp s0 tk pr pr' h_go
-          rw [this, h_ptp] at h_compressed_mid; exact absurd h_compressed_mid (by nofun)
-        | preload =>
-          -- .preload → ")" transitions to .compressed 0, label stays .preload
-          by_cases h_close : tk.eqArray ")".toAscii
-          · -- ")" → .compressed 0: transition PreloadPhaseGhost → CompressedFoldGhost
-            have h_eq := go_preload_close_extracts s0 tk pr pr' h_go h_ptp h_close
-            rw [h_eq] at h_compressed_mid ⊢
-            have h_pghost := h_preload_ghost h_ptp
-            show CompressedFoldGhost s.db {pr with ptp := .compressed 0}
-            obtain ⟨preloads, pr_start, pr_mand, pr_preload,
-              h_start_lbl, h_start_fmla, h_start_frame, h_start_stack, h_start_heap, h_start_ptp,
-              h_scope, h_mand, h_fold, h_stack, h_heap⟩ := h_pghost
-            exact ⟨preloads, [], pr_start, pr_mand, pr_preload, pr_preload,
-              h_start_lbl, h_start_fmla, h_start_frame, h_start_stack, h_start_heap, h_start_ptp,
-              h_scope, h_mand, h_fold,
-              by simp [List.foldlM, pure, Except.pure],
-              h_stack, h_heap⟩
-          · -- label → stays .preload, not .compressed
-            have ⟨_, h_preload_ok⟩ :=
-              go_preload_label_extracts s0 tk pr pr' h_go h_ptp h_close
-            have h_ptp_eq := preload_preserves_ptp s0.db pr pr' (toLabel tk).snd
-              (by simpa [s0] using h_preload_ok)
-            rw [h_ptp_eq, h_ptp] at h_compressed_mid
-            exact absurd h_compressed_mid (by nofun)
-        | compressed chr =>
-          -- .compressed chr → decode + applyCompressedActions → extend ghost
-          obtain ⟨acts, chr', pr_mid_inner, h_dec, h_apply_raw, h_eq⟩ :=
-            go_compressed_extracts s0 tk pr pr' chr h_go h_ptp
-          rw [h_eq]
-          have h_apply : ParserState.applyCompressedActions s.db pr acts = .ok pr_mid_inner := by
-            simpa [s0] using h_apply_raw
-          have h_cghost := h_compressed_ghost ⟨chr, h_ptp⟩
-          have h_core := applyCompressedActions_ok_preserves_core s.db pr pr_mid_inner acts h_apply
-          have h_lbl := Metamath.PrefixTraceCompressed.applyCA_preserves_label
-            s.db pr acts pr_mid_inner h_apply
-          -- Need h_no_unknown: rejectUnknownSteps = true → no unknowns in successful apply
-          have h_no_unknown : ∀ a ∈ acts, a ≠ .unknown := by
-            exact applyCompressedActions_ok_no_unknown s.db pr pr_mid_inner acts
-              (by simpa [s0] using h_strict) h_apply
-          show CompressedFoldGhost s.db {pr_mid_inner with ptp := .compressed chr'}
-          have h_ext : CompressedFoldGhost s.db pr_mid_inner :=
-            compressedFoldGhost_extend s.db pr pr_mid_inner acts
-              h_cghost h_no_unknown h_apply h_lbl h_core.1
-          simpa [CompressedFoldGhost] using h_ext
+            by_cases h_open : tk.eqArray "(".toAscii
+            · simp [h_ptp, h_open] at h_go
+              cases h_pre : s0.db.preloadMandatoryHyps pr with
+              | error e => simp [h_pre, Functor.map, Except.map] at h_go
+              | ok mid =>
+                simp [h_pre, Functor.map, Except.map] at h_go
+                subst h_go; exact absurd h_compressed_mid (by nofun)
+            · simp [h_ptp, h_open] at h_go
+              have := goNormal_ok_preserves_ptp s0 tk { pr with ptp := .normal } pr' h_go
+              simp at this; rw [this] at h_compressed_mid
+              exact absurd h_compressed_mid (by nofun)
+          | normal =>
+            -- .normal → goNormal → output .normal, not .compressed
+            exfalso
+            unfold ParserState.feedProof.go at h_go; simp [h_ptp] at h_go
+            have := goNormal_ok_preserves_ptp s0 tk pr pr' h_go
+            rw [this, h_ptp] at h_compressed_mid; exact absurd h_compressed_mid (by nofun)
+          | preload =>
+            -- .preload → ")" transitions to .compressed 0, label stays .preload
+            by_cases h_close : tk.eqArray ")".toAscii
+            · -- ")" → .compressed 0: transition PreloadPhaseGhost → CompressedFoldGhost
+              have h_eq := go_preload_close_extracts s0 tk pr pr' h_go h_ptp h_close
+              rw [h_eq] at h_compressed_mid ⊢
+              have h_pghost := h_preload_ghost h_ptp
+              show CompressedFoldGhost s.db {pr with ptp := .compressed 0}
+              obtain ⟨preloads, pr_start, pr_mand, pr_preload,
+                h_start_lbl, h_start_fmla, h_start_frame, h_start_stack, h_start_heap, h_start_ptp,
+                h_scope, h_mand, h_fold, h_stack, h_heap⟩ := h_pghost
+              exact ⟨preloads, [], pr_start, pr_mand, pr_preload, pr_preload,
+                h_start_lbl, h_start_fmla, h_start_frame, h_start_stack, h_start_heap, h_start_ptp,
+                h_scope, h_mand, h_fold,
+                by simp [List.foldlM, pure, Except.pure],
+                h_stack, h_heap⟩
+            · -- label → stays .preload, not .compressed
+              have ⟨_, h_preload_ok⟩ :=
+                go_preload_label_extracts s0 tk pr pr' h_go h_ptp h_close
+              have h_ptp_eq := preload_preserves_ptp s0.db pr pr' (toLabel tk).snd
+                (by simpa [s0] using h_preload_ok)
+              rw [h_ptp_eq, h_ptp] at h_compressed_mid
+              exact absurd h_compressed_mid (by nofun)
+          | compressed chr =>
+            -- .compressed chr → decode + applyCompressedActions → extend ghost
+            obtain ⟨acts, chr', pr_mid_inner, h_dec, h_apply_raw, h_eq⟩ :=
+              go_compressed_extracts s0 tk pr pr' chr h_go h_ptp
+            rw [h_eq]
+            have h_apply : ParserState.applyCompressedActions s.db pr acts = .ok pr_mid_inner := by
+              simpa [s0] using h_apply_raw
+            have h_cghost := h_compressed_ghost ⟨chr, h_ptp⟩
+            have h_core := applyCompressedActions_ok_preserves_core s.db pr pr_mid_inner acts h_apply
+            have h_lbl := Metamath.PrefixTraceCompressed.applyCA_preserves_label
+              s.db pr acts pr_mid_inner h_apply
+            -- Need h_no_unknown: rejectUnknownSteps = true → no unknowns in successful apply
+            have h_no_unknown : ∀ a ∈ acts, a ≠ .unknown := by
+              exact applyCompressedActions_ok_no_unknown s.db pr pr_mid_inner acts
+                (by simpa [s0] using h_strict) h_apply
+            show CompressedFoldGhost s.db {pr_mid_inner with ptp := .compressed chr'}
+            have h_ext : CompressedFoldGhost s.db pr_mid_inner :=
+              compressedFoldGhost_extend s.db pr pr_mid_inner acts
+                h_cghost h_no_unknown h_apply h_lbl h_core.1
+            simpa [CompressedFoldGhost] using h_ext
 
 private theorem withAt_mkError_ne_none
     (label : String) (s : ParserState) (pos : Pos) (ev : ErrorEvidence) :
@@ -1446,27 +1459,44 @@ theorem feedToken_maintains_ghost
     by_cases h_open : tk.eqArray "$(".toAscii
     · simp [ParserState.feedToken, h_tokp, h_open, ProofGhost]
     · simp only [ParserState.feedToken, h_tokp, h_open] at h_success ⊢
-      by_cases h_delim : tk.eqArray p.k.delim
-      · -- Delimiter → feedTokens
-        simp only [h_delim, ite_true] at h_success ⊢
-        exact feedTokens_ghost s arr' p h_success
-      · -- Not delimiter → withMath → stays .math → True
-        simp only [h_delim] at h_success ⊢
-        have h_np : ∀ pr, s.tokp ≠ .proof pr := by intro pr; simp [h_tokp]
-        have h_nc : ∀ inner, s.tokp ≠ .comment inner := by intro inner; simp [h_tokp]
-        -- Unfold withMath and eliminate false=true conditions
-        simp only [ParserState.withMath, Bool.false_eq_true, ite_false]
-        split
-        · -- toMath fails → mkErrorFromEvidence → tokp unchanged → non-proof
-          exact proofGhost_trivial h_np h_nc
-        · -- toMath succeeds → match on db.find? in Id monad
-          simp only [Id.run]
+      by_cases h_include : tk.eqArray "$[".toAscii
+      · have h_gate_none :
+          includeDirectiveViolation? s.db.config s.db.scopes.size true i = none := by
+          have h_success_ft : (s.feedToken i tk).db.error? = none := by
+            simpa [ParserState.feedToken, h_tokp, h_open, h_include] using h_success
+          cases h_gate : includeDirectiveViolation? s.db.config s.db.scopes.size true i with
+          | none => rfl
+          | some err =>
+              have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate,
+                  ParserState.mkErrorFromEvidence, ParserState.withDB]
+              exact (h_bad h_success_ft).elim
+        have h_tokp_eq : (s.feedToken i tk).tokp = .includePath (s.mkPos i) := by
+          simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate_none]
+        simp [h_include, h_gate_none, ProofGhost] at h_success ⊢
+      · by_cases h_delim : tk.eqArray p.k.delim
+        · -- Delimiter → feedTokens
+          simp [h_include] at h_success ⊢
+          simp only [h_delim, ite_true] at h_success ⊢
+          exact feedTokens_ghost s arr' p h_success
+        · -- Not delimiter → withMath → stays .math → True
+          simp [h_include] at h_success ⊢
+          simp only [h_delim] at h_success ⊢
+          have h_np : ∀ pr, s.tokp ≠ .proof pr := by intro pr; simp [h_tokp]
+          have h_nc : ∀ inner, s.tokp ≠ .comment inner := by intro inner; simp [h_tokp]
+          -- Unfold withMath and eliminate false=true conditions
+          simp only [ParserState.withMath, Bool.false_eq_true, ite_false]
           split
-          · exact trivial  -- const → .math → True
-          · exact trivial  -- var → .math → True
-          · split  -- match mathSymbolViolation?
-            · exact proofGhost_trivial h_np h_nc  -- some err → mkError
-            · exact proofGhost_trivial h_np h_nc  -- none → mkError
+          · -- toMath fails → mkErrorFromEvidence → tokp unchanged → non-proof
+            exact proofGhost_trivial h_np h_nc
+          · -- toMath succeeds → match on db.find? in Id monad
+            try simp [Id.run]
+            split
+            · exact trivial  -- const → .math → True
+            · exact trivial  -- var → .math → True
+            · split  -- match mathSymbolViolation?
+              · exact proofGhost_trivial h_np h_nc  -- some err → mkError
+              · exact proofGhost_trivial h_np h_nc  -- none → mkError
   | label pos' lab =>
     by_cases h_open : tk.eqArray "$(".toAscii
     · simp [ParserState.feedToken, h_tokp, h_open, ProofGhost]
@@ -1476,12 +1506,86 @@ theorem feedToken_maintains_ghost
         | simp_all [ProofGhost, ParserState.mkErrorFromEvidence,
             ParserState.withDB]
 
+  | includePath includePos =>
+    by_cases h_open : tk.eqArray "$(".toAscii
+    · simp [ParserState.feedToken, h_tokp, h_open, ProofGhost]
+    · by_cases h_include : tk.eqArray "$[".toAscii
+      · have h_gate_none :
+          includeDirectiveViolation? s.db.config s.db.scopes.size true i = none := by
+          cases h_gate : includeDirectiveViolation? s.db.config s.db.scopes.size true i with
+          | none => rfl
+          | some err =>
+              have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate,
+                  ParserState.mkErrorFromEvidence, ParserState.withDB]
+              exact (h_bad h_success).elim
+        have h_tokp_eq : (s.feedToken i tk).tokp = .includePath (s.mkPos i) := by
+          simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate_none]
+        rw [h_tokp_eq]
+        trivial
+      · by_cases h_close : tk.eqArray "$]".toAscii
+        · have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+            simp [ParserState.feedToken, h_tokp, h_open, h_include, h_close,
+              ParserState.mkErrorFromEvidence, ParserState.withDB]
+          exact (h_bad h_success).elim
+        · let rawPath := (ParserState.includePathFromToken tk).1
+          let closesInline := (ParserState.includePathFromToken tk).2
+          cases h_norm : ParserState.normalizeIncludePath s.sourceFile rawPath with
+          | error err =>
+              have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                simp [ParserState.feedToken, h_tokp, h_open, h_include, h_close,
+                  rawPath, h_norm,
+                  ParserState.mkErrorFromEvidence, ParserState.withDB]
+              exact (h_bad h_success).elim
+          | ok includePath =>
+              by_cases h_inline : closesInline
+              · have h_req : (s.requestInclude includePath).db.error? ≠ none :=
+                  ParserState_requestInclude_sets_error s includePath
+                have h_eq : s.feedToken i tk = s.requestInclude includePath := by
+                  simp [ParserState.feedToken, h_tokp, h_open, h_include, h_close,
+                    rawPath, closesInline, h_norm, h_inline]
+                exact (h_req (by simpa [h_eq] using h_success)).elim
+              · have h_tokp_eq :
+                  (s.feedToken i tk).tokp = .includeClose includePos includePath := by
+                  simp [ParserState.feedToken, h_tokp, h_open, h_include, h_close,
+                    rawPath, closesInline, h_norm, h_inline]
+                rw [h_tokp_eq]
+                trivial
+  | includeClose includePos includePath =>
+    by_cases h_open : tk.eqArray "$(".toAscii
+    · simp [ParserState.feedToken, h_tokp, h_open, ProofGhost]
+    · by_cases h_include : tk.eqArray "$[".toAscii
+      · have h_gate_none :
+          includeDirectiveViolation? s.db.config s.db.scopes.size true i = none := by
+          cases h_gate : includeDirectiveViolation? s.db.config s.db.scopes.size true i with
+          | none => rfl
+          | some err =>
+              have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate,
+                  ParserState.mkErrorFromEvidence, ParserState.withDB]
+              exact (h_bad h_success).elim
+        have h_tokp_eq : (s.feedToken i tk).tokp = .includePath (s.mkPos i) := by
+          simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate_none]
+        rw [h_tokp_eq]
+        trivial
+      · by_cases h_close : tk.eqArray "$]".toAscii
+        · have h_req : (s.requestInclude includePath).db.error? ≠ none :=
+            ParserState_requestInclude_sets_error s includePath
+          have h_eq : s.feedToken i tk = s.requestInclude includePath := by
+            simp [ParserState.feedToken, h_tokp, h_open, h_include, h_close]
+          exact (h_req (by simpa [h_eq] using h_success)).elim
+        · have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+            simp [ParserState.feedToken, h_tokp, h_open, h_include, h_close,
+              ParserState.mkErrorFromEvidence, ParserState.withDB]
+          exact (h_bad h_success).elim
+
 /-! ## Local finishProof event theorem -/
 
 /-- A concrete `feedToken` finish-proof event (`$.` on `.proof pr`) that succeeds. -/
 def FinishProofEvent (s : ParserState) (i : Nat) (tk : ByteSlice) (pr : ProofState) : Prop :=
   s.tokp = .proof pr ∧
   tk.eqArray "$(".toAscii = false ∧
+  tk.eqArray "$[".toAscii = false ∧
   tk.eqArray "$.".toAscii = true ∧
   (s.feedToken i tk).db.error? = none
 
@@ -1498,13 +1602,13 @@ theorem feedToken_finishProofEvent_prefixProvable
       toDatabase s.db = some Γ ∧
       toFrame s.db s.db.frame = some fr ∧
       Spec.Provable Γ fr (toExpr pr.fmla) := by
-  rcases h_evt with ⟨h_tokp, h_open, h_end, h_success⟩
+  rcases h_evt with ⟨h_tokp, h_open, h_include, h_end, h_success⟩
   rw [h_tokp] at h_ghost
   change proofGhostCore s.db pr at h_ghost
   obtain ⟨_h_start, h_normal, _h_preload, h_compressed⟩ := h_ghost
   let s0 : ParserState := { s with tokp := default }
   have h_finish : (s0.finishProof pr).db.error? = none := by
-    simpa [FinishProofEvent, ParserState.feedToken, h_tokp, h_open, h_end, s0] using h_success
+    simpa [FinishProofEvent, ParserState.feedToken, h_tokp, h_open, h_include, h_end, s0] using h_success
   have h_wf : WellFormedDB s.db := h_inv.1
   have h_no_err0 : s0.db.error? = none := by simpa [s0] using h_no_err
   have ⟨h_stack_one, h_stack_fmla, h_mode⟩ :=

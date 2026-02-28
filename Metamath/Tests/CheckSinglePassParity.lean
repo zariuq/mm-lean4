@@ -1,9 +1,11 @@
 import Metamath.Verify
+import Metamath.Legacy.Runtime
 
 namespace Metamath
 namespace Tests
 
 open Verify
+open Legacy
 
 /-- Compact observable DB projection used by runtime parity checks. -/
 structure DBShape where

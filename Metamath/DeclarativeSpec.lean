@@ -1,5 +1,3 @@
-import Metamath.Verify
-
 /-!
 # Declarative Specification
 
@@ -20,20 +18,20 @@ in `Spec/Operational.lean`).
 | §4.2.7 | Frames (mandatory hypotheses + DV) | `Context` |
 | §4.3 | Proof verification algorithm | `Provable` |
 
-## Key Theorem
+## Key Results
 
-The main result (in `Spec/Equivalence.lean`) is:
-```lean
-theorem operational_iff_semantic {Γ : Database} {fr : Frame} {e : Expr}
-    (h_wf : WellFormedDatabaseStrong Γ)
-    (h_fr_nodup : FloatVarNoDup fr) :
-    Provable Γ fr e ↔
-    Semantic.Provable (dbToAxioms Γ) (frameToContext fr)
-      (exprToFormula (varMapOfFrame fr) e)
-```
+End-to-end theorem (bytes → spec):
+  `KernelClean.lean`: `verify_parser_acceptance_iff_spec_provable`
+  Parser acceptance of raw bytes ↔ `Spec.Provable`. No extra assumptions.
 
-This establishes both soundness and completeness: the operational verifier
-accepts exactly those proofs that are valid under Mario's declarative semantics.
+Spec-level components (`Spec/Equivalence.lean`):
+  `operational_to_semantic` — soundness: `Provable Γ fr e → Semantic.Provable ...`
+  `mario_to_proofValid`     — completeness: `SupportedProvable ... → Provable Γ fr e`
+
+`SupportedProvable` is Mario's `Provable` where each `var` leaf carries a
+witness that the variable is in the frame's floating hypothesis map. This is
+the exact condition needed for completeness: the operational verifier requires
+every variable to be explicitly typed in the frame.
 -/
 
 namespace Metamath
@@ -443,6 +441,7 @@ inductive Provable (axs : Statement → Prop) (Γ : Context) : Formula → Prop
   /-- Apply an axiom with substitution σ, proving all hypotheses -/
   | ax (σ) {ax} : axs ax → ax.ctx.dj.subst σ Γ.dj →
     (∀ h ∈ ax.ctx.hyps, Provable axs Γ (h.subst σ)) →
+    -- `ax.vars` are the mandatory floating hypotheses (§4.2.7); `var` handles all others
     (∀ v ∈ ax.vars, Provable axs Γ (v.type, σ v)) →
     Provable axs Γ (ax.fmla.subst σ)
 

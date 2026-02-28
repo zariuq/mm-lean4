@@ -105,6 +105,10 @@ For new integrations, use this sequence:
    use `verify_parser_acceptance_any_mode_iff_supported_semantic_provable_total`.
 4. Use global-support wrappers only for legacy downstream code that still
    depends on `SemanticFrameSupported`.
+
+Frontend include-policy bridges are intentionally split:
+- `Metamath.FrontendBridge` is single-pass-first.
+- `Metamath.Legacy.FrontendBridge` hosts two-pass compatibility wrappers.
 -/
 
 set_option autoImplicit false

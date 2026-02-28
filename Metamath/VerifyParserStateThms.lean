@@ -213,64 +213,112 @@ namespace ParserState
       · rfl
       · split
         ·
-          split <;>
-            simp [ParserState.withDB, DB.pushScope_config, DB.popScope_config, ParserState.label_db_config]
-        · simp [ParserState.label_db_config]
+          split <;> simp [ParserState.mkErrorFromEvidence_db_config]
+        ·
+          split
+          ·
+            split <;>
+              simp [ParserState.withDB, DB.pushScope_config, DB.popScope_config,
+                ParserState.label_db_config]
+          · simp [ParserState.label_db_config]
   | const =>
       simp only []
       split
       · rfl
-      · simp [ParserState.sym_db_config]
+      · split
+        · split <;> simp [ParserState.mkErrorFromEvidence_db_config]
+        · simp [ParserState.sym_db_config]
   | var =>
       simp only []
       split
       · rfl
-      · simp [ParserState.sym_db_config]
+      · split
+        · split <;> simp [ParserState.mkErrorFromEvidence_db_config]
+        · simp [ParserState.sym_db_config]
   | djvars arr =>
       simp only []
       split
       · rfl
       · split
-        · rfl
-        · simp [ParserState.djvars_loop_db_config]
+        · split <;> simp [ParserState.mkErrorFromEvidence_db_config]
+        ·
+          split
+          · rfl
+          · simp [ParserState.djvars_loop_db_config]
   | math arr' p =>
       simp only []
       split
       · rfl
-      ·
-        split
-        · simp [ParserState.feedTokens_db_config]
+      · split
+        · split <;> simp [ParserState.mkErrorFromEvidence_db_config]
         ·
-          apply ParserState.withMath_db_config
-          intro tk1
-          simp only [Id.run, Pure.pure, Bind.bind]
-          cases h_find : s.db.find? tk1 with
-          | none =>
-              cases h_gate : s.db.mathSymbolViolation? tk1 <;>
-                simp [h_find, h_gate, ParserState.mkErrorFromEvidence_db_config]
-          | some obj =>
-              cases obj with
-              | const _ => simp [h_find]
-              | var _ => simp [h_find]
-              | hyp _ _ _ =>
-                  cases h_gate : s.db.mathSymbolViolation? tk1 <;>
-                    simp [h_find, h_gate, ParserState.mkErrorFromEvidence_db_config]
-              | assert _ _ _ =>
-                  cases h_gate : s.db.mathSymbolViolation? tk1 <;>
-                    simp [h_find, h_gate, ParserState.mkErrorFromEvidence_db_config]
+          split
+          · simp [ParserState.feedTokens_db_config]
+          ·
+            apply ParserState.withMath_db_config
+            intro tk1
+            simp only [Id.run, Pure.pure, Bind.bind]
+            cases h_find : s.db.find? tk1 with
+            | none =>
+                cases h_gate : s.db.mathSymbolViolation? tk1 <;>
+                  simp [h_find, h_gate, ParserState.mkErrorFromEvidence_db_config]
+            | some obj =>
+                cases obj with
+                | const _ => simp [h_find]
+                | var _ => simp [h_find]
+                | hyp _ _ _ =>
+                    cases h_gate : s.db.mathSymbolViolation? tk1 <;>
+                      simp [h_find, h_gate, ParserState.mkErrorFromEvidence_db_config]
+                | assert _ _ _ =>
+                    cases h_gate : s.db.mathSymbolViolation? tk1 <;>
+                      simp [h_find, h_gate, ParserState.mkErrorFromEvidence_db_config]
   | label pos' lab =>
       simp only []
       split
       · rfl
-      ·
-        split
+      · split
         · split <;> simp [ParserState.mkErrorFromEvidence_db_config]
-        · simp [ParserState.mkErrorFromEvidence_db_config]
+        ·
+          split
+          · split <;> simp [ParserState.mkErrorFromEvidence_db_config]
+          · simp [ParserState.mkErrorFromEvidence_db_config]
+  | includePath includePos =>
+      simp only []
+      split
+      · rfl
+      · split
+        · split <;> simp [ParserState.mkErrorFromEvidence_db_config]
+        ·
+          split
+          · simp [ParserState.mkErrorFromEvidence_db_config]
+          ·
+            unfold ParserState.normalizeIncludePath
+            split
+            · simp [ParserState.mkErrorFromEvidence_db_config]
+            ·
+              split
+              · rfl
+              ·
+                by_cases h_req : (ParserState.includePathFromToken tk).snd = true
+                · simp [h_req, ParserState.requestInclude]
+                · simp [h_req]
+  | includeClose includePos includePath =>
+      simp only []
+      split
+      · rfl
+      · split
+        · split <;> simp [ParserState.mkErrorFromEvidence_db_config]
+        ·
+          split
+          · simp [ParserState.requestInclude]
+          · simp [ParserState.mkErrorFromEvidence_db_config]
   | proof pr =>
       simp only []
       split
       · rfl
-      · split <;> simp [ParserState.finishProof_db_config, ParserState.feedProof_db_config]
+      · split
+        · split <;> simp [ParserState.mkErrorFromEvidence_db_config]
+        · split <;> simp [ParserState.finishProof_db_config, ParserState.feedProof_db_config]
 
 @[simp] theorem updateLine_db (s : ParserState) (i : Nat) (c : UInt8) :
     (s.updateLine i c).db = s.db := by
@@ -402,6 +450,10 @@ namespace ParserState
             cases h_k : p.k <;> simp [h_tokp, h_k, DB.mkErrorFromEvidence_config]
         | label _ _ =>
             simp [h_tokp, DB.mkErrorFromEvidence_config]
+        | includePath _ =>
+            simp [h_tokp, DB.mkErrorFromEvidence_config]
+        | includeClose _ _ =>
+            simp [h_tokp, DB.mkErrorFromEvidence_config]
         | proof _ =>
             simp [h_tokp, DB.mkErrorFromEvidence_config]
     | token pos tk =>
@@ -429,6 +481,10 @@ namespace ParserState
               cases h_k : p.k <;>
                 simp [h_tokp, h_k, DB.mkErrorFromEvidence_config, ParserState.feedToken_db_config]
           | label _ _ =>
+              simp [h_tokp, DB.mkErrorFromEvidence_config, ParserState.feedToken_db_config]
+          | includePath _ =>
+              simp [h_tokp, DB.mkErrorFromEvidence_config, ParserState.feedToken_db_config]
+          | includeClose _ _ =>
               simp [h_tokp, DB.mkErrorFromEvidence_config, ParserState.feedToken_db_config]
           | proof _ =>
               simp [h_tokp, DB.mkErrorFromEvidence_config, ParserState.feedToken_db_config]

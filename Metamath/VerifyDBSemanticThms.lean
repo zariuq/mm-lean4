@@ -67,6 +67,8 @@ theorem parseErrorCode?_sound (s : DB) (code : ParseErrorCode) :
               simp [h_err] at h_code
           | thm pos l f fr =>
               simp [h_err] at h_code
+          | includeRequest sourceFile includePath =>
+              simp [h_err] at h_code
 
 /-- Parser-level clause soundness from decoded code + code-to-clause map. -/
 theorem parseErrorCode?_clause_sound

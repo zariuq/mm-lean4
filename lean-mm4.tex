@@ -124,8 +124,8 @@ declarative semantics (\lean{Semantic.Provable}).
 Under a strict configuration (\lean{prefixCertified}), we additionally prove
 \emph{prefix provenance}: every accepted theorem is provable using only
 earlier theorems, ruling out circular reasoning.
-The development comprises 54{,}130 lines of Lean across 46~files, with
-zero \lean{sorry}s, zero axioms, and a clean build of 129~modules.
+The development comprises 57{,}065 lines of Lean across 74~files, with
+zero \lean{sorry}s, zero axioms, and a clean build of 163~modules.
 All 55 parser error codes carry certified semantic evidence.
 To our knowledge, this is the first complete soundness-and-completeness
 proof of a Metamath verifier implementation.
@@ -165,10 +165,10 @@ These two directions are combined into a single biconditional
   (\leansmall{verify_parser_acceptance_iff_spec_provable}):
   from raw \lean{ByteArray} to \lean{Spec.Provable}, for any
   configuration.
-\item \textbf{Semantic bridge}
-  (\leansmall{verify_parser_acceptance_iff_semantic_provable_total}):
-  the same biconditional bridged to Carneiro's declarative
-  \lean{Semantic.Provable}, using total database extraction.
+\item \textbf{Supported-first semantic bridge}
+  (\leansmall{verify_parser_acceptance_iff_supported_semantic_provable_total}):
+  the same biconditional bridged to derivation-local supported
+  semantics (\lean{SupportedProvable}) over total database extraction.
 \item \textbf{Prefix provenance}
   (\leansmall{checkBytes_done_finishProofEvent_certified}):
   every accepted \texttt{\$p} theorem is provable in the
@@ -183,11 +183,12 @@ These two directions are combined into a single biconditional
 \end{enumerate}
 
 \paragraph{Trust boundary.}
-The formal theorems cover \lean{checkBytes} given a \lean{ByteArray}.
-Include expansion (\texttt{\$[ \ldots\ \$]}) is treated as a
-pre-processing step outside the formalized core.
-The verified part is: given fully expanded bytes, the parser correctly
-checks every proof.
+The core semantic theorems are stated over \lean{checkBytes} on
+\lean{ByteArray} input.  The default IO checker is
+\lean{checkSinglePass}, which performs single-pass include handling with
+bounded depth (\lean{ModeConfig.maxIncludeDepth}) and a pure parser-step
+core.  The remaining trust boundary is filesystem behavior
+(\lean{realPath}/\lean{readBinFile}) in the IO dispatcher.
 
 \paragraph{Organization.}
 \S\ref{sec:spec} maps the Metamath specification to Lean types.
@@ -283,7 +284,7 @@ are all provable.
 inductive Provable (axs : Statement -> Prop) (G : Context)
     : Formula -> Prop
   | hyp (h) : h in G.hyps -> Provable axs G h
-  | var (v:VR) : v.vhyp in G.hyps -> Provable axs G v
+  | var (v:VR) : Provable axs G v
   | ax (s) {ax} : axs ax -> ax.ctx.dj.subst s G.dj ->
     (forall h in ax.ctx.hyps, Provable axs G (h.subst s)) ->
     (forall v in ax.vars, Provable axs G (v.type, s v)) ->
@@ -304,7 +305,7 @@ in \file{Spec/Operational.lean}).
 
 \subsection{End-to-End Biconditional}
 
-\begin{lstlisting}[caption={End-to-end biconditional (\file{KernelClean.lean}:10976).},label=lst:main]
+\begin{lstlisting}[caption={End-to-end biconditional (\file{KernelClean.lean}:10977).},label=lst:main]
 theorem verify_parser_acceptance_iff_spec_provable
     (bytes : ByteArray)
     (label : String)
@@ -344,8 +345,8 @@ error.  The theorem holds for \emph{any} configuration.
 
 The biconditional is further bridged to Carneiro's declarative semantics:
 
-\begin{lstlisting}[caption={Semantic bridge (\file{ParserEquivalence.lean}:441).},label=lst:semantic-bridge]
-theorem verify_parser_acceptance_iff_semantic_provable_total
+\begin{lstlisting}[caption={Semantic bridge (\file{ParserEquivalence.lean}).},label=lst:semantic-bridge]
+theorem verify_parser_acceptance_iff_supported_semantic_provable_total
     (bytes : ByteArray)
     (label : String)
     (f : Verify.Formula)
@@ -360,16 +361,17 @@ theorem verify_parser_acceptance_iff_semantic_provable_total
     (exists (fr : Spec.Frame),
       toFrame (Verify.checkBytes bytes)
             (Verify.checkBytes bytes).frame = some fr
-      and Spec.Semantic.Provable
-            (dbToAxioms (toDatabaseTotal (Verify.checkBytes bytes)))
-            (frameToContext fr)
+      and SupportedProvable
+            (toDatabaseTotal (Verify.checkBytes bytes))
+            fr
             (exprToFormula (varMapOfFrame fr) (toExpr f)))
 \end{lstlisting}
 
-Note that the right-hand side uses \lean{toDatabaseTotal}---a total
-(non-\lean{Option}) database extraction.  The \lean{Option} wrapper in
-the original \lean{toDatabase} was always \lean{some} by construction;
-\lean{toDatabaseTotal} makes this explicit.
+This is the canonical completeness interface: no global support premise at
+call sites.  The variant
+\lean{verify_parser_acceptance_iff_semantic_provable_total} uses
+\lean{SemanticFrameSupported} instead of \lean{SupportedProvable} and
+requires an explicit global support premise.
 
 \subsection{Mode Equivalence}
 
@@ -394,43 +396,69 @@ entire system.
 \section{The Generic Spec Theorem}
 \label{sec:generic}
 
-Underneath the parser-level biconditionals lies a pure specification-level
-equivalence between the operational and declarative formulations of
-provability.
+Underneath the parser-level biconditionals lies a specification-level
+equivalence between our operational verifier and Mario's declarative
+formulation. This section presents the split as soundness + completeness,
+which is the natural structure of the proof.
 
-\begin{lstlisting}[caption={Spec-level equivalence (\file{Spec/Equivalence.lean}:3505).},label=lst:equiv]
-theorem operational_iff_semantic
+\paragraph{Soundness (\file{Spec/Equivalence.lean}:3501).}
+
+\begin{lstlisting}[caption={Soundness: operational acceptance implies semantic validity.},label=lst:sound]
+theorem operational_to_semantic
+    {G : Database} {consts : ConstSet} {fr : Frame} {e : Expr}
+    (h_wf : WellFormedDatabaseStrong G consts)
+    (h_fr_disjoint : Spec.FrameVarsDisjointConsts consts fr) :
+    Provable G fr e ->
+    Semantic.Provable (dbToAxioms G) (frameToContext fr)
+        (exprToFormula (varMapOfFrame fr) e)
+\end{lstlisting}
+
+\paragraph{Completeness (\file{Spec/Equivalence.lean}:3468).}
+
+\begin{lstlisting}[caption={Completeness: derivation-supported provability implies operational acceptance.},label=lst:complete]
+theorem mario_to_proofValid
     {G : Database} {consts : ConstSet} {fr : Frame} {e : Expr}
     (h_wf : WellFormedDatabaseStrong G consts)
     (h_fr_nodup : FloatVarNoDup fr)
-    (h_fr_disjoint : Spec.FrameVarsDisjointConsts consts fr) :
+    (h_fr_disjoint : Spec.FrameVarsDisjointConsts consts fr)
+    (h_mario : SupportedProvable G fr (exprToFormula (varMapOfFrame fr) e)) :
     Provable G fr e
-    <-> Semantic.Provable (dbToAxioms G) (frameToContext fr)
-          (exprToFormula (varMapOfFrame fr) e)
 \end{lstlisting}
 
+\paragraph{The \lean{SupportedProvable} condition.}
+Mario's \lean{Provable} relation includes a \lean{var} constructor that
+requires no hypothesis: any variable is trivially derivable in an
+unbounded context.  The operational verifier, however, works with a
+finite frame map and can only accept variables that are explicitly
+typed by floating hypotheses.
+
+\lean{SupportedProvable} closes this gap: it is \lean{Provable} where
+each \lean{var} leaf carries a witness that the variable appears in the
+frame's floating hypothesis map.  This is not a restriction added to
+make the proof work---it is the precise semantic condition under which
+the verifier is complete.
+
 \paragraph{Premises.}
-The theorem requires three structural well-formedness conditions:
+Both theorems share three structural conditions:
 \begin{itemize}[leftmargin=2em]
 \item \lean{WellFormedDatabaseStrong}: every assertion in the database
   has well-formed hypotheses, consistent typecodes, and valid DV pairs.
 \item \lean{FloatVarNoDup}: floating hypotheses in the frame have
-  distinct variables.
+  distinct variables (completeness only).
 \item \lean{FrameVarsDisjointConsts}: frame variables do not collide
   with database constants.
 \end{itemize}
+All three are discharged automatically from parser-success hypotheses
+in \file{ParserEquivalence.lean}, so they do not appear as obligations
+at call sites.
 
-\paragraph{Discharging from parser success.}
-A specialized bridge theorem (\file{ParserEquivalence.lean})
-discharges all three premises from a single hypothesis:
-successful \lean{checkBytes} completion (no error).
-The parser's well-formedness gate (\lean{wellFormed?}) and its
-structural invariants guarantee that any successfully-parsed
-database satisfies all three conditions.
-Concretely, KernelClean's strong well-formedness extractor and
-ParserEquivalence's total parser bridge package this discharge, so
-reviewers do not need to re-thread generic premises at call sites.
-See Listing~\ref{lst:parser-semantic} in Appendix~\ref{app:listings}.
+\paragraph{Combined biconditional.}
+\lean{operational_iff_semantic} (\file{Spec/Equivalence.lean}:3529)
+packages both directions under the stronger global condition
+\lean{SemanticFrameSupported G fr} (every semantic variable in the
+frame can be read back from the floating hypothesis map).  This global
+form is used in contexts where a derivation-specific support witness is
+not available.
 
 \paragraph{Bridge functions.}
 The equivalence uses four translation functions:
@@ -526,10 +554,11 @@ Honest verification requires documenting not just what is proved but
 also what is \emph{not} proved.
 
 \paragraph{Include expansion is trusted.}
-The Metamath \texttt{\$[ \ldots\ \$]} include mechanism is handled
-by IO-based pre-processing outside the formalized core.
-Our theorems cover \lean{checkBytes} given a fully-expanded
-\lean{ByteArray}.
+The default checker path is single-pass include handling
+(\lean{checkSinglePass}) with bounded depth and explicit include errors.
+The parser/driver split keeps parser stepping pure and isolates IO in
+the include-dispatch loop.  What remains outside theorem-level modeling
+is the external filesystem oracle behavior.
 
 \paragraph{Error codes: soundness only.}
 The theorem \leansmall{checkBytes_parseErrorCode?_fullyCertified}
@@ -568,20 +597,24 @@ engineering accommodations for Lean's kernel, not mathematical claims.
 \subsection{Build Instructions}
 
 \begin{itemize}[leftmargin=2em]
-\item \textbf{Lean toolchain}: \texttt{leanprover/lean4:v4.18.0-rc1}
+\item \textbf{Lean toolchain}: \texttt{leanprover/lean4:v4.27.0}
   (specified in \file{lean-toolchain})
 \item \textbf{Dependencies}: Batteries v4.27.0-rc1 (no Mathlib)
 \end{itemize}
 
 \begin{verbatim}
     # Build everything (recommended: set 6GB memory cap)
-    ulimit -Sv 6291456 && nice -n 19 lake build
-    # -> Build completed successfully (129 jobs).
+    ulimit -Sv 6291456 && LAKE_JOBS=3 nice -n 19 lake build
+    # -> Build completed successfully (163 jobs).
 
-    # Run test suite
-    lake build testParserInvariants
-    ./.lake/build/bin/testParserInvariants
-    # -> 151/151 tests passed
+    # Run parity canary (single-pass vs legacy boundary)
+    ./.lake/build/bin/testCheckSinglePassParity
+    # -> parity checks pass
+
+    # Run metamath-test small suite for mm-lean4
+    cd ../metamath-test
+    ulimit -Sv 6291456 && ./run-testsuite-all ./test-mm-lean4 --small-only
+    # -> 141/141
 \end{verbatim}
 
 \subsection{Verifying Sorry-Freedom}
@@ -631,13 +664,13 @@ The verification proceeds bottom-up through five layers:
     verify_impl_sound / verify_impl_complete (KernelClean.lean)
       |
       v
-    operational_iff_semantic (Spec/Equivalence.lean)
+    operational_to_semantic / mario_to_proofValid (Spec/Equivalence.lean)
       |
       v
     verify_parser_acceptance_iff_spec_provable (KernelClean.lean)
       |
       v
-    verify_parser_acceptance_iff_semantic_provable_total
+    verify_parser_acceptance_iff_supported_semantic_provable_total
       (ParserEquivalence.lean)
 \end{verbatim}
 
@@ -657,10 +690,11 @@ The proof proceeds through the following chain (all sorry-free):
   (acceptance implies provability).
 \item \lean{verify_impl_complete}: the completeness direction
   (provability implies acceptance).
-\item \lean{operational_iff_semantic}: spec-level equivalence between
-  operational and declarative provability.
-\item \lean{parser_operational_iff_semantic_total}: specializes the
-  bridge to parser-origin databases with total extraction.
+\item \lean{operational_to_semantic}: unconditional spec-level soundness.
+\item \lean{mario_to_proofValid}: completeness from derivation-local
+  supported semantic witnesses.
+\item \lean{verify_parser_acceptance_iff_supported_semantic_provable_total}:
+  parser-level supported-first biconditional.
 \item The end-to-end biconditionals: combined from steps 5--8.
 \end{enumerate}
 
@@ -692,14 +726,14 @@ payload and semantic violation evidence in a single pass.
 \toprule
 \textbf{Metric} & \textbf{Value} \\
 \midrule
-Total Lean lines & 54{,}130 \\
-Lean files & 46 \\
-Build modules & 129 \\
+Total Lean lines & 57{,}065 \\
+Lean files & 74 \\
+Build modules & 163 \\
 Test cases & 151 \\
 Sorries & 0 \\
 Axioms & 0 \\
 Error codes certified & 55/55 \\
-Largest file & KernelClean.lean (11{,}395 lines) \\
+Largest file & KernelClean.lean (11{,}396 lines) \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -728,13 +762,18 @@ correctness.
 \paragraph{Future directions.}
 Three natural extensions remain:
 \begin{itemize}[leftmargin=2em]
-\item Formalizing include expansion (\texttt{\$[ \ldots\ \$]}),
-  extending the trust boundary to cover file-level composition.
 \item Error code \emph{completeness}: proving that if a specific
   violation occurs first, the parser produces the corresponding code.
+\item A filesystem-oracle model for IO dispatch (\lean{realPath},
+  \lean{readBinFile}), to formalize environment-level assumptions.
 \item Integration with mm0: bridging our Lean formalization to
   the mm0 proof format used by \texttt{mm0-rs}.
 \end{itemize}
+
+\section*{Acknowledgments}
+We thank Mario Carneiro for the initial Lean Metamath checker PoC
+(\lean{checkBytes}) and for detailed architectural/code-review feedback
+that shaped the final supported-first and single-pass include design.
 
 %% ═══════════════════════════════════════════════════════════════════════════
 \appendix
@@ -778,7 +817,7 @@ inductive ProofValid (G : Database) :
         (ProofStep.useAssertion l s :: steps)
 \end{lstlisting}
 
-\subsection{\texttt{operational\_iff\_semantic} (Equivalence.lean:3505)}
+\subsection{\texttt{operational\_iff\_semantic} (Equivalence.lean:3530)}
 
 \begin{lstlisting}[label=lst:equiv-full]
 theorem operational_iff_semantic
@@ -786,29 +825,35 @@ theorem operational_iff_semantic
     {fr : Frame} {e : Expr}
     (h_wf : WellFormedDatabaseStrong G consts)
     (h_fr_nodup : FloatVarNoDup fr)
-    (h_fr_disjoint : Spec.FrameVarsDisjointConsts consts fr) :
+    (h_fr_disjoint : Spec.FrameVarsDisjointConsts consts fr)
+    (h_supported : SemanticFrameSupported G fr) :
     Provable G fr e
     <-> Semantic.Provable (dbToAxioms G) (frameToContext fr)
           (exprToFormula (varMapOfFrame fr) e)
 \end{lstlisting}
 
-\subsection{\texttt{parser\_operational\_iff\_semantic\_total} (ParserEquivalence.lean:380)}
+\subsection{\texttt{verify\_parser\_acceptance\_iff\_supported\_semantic\_provable\_total}
+(ParserEquivalence.lean)}
 
 \begin{lstlisting}[label=lst:parser-semantic]
-theorem parser_operational_iff_semantic_total
+theorem verify_parser_acceptance_iff_supported_semantic_provable_total
     (bytes : ByteArray)
+    (label : String)
+    (f : Verify.Formula)
     (h_success : (Verify.checkBytes bytes).error? = none)
-    (fr : Spec.Frame) (e : Spec.Expr)
-    (h_frame : toFrame (Verify.checkBytes bytes)
-                 (Verify.checkBytes bytes).frame = some fr) :
-    Spec.Provable (toDatabaseTotal (Verify.checkBytes bytes)) fr e
-    <-> Spec.Semantic.Provable
-          (dbToAxioms (toDatabaseTotal (Verify.checkBytes bytes)))
-          (frameToContext fr)
-          (exprToFormula (varMapOfFrame fr) e)
+    :
+    (... parser acceptance for label/f ...)
+    <->
+    (exists (fr : Spec.Frame),
+      toFrame (Verify.checkBytes bytes)
+        (Verify.checkBytes bytes).frame = some fr
+      and SupportedProvable
+        (toDatabaseTotal (Verify.checkBytes bytes))
+        fr
+        (exprToFormula (varMapOfFrame fr) (toExpr f)))
 \end{lstlisting}
 
-\subsection{\texttt{checkBytes\_parseErrorCode?\_fullyCertified} (ErrorCodeSemantics.lean:482)}
+\subsection{\texttt{checkBytes\_parseErrorCode?\_fullyCertified} (ErrorCodeSemantics.lean:492)}
 
 \begin{lstlisting}[label=lst:errorcode]
 theorem checkBytes_parseErrorCode?_fullyCertified
@@ -837,66 +882,19 @@ theorem soundDefault_prefixCertified :
 \section{File Inventory}
 \label{app:inventory}
 
-Table~\ref{tab:files} lists all 46 Lean files with line counts.
+The authoritative inventory is all \texttt{.lean} files under
+\texttt{Metamath/}.  At the time of writing:
+\begin{itemize}[leftmargin=2em]
+\item Lean files under \texttt{Metamath/}: 74
+\item Total lines under \texttt{Metamath/}: 57{,}065
+\item Largest file: \texttt{Metamath/KernelClean.lean} (11{,}396 lines)
+\end{itemize}
 
-\begin{table}[ht]
-\centering
-\caption{Complete file inventory (54{,}130 lines total).}
-\label{tab:files}
-\small
-\begin{tabular}{lr}
-\toprule
-\textbf{File} & \textbf{Lines} \\
-\midrule
-Metamath/AllM.lean & 128 \\
-Metamath/ArrayListExt.lean & 818 \\
-Metamath/Bridge/Basics.lean & 251 \\
-Metamath/Bridge.lean & 91 \\
-Metamath/ByteSliceCompat.lean & 84 \\
-Metamath/CounterexampleInsertError.lean & 102 \\
-Metamath/DBCaseAnalysis.lean & 2{,}006 \\
-Metamath/DBLemmas.lean & 218 \\
-Metamath/DeclarativeSpec.lean & 640 \\
-Metamath/ErrorCodeSemantics.lean & 490 \\
-Metamath/FrontendAudit.lean & 263 \\
-Metamath/FrontendBridge.lean & 544 \\
-Metamath/FrontendCertified.lean & 130 \\
-Metamath/GuardCombinators.lean & 182 \\
-Metamath/HashMapLemmas.lean & 683 \\
-Metamath/KernelClean.lean & 11{,}395 \\
-Metamath/KernelExtras.lean & 238 \\
-Metamath/LoopInvariant.lean & 81 \\
-Metamath/ParserAnyModeEquivalence.lean & 270 \\
-Metamath/ParserBasics.lean & 158 \\
-Metamath/ParserCorrectnessCore.lean & 23 \\
-Metamath/ParserCorrectness.lean & 1{,}906 \\
-Metamath/ParserEquivalenceExamples.lean & 74 \\
-Metamath/ParserEquivalence.lean & 492 \\
-Metamath/ParserInvariants.lean & 618 \\
-Metamath/ParserInvariantsStep1.lean & 178 \\
-Metamath/ParserLoopInduction.lean & 1{,}896 \\
-Metamath/ParserOperations.lean & 9{,}804 \\
-Metamath/ParserProofs.lean & 1{,}772 \\
-Metamath/ParserSoundnessDemo.lean & 150 \\
-Metamath/PrefixProvenance.lean & 2{,}697 \\
-Metamath/PrefixTraceCompressed.lean & 1{,}045 \\
-Metamath/PrefixWitnessCheckBytes.lean & 2{,}125 \\
-Metamath/Spec/Bridge.lean & 1{,}344 \\
-Metamath/Spec/Core.lean & 234 \\
-Metamath/Spec/Equivalence.lean & 3{,}540 \\
-Metamath/Spec/Frontend.lean & 183 \\
-Metamath/Spec.lean & 5 \\
-Metamath/Spec/Operational.lean & 270 \\
-Metamath/Spec/Semantic.lean & 10 \\
-Metamath/Tests/CliErrorCodeFormat.lean & 42 \\
-Metamath/Tests/ParserInvariantTests.lean & 191 \\
-Metamath/ValidateDB.lean & 212 \\
-Metamath/Verify.lean & 5{,}601 \\
-Metamath/WellFormedness.lean & 921 \\
-Metamath/ZipperTest.lean & 25 \\
-\bottomrule
-\end{tabular}
-\end{table}
+For a full reproducible inventory snapshot:
+\begin{verbatim}
+find Metamath -name "*.lean" | sort
+find Metamath -name "*.lean" -print0 | xargs -0 wc -l
+\end{verbatim}
 
 %% ═══════════════════════════════════════════════════════════════════════════
 \section{Unit Tests and Spec Alignment}

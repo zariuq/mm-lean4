@@ -88,6 +88,16 @@ theorem ParserState_mkErrorFromEvidence_sets_error (s : ParserState) (pos : Pos)
 theorem ParserState_mkErrorFromEvidence_sets_error_bool (s : ParserState) (pos : Pos) (ev : ErrorEvidence) :
     (s.mkErrorFromEvidence pos ev).db.error = true := by
   simp [ParserState.mkErrorFromEvidence, ParserState.withDB]
+
+/-- `requestInclude` always sets an interrupt-like parser error. -/
+theorem ParserState_requestInclude_sets_error (s : ParserState) (includePath : String) :
+    (s.requestInclude includePath).db.error? ≠ none := by
+  simp [ParserState.requestInclude]
+
+/-- Boolean form of `ParserState_requestInclude_sets_error`. -/
+theorem ParserState_requestInclude_sets_error_bool (s : ParserState) (includePath : String) :
+    (s.requestInclude includePath).db.error = true := by
+  exact (error_iff_error?_ne_none _).2 (ParserState_requestInclude_sets_error s includePath)
 /-- label either preserves db or sets error -/
 theorem label_preserves_error (s : ParserState) (pos : Pos) (tk : ByteSlice) :
     s.db.error? ≠ none → (s.label pos tk).db.error? ≠ none := by
@@ -475,160 +485,151 @@ theorem djvars_withMath_hyps_behavior
 theorem feedToken_preserves_error (s : ParserState) (pos : Nat) (tk : ByteSlice) :
     s.db.error? ≠ none → (s.feedToken pos tk).db.error? ≠ none := by
   intro h_err
-  -- The feedToken function (Verify.lean:693-755) has many branches
-  -- We use the existing error preservation lemmas from ParserCorrectnessCore
   unfold ParserState.feedToken
-  -- Match on s.tokp
   cases h_tokp : s.tokp with
   | comment p =>
-    -- Three cases: $) closes comment, $( is nested error, else continue
-    simp
-    split
-    · exact h_err  -- $) case: returns with p, db unchanged
-    · split
-      · -- $( nested comment delimiter error: mkErrorFromEvidence sets an error
-        exact ParserState_mkErrorFromEvidence_sets_error s (s.mkPos pos)
-          (.tokenForm .nestedCommentDelimiter)
-      · exact h_err  -- else: s unchanged
+    by_cases h_close : tk.eqArray "$)".toAscii = true
+    · simp [h_close, h_err]
+    · by_cases h_open : tk.eqArray "$(".toAscii = true
+      · simp [h_close, h_open, ParserState_mkErrorFromEvidence_sets_error]
+      · simp [h_close, h_open, h_err]
   | start =>
-    -- Complex case with many subcases
-    simp
-    -- First check: if tk == "$("
-    split
-    case isTrue h_comment =>
-      -- Returns s with tokp := .start.comment, preserves db
-      exact h_err
-    case isFalse h_not_comment =>
-      -- Now check: if tk.len == 2 && tk[0]! == '$'
-      split
-      case isTrue h_dollar =>
-        -- Match on tk[1]!.toChar for the specific dollar commands
-        -- Cases: '{' '}' 'c' 'v' 'd' '_'
+    by_cases h_comment : tk.eqArray "$(".toAscii = true
+    · simp [h_comment, h_err]
+    · by_cases h_include : tk.eqArray "$[".toAscii = true
+      · simp [h_comment, h_include]
         split
-        case h_1 =>  -- '{': s.withDB .pushScope
-          apply withDB_preserves_error?
-          · intro h  -- h : s.db.error = true
-            exact ParserCorrectness.pushScope_preserves_error s.db h
+        · exact ParserState_mkErrorFromEvidence_sets_error s (s.mkPos pos) _
+        · exact h_err
+      · simp [h_comment, h_include]
+        split
+        · split
+          · apply withDB_preserves_error?
+            · intro h
+              exact ParserCorrectness.pushScope_preserves_error s.db h
+            · exact h_err
+          · apply withDB_preserves_error?
+            · intro h
+              exact ParserCorrectness.popScope_preserves_error s.db (s.mkPos pos) h
+            · exact h_err
           · exact h_err
-        case h_2 =>  -- '}': s.withDB (.popScope pos)
-          apply withDB_preserves_error?
-          · intro h  -- h : s.db.error = true
-            exact ParserCorrectness.popScope_preserves_error s.db (s.mkPos pos) h
           · exact h_err
-        case h_3 => exact h_err  -- 'c': { s with tokp := .const }
-        case h_4 => exact h_err  -- 'v': { s with tokp := .var }
-        case h_5 => exact h_err  -- 'd': { s with tokp := .djvars #[] }
-        case h_6 =>  -- '_': s.label pos tk
-          apply label_preserves_error
-          exact h_err
-      case isFalse h_not_dollar =>
-        -- s.label (s.mkPos pos) tk - calls label which preserves error
-        apply label_preserves_error
-        exact h_err
+          · exact h_err
+          · exact label_preserves_error s (s.mkPos pos) tk h_err
+        · exact label_preserves_error s (s.mkPos pos) tk h_err
   | const =>
-    -- s.sym (s.mkPos pos) tk .const - calls sym which preserves error
-    simp
-    -- Structure: if tk == "$(" then comment else sym
-    split
-    case isTrue h_comment =>
-      exact h_err  -- comment case preserves db
-    case isFalse h_not_comment =>
-      apply sym_preserves_error
-      exact h_err
-  | var =>
-    -- s.sym (s.mkPos pos) tk .var - calls sym which preserves error
-    simp
-    -- Structure: if tk == "$(" then comment else sym
-    split
-    case isTrue h_comment =>
-      exact h_err  -- comment case preserves db
-    case isFalse h_not_comment =>
-      apply sym_preserves_error
-      exact h_err
-  | djvars arr =>
-    simp
-    -- Structure: if tk == "$." then { s with tokp := .start } else withMath ...
-    split
-    case isTrue h_comment =>
-      -- First check is actually comment $( not $.
-      exact h_err  -- comment: { s with tokp := .comment }
-    case isFalse h_not_comment =>
-      -- Now the actual djvars logic
-      split
-      case isTrue h_end =>
-        -- Returns s with tokp := .start (db unchanged)
-        exact h_err
-      case isFalse h_not_end =>
-        -- withMath pos tk fun s' tk' => Id.run do ...
-        -- All paths inside: mkError (sets error) or withDB (preserves) or structure update
-        apply withMath_preserves_error
-        · intro s' tk' h_err'
-          -- djvars_loop encapsulates the isVar check + loop.
-          exact djvars_loop_preserves_error arr s' (s.mkPos pos) tk' h_err'
-        · exact h_err
-  | math arr p =>
-    simp
-    -- Structure: if tk == "$(" then comment else if tk == delim then feedTokens else withMath
-    split
-    case isTrue h_comment =>
-      exact h_err  -- comment case
-    case isFalse h_not_comment =>
-      split
-      case isTrue h_delim =>
-        -- s.feedTokens arr p - use feedTokens_preserves_error
-        apply feedTokens_preserves_error
-        exact h_err
-      case isFalse h_not_delim =>
-        -- withMath with db lookup and update
-        apply withMath_preserves_error
-        · intro s' tk' h_err'
-          simp only [Id.run]
-          -- Inside: match on find?, either mkError or structure update
-          split
-          · exact h_err'  -- some (.const _): structure update
-          · exact h_err'  -- some (.var _): structure update
-          · split <;> exact ParserState_mkErrorFromEvidence_sets_error s' (s.mkPos pos) _  -- _: mkErrorFromEvidence
-        · exact h_err
-  | label pos' lab =>
-    simp
-    -- First check: if tk == "$(" (comment start)
-    split
-    case isTrue h_comment =>
-      -- { s with tokp := .comment } - just changes tokp, preserves db
-      exact h_err
-    case isFalse h_not_comment =>
-      -- Now check: if tk.len == 2 && tk[0]! == '$' (statement keyword)
-      split
-      case isTrue h_stmt =>
-        -- Match on tk[1]!.toChar: either { s with tokp := .math ... } or mkError
-        -- The 'go' function just changes tokp, preserves db
+    by_cases h_comment : tk.eqArray "$(".toAscii = true
+    · simp [h_comment, h_err]
+    · by_cases h_include : tk.eqArray "$[".toAscii = true
+      · simp [h_comment, h_include]
         split
-        case h_1 => exact h_err  -- 'f' case: { s with tokp := .math #[] ... }
-        case h_2 => exact h_err  -- 'e' case
-        case h_3 => exact h_err  -- 'a' case
-        case h_4 => exact h_err  -- 'p' case
-        case h_5 => exact ParserState_mkError_sets_error s pos' _  -- '_' case: mkError
-      case isFalse h_not_stmt =>
-        -- s.mkError - sets error
-        exact ParserState_mkError_sets_error s pos' _
+        · exact ParserState_mkErrorFromEvidence_sets_error s (s.mkPos pos) _
+        · exact h_err
+      · simp [h_comment, h_include]
+        exact sym_preserves_error s (s.mkPos pos) tk .const h_err
+  | var =>
+    by_cases h_comment : tk.eqArray "$(".toAscii = true
+    · simp [h_comment, h_err]
+    · by_cases h_include : tk.eqArray "$[".toAscii = true
+      · simp [h_comment, h_include]
+        split
+        · exact ParserState_mkErrorFromEvidence_sets_error s (s.mkPos pos) _
+        · exact h_err
+      · simp [h_comment, h_include]
+        exact sym_preserves_error s (s.mkPos pos) tk .var h_err
+  | djvars arr =>
+    by_cases h_comment : tk.eqArray "$(".toAscii = true
+    · simp [h_comment, h_err]
+    · by_cases h_include : tk.eqArray "$[".toAscii = true
+      · simp [h_comment, h_include]
+        split
+        · exact ParserState_mkErrorFromEvidence_sets_error s (s.mkPos pos) _
+        · exact h_err
+      · simp [h_comment, h_include]
+        split
+        · exact h_err
+        · apply withMath_preserves_error
+          · intro s' tk' h_err'
+            exact djvars_loop_preserves_error arr s' (s.mkPos pos) tk' h_err'
+          · exact h_err
+  | math arr p =>
+    by_cases h_comment : tk.eqArray "$(".toAscii = true
+    · simp [h_comment, h_err]
+    · by_cases h_include : tk.eqArray "$[".toAscii = true
+      · simp [h_comment, h_include]
+        split
+        · exact ParserState_mkErrorFromEvidence_sets_error s (s.mkPos pos) _
+        · exact h_err
+      · simp [h_comment, h_include]
+        split
+        · exact feedTokens_preserves_error s arr p h_err
+        · apply withMath_preserves_error
+          · intro s' tk' h_err'
+            simp only [Id.run]
+            split
+            · exact h_err'
+            · exact h_err'
+            · split <;> exact ParserState_mkErrorFromEvidence_sets_error s' (s.mkPos pos) _
+          · exact h_err
+  | label pos' lab =>
+    by_cases h_comment : tk.eqArray "$(".toAscii = true
+    · simp [h_comment, h_err]
+    · by_cases h_include : tk.eqArray "$[".toAscii = true
+      · simp [h_comment, h_include]
+        split
+        · exact ParserState_mkErrorFromEvidence_sets_error s (s.mkPos pos) _
+        · exact h_err
+      · simp [h_comment, h_include]
+        split
+        · split
+          · exact h_err
+          · exact h_err
+          · exact h_err
+          · exact h_err
+          · exact ParserState_mkErrorFromEvidence_sets_error s pos' _
+        · exact ParserState_mkErrorFromEvidence_sets_error s pos' _
+  | includePath includePos =>
+    by_cases h_comment : tk.eqArray "$(".toAscii = true
+    · simp [h_comment, h_err]
+    · by_cases h_include : tk.eqArray "$[".toAscii = true
+      · simp [h_comment, h_include]
+        split
+        · exact ParserState_mkErrorFromEvidence_sets_error s (s.mkPos pos) _
+        · exact h_err
+      · simp [h_comment, h_include]
+        split
+        · exact ParserState_mkErrorFromEvidence_sets_error s includePos _
+        ·
+          unfold ParserState.normalizeIncludePath
+          split
+          · exact ParserState_mkErrorFromEvidence_sets_error s includePos _
+          · split
+            · exact ParserState_requestInclude_sets_error s _
+            · exact h_err
+  | includeClose includePos includePath =>
+    by_cases h_comment : tk.eqArray "$(".toAscii = true
+    · simp [h_comment, h_err]
+    · by_cases h_include : tk.eqArray "$[".toAscii = true
+      · simp [h_comment, h_include]
+        split
+        · exact ParserState_mkErrorFromEvidence_sets_error s (s.mkPos pos) _
+        · exact h_err
+      · simp [h_comment, h_include]
+        split
+        · exact ParserState_requestInclude_sets_error s includePath
+        · exact ParserState_mkErrorFromEvidence_sets_error s includePos _
   | proof pr =>
-    simp
-    -- Structure: if tk == "$(" then comment else if tk == "$." then finishProof else feedProof
-    split
-    case isTrue h_comment =>
-      -- { s with tokp := .comment } - just changes tokp, preserves db
-      exact h_err
-    case isFalse h_not_comment =>
-      -- Now check: if tk == "$."
-      split
-      case isTrue h_end =>
-        -- { s with tokp := default }.finishProof pr - use finishProof_preserves_error
-        apply finishProof_preserves_error
-        exact h_err
-      case isFalse h_not_end =>
-        -- { s with tokp := default }.feedProof tk pr - use feedProof_preserves_error
-        apply feedProof_preserves_error
-        exact h_err
+    by_cases h_comment : tk.eqArray "$(".toAscii = true
+    · simp [h_comment, h_err]
+    · by_cases h_include : tk.eqArray "$[".toAscii = true
+      · simp [h_comment, h_include]
+        split
+        · exact ParserState_mkErrorFromEvidence_sets_error s (s.mkPos pos) _
+        · exact h_err
+      · simp [h_comment, h_include]
+        split
+        · exact finishProof_preserves_error { s with tokp := default } pr h_err
+        · exact feedProof_preserves_error { s with tokp := default } tk pr h_err
 
 /-- **Lemma 1**: error is "sticky" across parser steps
 
@@ -1295,6 +1296,7 @@ theorem withAt_preserves_frame (l : String) (f : Unit → ParserState) :
       simp only [ParserState.withDB]
     | ax _ _ _ _ => rfl  -- Doesn't match .error pattern
     | thm _ _ _ _ => rfl -- Doesn't match .error pattern
+    | includeRequest _ _ => rfl -- Doesn't match .error pattern
 
 /-- If inner computation has error, withAt also has error.
     withAt only modifies the error *message*, not the presence of error. -/
@@ -1318,6 +1320,9 @@ theorem withAt_propagates_error (l : String) (f : Unit → ParserState) :
       -- Doesn't match .error, falls through to s = f ()
       simp only [hopt, Option.isSome_some]
     | thm _ _ _ _ =>
+      -- Doesn't match .error, falls through to s = f ()
+      simp only [hopt, Option.isSome_some]
+    | includeRequest _ _ =>
       -- Doesn't match .error, falls through to s = f ()
       simp only [hopt, Option.isSome_some]
 
@@ -1603,217 +1608,256 @@ theorem feedToken_frame_behavior (s : ParserState) (pos : Nat) (tk : ByteSlice) 
     (∃ label, (s.feedToken pos tk).db.frame.hyps = s.db.frame.hyps.push label) ∨
     (s.feedToken pos tk).db.error = true := by
   unfold ParserState.feedToken
-  -- Case on s.tokp
   cases h_tokp : s.tokp with
   | comment p =>
-    -- Three cases: $) closes, $( is nested error, else continue
-    simp
-    split
-    · left; rfl  -- $) case
-    · split
-      · -- $( nested comment delimiter: mkErrorFromEvidence sets error = true
-        right; right; right
-        exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos)
-          (.tokenForm .nestedCommentDelimiter)
-      · left; rfl  -- else case
+    by_cases h_close : tk.eqArray "$)".toAscii = true
+    · left; simp [h_close]
+    · by_cases h_open : tk.eqArray "$(".toAscii = true
+      · right; right; right
+        simp [h_close, h_open, ParserState_mkErrorFromEvidence_sets_error_bool]
+      · left; simp [h_close, h_open]
   | start =>
-    simp
-    -- Check for $(
-    cases h_comment : tk.eqArray "$(".toAscii with
-    | true => left; simp
-    | false =>
-      simp
-      -- Check for $X where X ∈ {'{', '}', 'c', 'v', 'd', ...}
-      by_cases h_kw : tk.len = 2 ∧ tk[0]! = '$'.toUInt8
-      · simp [h_kw]
-        -- Match on tk[1]!.toChar: '{', '}', 'c', 'v', 'd', or other
+    by_cases h_comment : tk.eqArray "$(".toAscii = true
+    · left; simp [h_comment]
+    · by_cases h_include : tk.eqArray "$[".toAscii = true
+      · simp [h_comment, h_include]
         split
-        case h_1 => -- '{'
-          left; simp only [ParserState.withDB]
-          exact congrArg Frame.hyps (pushScope_preserves_frame s.db)
-        case h_2 => -- '}'
-          simp only [ParserState.withDB]
-          cases popScope_hyps_behavior (s.mkPos pos) s.db with
-          | inl h =>
-              right; left
-              rcases h with ⟨n, hn⟩
-              refine ⟨n, ?_⟩
-              simpa [Array.shrink_eq_take, Array.take] using hn
-          | inr h => right; right; right; exact h
-        case h_3 => left; rfl   -- 'c'
-        case h_4 => left; rfl   -- 'v'
-        case h_5 => left; rfl   -- 'd'
-        case h_6 => -- other: s.label
+        · right; right; right
+          exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos) _
+        · left; rfl
+      · simp [h_comment, h_include]
+        by_cases h_kw : tk.len = 2 ∧ tk[0]! = '$'.toUInt8
+        · simp [h_kw]
+          split
+          · left
+            simpa [ParserState.withDB] using congrArg Frame.hyps (pushScope_preserves_frame s.db)
+          ·
+            simp only [ParserState.withDB]
+            cases popScope_hyps_behavior (s.mkPos pos) s.db with
+            | inl h =>
+                right; left
+                rcases h with ⟨n, hn⟩
+                refine ⟨n, ?_⟩
+                simpa [Array.shrink_eq_take, Array.take] using hn
+            | inr h =>
+                right; right; right; exact h
+          · left; rfl
+          · left; rfl
+          · left; rfl
+          ·
+            cases label_frame_behavior s (s.mkPos pos) tk with
+            | inl h => left; exact congrArg Frame.hyps h
+            | inr h => right; right; right; exact h
+        ·
+          simp [h_kw]
           cases label_frame_behavior s (s.mkPos pos) tk with
           | inl h => left; exact congrArg Frame.hyps h
           | inr h => right; right; right; exact h
-      · simp [h_kw]
-        -- s.label case
-        cases label_frame_behavior s (s.mkPos pos) tk with
+  | const =>
+    by_cases h_comment : tk.eqArray "$(".toAscii = true
+    · left; simp [h_comment]
+    · by_cases h_include : tk.eqArray "$[".toAscii = true
+      · simp [h_comment, h_include]
+        split
+        · right; right; right
+          exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos) _
+        · left; rfl
+      ·
+        simp [h_comment, h_include]
+        cases sym_frame_behavior s (s.mkPos pos) tk .const with
         | inl h => left; exact congrArg Frame.hyps h
         | inr h => right; right; right; exact h
-  | const =>
-    simp
-    cases h_comment : tk.eqArray "$(".toAscii with
-    | true => left; rfl
-    | false =>
-      simp
-      cases sym_frame_behavior s (s.mkPos pos) tk .const with
-      | inl h => left; exact congrArg Frame.hyps h
-      | inr h => right; right; right; exact h
   | var =>
-    simp
-    cases h_comment : tk.eqArray "$(".toAscii with
-    | true => left; rfl
-    | false =>
-      simp
-      cases sym_frame_behavior s (s.mkPos pos) tk .var with
-      | inl h => left; exact congrArg Frame.hyps h
-      | inr h => right; right; right; exact h
-  | djvars arr =>
-    simp
-    cases h_comment : tk.eqArray "$(".toAscii with
-    | true => left; rfl
-    | false =>
-      simp
-      cases h_end : tk.eqArray "$.".toAscii with
-      | true => left; simp
-      | false =>
-        simp
-        -- withMath + djvars loop preserves hyps (withDJ only modifies dj)
-        cases djvars_withMath_hyps_behavior arr s (s.mkPos pos) tk with
-        | inl h => left; exact h
+    by_cases h_comment : tk.eqArray "$(".toAscii = true
+    · left; simp [h_comment]
+    · by_cases h_include : tk.eqArray "$[".toAscii = true
+      · simp [h_comment, h_include]
+        split
+        · right; right; right
+          exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos) _
+        · left; rfl
+      ·
+        simp [h_comment, h_include]
+        cases sym_frame_behavior s (s.mkPos pos) tk .var with
+        | inl h => left; exact congrArg Frame.hyps h
         | inr h => right; right; right; exact h
-  | math arr' p =>
-    simp
-    cases h_comment : tk.eqArray "$(".toAscii with
-    | true => left; rfl
-    | false =>
-      simp
-      -- feedTokens or withMath - feedTokens may grow hyps, withMath preserves or errors
-      cases h_delim : tk.eqArray p.k.delim with
-      | true =>
-        -- feedTokens case: may preserve, grow, or set error
-        simp [↓reduceIte]
-        cases feedTokens_hyps_behavior s arr' p with
-        | inl h => left; exact h
-        | inr h =>
-          cases h with
-          | inl h => right; right; left; exact h
+  | djvars arr =>
+    by_cases h_comment : tk.eqArray "$(".toAscii = true
+    · left; simp [h_comment]
+    · by_cases h_include : tk.eqArray "$[".toAscii = true
+      · simp [h_comment, h_include]
+        split
+        · right; right; right
+          exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos) _
+        · left; rfl
+      ·
+        simp [h_comment, h_include]
+        split
+        · left; rfl
+        ·
+          cases djvars_withMath_hyps_behavior arr s (s.mkPos pos) tk with
+          | inl h => left; exact h
           | inr h => right; right; right; exact h
-      | false =>
-        -- withMath case: either error or returns {s with tokp := ...} which preserves db
-        simp
-        -- withMath either errors on toMath or calls the lambda
-        -- The lambda looks up tk in db.find? and returns either mkError or {s with tokp := ...}
-        -- In both cases: either db unchanged (hyps preserved) or error set
-        unfold ParserState.withMath
-        -- Split on the full `toMath` pair so the `match` reduces.
-        cases h_math : Verify.toMath tk with
-        | mk ok tkStr =>
-          -- Reduce the `withMath` wrapper.
-          simp
-          cases ok with
-          | false =>
+  | math arr' p =>
+    by_cases h_comment : tk.eqArray "$(".toAscii = true
+    · left; simp [h_comment]
+    · by_cases h_include : tk.eqArray "$[".toAscii = true
+      · simp [h_comment, h_include]
+        split
+        · right; right; right
+          exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos) _
+        · left; rfl
+      ·
+        simp [h_comment, h_include]
+        split
+        ·
+          cases feedTokens_hyps_behavior s arr' p with
+          | inl h => left; exact h
+          | inr h =>
+            cases h with
+            | inl h => right; right; left; exact h
+            | inr h => right; right; right; exact h
+        ·
+          unfold ParserState.withMath
+          cases h_math : Verify.toMath tk with
+          | mk ok tkStr =>
+            simp
+            cases ok with
+            | false =>
               right; right; right
-              -- invalid math string: mkErrorFromEvidence sets error = true
               exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos)
                 (.tokenForm (.invalidMathString tkStr))
-          | true =>
-              -- The lambda either returns `{s with tokp := ...}` (hyps preserved) or an error.
+            | true =>
               cases h_find : s.db.find? tkStr with
               | none =>
+                cases h_gate : s.db.mathSymbolViolation? tkStr with
+                | some err =>
+                  right; right; right
+                  simp [Id_pure_eq]
+                  exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos)
+                    (.scopeDecl err)
+                | none =>
+                  right; right; right
+                  simp [Id_pure_eq]
+                  exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos)
+                    (.internalGate s.db.config.allowDuplicateFloat s.db.wellFormed?
+                      s.db.assertDvVarsInFrame?)
+              | some obj =>
+                cases obj with
+                | const _ =>
+                  left
+                  simp [Id.run, Bind.bind]
+                | var _ =>
+                  left
+                  simp [Id.run, Bind.bind]
+                | hyp _ _ _ =>
                   cases h_gate : s.db.mathSymbolViolation? tkStr with
                   | some err =>
-                      right; right; right
-                      simp [Id_pure_eq]
-                      exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos)
-                        (.scopeDecl err)
+                    right; right; right
+                    simp [Id_pure_eq]
+                    exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos)
+                      (.scopeDecl err)
                   | none =>
-                      right; right; right
-                      simp [Id_pure_eq]
-                      exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos)
-                        (.scopeDecl (.tokenNotConstantOrVariable tkStr))
-              | some obj =>
-                  cases obj with
-                  | const _ =>
-                      simp
-                      left
-                      rfl
-                  | var _ =>
-                      simp
-                      left
-                      rfl
-                  | hyp _ _ _ =>
-                      cases h_gate : s.db.mathSymbolViolation? tkStr with
-                      | some err =>
-                          right; right; right
-                          simp [Id_pure_eq]
-                          exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos)
-                            (.scopeDecl err)
-                      | none =>
-                          right; right; right
-                          simp [Id_pure_eq]
-                          exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos)
-                            (.scopeDecl (.tokenNotConstantOrVariable tkStr))
-                  | assert _ _ =>
-                      cases h_gate : s.db.mathSymbolViolation? tkStr with
-                      | some err =>
-                          right; right; right
-                          simp [Id_pure_eq]
-                          exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos)
-                            (.scopeDecl err)
-                      | none =>
-                          right; right; right
-                          simp [Id_pure_eq]
-                          exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos)
-                            (.scopeDecl (.tokenNotConstantOrVariable tkStr))
+                    right; right; right
+                    simp [Id_pure_eq]
+                    exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos)
+                      (.internalGate s.db.config.allowDuplicateFloat s.db.wellFormed?
+                        s.db.assertDvVarsInFrame?)
+                | assert _ _ =>
+                  cases h_gate : s.db.mathSymbolViolation? tkStr with
+                  | some err =>
+                    right; right; right
+                    simp [Id_pure_eq]
+                    exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos)
+                      (.scopeDecl err)
+                  | none =>
+                    right; right; right
+                    simp [Id_pure_eq]
+                    exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos)
+                      (.internalGate s.db.config.allowDuplicateFloat s.db.wellFormed?
+                        s.db.assertDvVarsInFrame?)
   | label pos' lab =>
-    simp
-    cases h_comment : tk.eqArray "$(".toAscii with
-    | true => left; rfl
-    | false =>
-      simp
-      -- Sets tokp to .math or mkError
-      by_cases h_kw : tk.len = 2 ∧ tk[0]! = '$'.toUInt8
-      · simp [h_kw]
-        -- Match on tk[1]!.toChar: 'f', 'e', 'a', 'p', or other
+    by_cases h_comment : tk.eqArray "$(".toAscii = true
+    · left; simp [h_comment]
+    · by_cases h_include : tk.eqArray "$[".toAscii = true
+      · simp [h_comment, h_include]
         split
-        case h_1 => left; rfl  -- 'f'
-        case h_2 => left; rfl  -- 'e'
-        case h_3 => left; rfl  -- 'a'
-        case h_4 => left; rfl  -- 'p'
-        case h_5 =>
-          right; right; right
-          exact ParserState_mkErrorFromEvidence_sets_error_bool s pos'
-            (.tokenForm (.unknownStatementType (toLabel tk).2))
-      · right; right; right
-        -- unknown statement type: mkErrorFromEvidence sets error = true
-        simp [h_kw]
-        exact ParserState_mkErrorFromEvidence_sets_error_bool s pos'
-          (.tokenForm (.unknownStatementType (toLabel tk).2))
+        · right; right; right
+          exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos) _
+        · left; rfl
+      ·
+        simp [h_comment, h_include]
+        by_cases h_kw : tk.len = 2 ∧ tk[0]! = '$'.toUInt8
+        · simp [h_kw]
+          split
+          · left; rfl
+          · left; rfl
+          · left; rfl
+          · left; rfl
+          · right; right; right
+            exact ParserState_mkErrorFromEvidence_sets_error_bool s pos' _
+        · right; right; right
+          simp [h_kw]
+          exact ParserState_mkErrorFromEvidence_sets_error_bool s pos' _
+  | includePath includePos =>
+    by_cases h_comment : tk.eqArray "$(".toAscii = true
+    · left; simp [h_comment]
+    · by_cases h_include : tk.eqArray "$[".toAscii = true
+      · simp [h_comment, h_include]
+        split
+        · right; right; right
+          exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos) _
+        · left; rfl
+      ·
+        simp [h_comment, h_include]
+        split
+        · right; right; right
+          exact ParserState_mkErrorFromEvidence_sets_error_bool s includePos _
+        ·
+          unfold ParserState.normalizeIncludePath
+          split
+          · right; right; right
+            exact ParserState_mkErrorFromEvidence_sets_error_bool s includePos _
+          · split
+            · right; right; right
+              exact ParserState_requestInclude_sets_error_bool s _
+            · left; rfl
+  | includeClose includePos includePath =>
+    by_cases h_comment : tk.eqArray "$(".toAscii = true
+    · left; simp [h_comment]
+    · by_cases h_include : tk.eqArray "$[".toAscii = true
+      · simp [h_comment, h_include]
+        split
+        · right; right; right
+          exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos) _
+        · left; rfl
+      ·
+        simp [h_comment, h_include]
+        split
+        · right; right; right
+          exact ParserState_requestInclude_sets_error_bool s includePath
+        · right; right; right
+          exact ParserState_mkErrorFromEvidence_sets_error_bool s includePos _
   | proof pr =>
-    simp
-    cases h_comment : tk.eqArray "$(".toAscii with
-    | true => left; rfl
-    | false =>
-      simp
-      -- finishProof or feedProof
-      -- Note: the state is modified with { s with tokp := default } first
-      cases h_end : tk.eqArray "$.".toAscii with
-      | true =>
-        simp [↓reduceIte]
-        -- finishProof - preserves hyps or sets error
-        cases finishProof_hyps_behavior { s with tokp := default } pr with
-        | inl h => left; exact h
-        | inr h => right; right; right; exact h
-      | false =>
-        simp
-        -- feedProof on { s with tokp := default }
-        -- feedProof_frame_behavior gives frame equality, use congrArg for hyps
-        cases feedProof_frame_behavior { s with tokp := default } tk pr with
-        | inl h => left; exact congrArg Frame.hyps h
-        | inr h => right; right; right; exact h
+    by_cases h_comment : tk.eqArray "$(".toAscii = true
+    · left; simp [h_comment]
+    · by_cases h_include : tk.eqArray "$[".toAscii = true
+      · simp [h_comment, h_include]
+        split
+        · right; right; right
+          exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos) _
+        · left; rfl
+      ·
+        simp [h_comment, h_include]
+        split
+        ·
+          cases finishProof_hyps_behavior { s with tokp := default } pr with
+          | inl h => left; exact h
+          | inr h => right; right; right; exact h
+        ·
+          cases feedProof_frame_behavior { s with tokp := default } tk pr with
+          | inl h => left; exact congrArg Frame.hyps h
+          | inr h => right; right; right; exact h
 
 /-- PROVEN: Any state that leads to a successful final state is error-free.
     This is the direct application of the contrapositive of error_monotonic.
