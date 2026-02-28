@@ -109,6 +109,7 @@ theorem parseErrorCode?_includeInInnerScope_payload_inversion
   rcases h_rule with ⟨err, h_ev, h_err_code⟩
   cases err with
   | cycleDetected path => cases h_err_code
+  | depthExceeded path => cases h_err_code
   | inInnerScope pos depth inStatement allowIncludeInnerScopeWitness =>
       exact ⟨pos, depth, inStatement, allowIncludeInnerScopeWitness, by simpa using h_ev⟩
   | insideStatement pos scopeDepth inStatement allowTokenSplicingWitness =>
@@ -128,6 +129,7 @@ theorem parseErrorCode?_includeInsideStatement_payload_inversion
   rcases h_rule with ⟨err, h_ev, h_err_code⟩
   cases err with
   | cycleDetected path => cases h_err_code
+  | depthExceeded path => cases h_err_code
   | inInnerScope pos depth inStatement allowIncludeInnerScopeWitness =>
       cases h_err_code
   | insideStatement pos scopeDepth inStatement allowTokenSplicingWitness =>

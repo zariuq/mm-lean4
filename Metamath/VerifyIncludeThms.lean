@@ -1,4 +1,5 @@
 import Metamath.Verify
+import Metamath.VerifyIncludeBoundary
 import Metamath.VerifyDBSemanticThms
 import Metamath.VerifyDBPayloadThms
 import Metamath.VerifyClauseThms
@@ -278,6 +279,17 @@ theorem DB.parseErrorCode?_includeCycleDetected_guardFacts
     ∃ path, s.errorEvidence? = some (.includeErr (.cycleDetected path)) := by
   intro h_code
   have h_rule := DB.parseErrorCode?_ruleSemantic_sound s .includeCycleDetected h_code
+  simp only [DB.RuleSemanticViolation, DB.IncludeViolation] at h_rule
+  obtain ⟨err, h_ev, h_code_eq⟩ := h_rule
+  cases err <;> simp_all [IncludeError.code]
+
+/-- Decoded `.includeDepthExceeded` yields depth-limit evidence with the file path. -/
+theorem DB.parseErrorCode?_includeDepthExceeded_guardFacts
+    (s : DB) :
+    s.parseErrorCode? = some .includeDepthExceeded →
+    ∃ path, s.errorEvidence? = some (.includeErr (.depthExceeded path)) := by
+  intro h_code
+  have h_rule := DB.parseErrorCode?_ruleSemantic_sound s .includeDepthExceeded h_code
   simp only [DB.RuleSemanticViolation, DB.IncludeViolation] at h_rule
   obtain ⟨err, h_ev, h_code_eq⟩ := h_rule
   cases err <;> simp_all [IncludeError.code]

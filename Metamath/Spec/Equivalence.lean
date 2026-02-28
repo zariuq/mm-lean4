@@ -1,25 +1,23 @@
 /-
-Bridge between Operational and Semantic layers.
+Bridge between the operational verifier (Verify.lean) and Mario's declarative
+specification (DeclarativeSpec.lean).
 
-This file proves the equivalence between:
-- **Operational**: Our ProofValid (stack machine semantics)
-- **Semantic**: Mario's Provable (declarative mathematics)
+**Soundness** (`operational_to_semantic`): every proof accepted by the verifier
+is valid under Mario's semantics.
 
-**Primary theorems** (canonical split):
-```lean
-theorem operational_to_semantic {Γ : Database} {consts : ConstSet} {fr : Frame} {e : Expr} :
-    Provable Γ fr e →
-    Semantic.Provable (dbToAxioms Γ) (frameToContext fr)
-      (exprToFormula (varMapOfFrame fr) e)
+**Completeness** (`mario_to_proofValid`): every formula derivable under
+`SupportedProvable` is accepted by the verifier.
 
-theorem mario_to_proofValid {Γ : Database} {consts : ConstSet} {fr : Frame} {e : Expr}
-    (h_mario : SupportedProvable Γ fr (exprToFormula (varMapOfFrame fr) e)) :
-    Provable Γ fr e
-```
+`SupportedProvable` is Mario's `Provable` where each variable leaf carries a
+witness that the variable appears in the frame's floating hypothesis map.
+This is the appropriate completeness hypothesis: the verifier requires all
+variables to be explicitly typed in the frame, and `SupportedProvable` captures
+exactly that condition.
 
-`operational_iff_semantic` is retained as a legacy compatibility wrapper that
-adds the stronger global support bridge assumption for canonical
-`Semantic.Provable` completeness.
+`SemanticFrameSupported` is a global version of this support condition (every
+semantic variable in the frame can be read back from the variable map). It is
+used by `operational_iff_semantic` to obtain the biconditional directly, at
+the cost of an extra hypothesis at call sites.
 -/
 
 import Metamath.Spec.Core
@@ -1749,10 +1747,14 @@ theorem exprToMarioExpr_applySubst_eq_subst_hyp
 
 /-! ## Derivation-Local Semantic Support
 
-`SupportedProvable` is Mario's declarative system with explicit local support
-witnesses (for `var` leaves and substituted axiom variables). -/
+`SupportedProvable` is Mario's `Provable` relation strengthened at `var` leaves:
+each variable used in the derivation must appear in the frame's floating hypothesis
+map.  This is the exact condition needed for completeness — the operational verifier
+requires every variable to be explicitly typed in the frame — and it is checked
+locally per derivation rather than globally per frame. -/
 
-/-- Derivation-scoped semantic provability supported by the target frame map. -/
+/-- Mario's `Provable` with explicit frame-support witnesses on `var` leaves.
+    Every variable in the derivation must be found in `varMapOfFrame fr`. -/
 inductive SupportedProvable (Γ : Database) (fr : Frame) : MarioFormula → Prop
   | hyp (h) : h ∈ (frameToContext fr).hyps → SupportedProvable Γ fr h
   | var (v : MarioVR) :
@@ -2663,17 +2665,17 @@ theorem supported_const_separation {Γ : Database} {consts : ConstSet} {fr : Fra
     MarioExprConstSep fr fmla.2 :=
   provable_const_separation h_wf h_fr_disjoint h_provable.toSemantic
 
-/-- Legacy global support assumption: every semantic variable can be read back
-from the target frame variable map.
+/-- Global support condition: every semantic variable in the frame can be
+read back from the floating hypothesis map.
 
-This is stronger than necessary; completeness now fundamentally uses
-`SupportedProvable` (derivation-local support). We keep this only to derive
-`SupportedProvable` from canonical `Semantic.Provable` where needed. -/
+Stronger than needed for the split theorems (`operational_to_semantic` /
+`mario_to_proofValid`), which use the derivation-local `SupportedProvable`
+instead. Used here to produce `operational_iff_semantic` as a single biconditional. -/
 def SemanticFrameSupported (Γ : Database) (fr : Frame) : Prop :=
   ∀ v : MarioVR, ∃ v' : Variable, findVar (varMapOfFrame fr) v = some v'
 
-/-- Upgrade canonical semantic provability to derivation-supported provability,
-using the legacy global support assumption only for base `var` leaves. -/
+/-- Lift canonical `Semantic.Provable` to `SupportedProvable` using the global
+support assumption on `var` leaves. -/
 theorem semantic_to_supported {Γ : Database} {fr : Frame} {fmla : MarioFormula}
     (h_supported : SemanticFrameSupported Γ fr)
     (h_sem : Semantic.Provable (dbToAxioms Γ) (frameToContext fr) fmla) :
@@ -3512,20 +3514,17 @@ theorem operational_to_semantic {Γ : Database} {consts : ConstSet} {fr : Frame}
 Combines both directions to show operational ↔ semantic equivalence.
 -/
 
-/-- **MAIN THEOREM**: Operational and semantic provability are equivalent.
+/-- Operational and semantic provability are equivalent under the global support assumption.
 
-    This connects our verifier's operational semantics to Mario's mathematical foundations.
+    Combines `operational_to_semantic` (soundness) and `semantic_to_supported` +
+    `mario_to_proofValid` (completeness) into a single biconditional.
 
-    - **Forward** (soundness): Verifier accepts → mathematically valid
-    - **Backward** (completeness): Mathematically valid → verifier can accept
+    The extra hypothesis `h_supported : SemanticFrameSupported Γ fr` — absent from
+    the split theorems — is what `SemanticFrameSupported` buys: it lets us go from
+    `Semantic.Provable` to `SupportedProvable` without a derivation-specific witness.
 
-    We use the typed variable map from floating hypotheses, so typecodes
-    are preserved in Mario's VRs by construction.
-
-    Once proven, this enables:
-    1. Using Mario's proven lemmas in our proofs
-    2. Reasoning about our verifier using textbook mathematics
-    3. Confidence that our operational model matches the spec
+    For call sites that already have a `SupportedProvable` in hand, use
+    `mario_to_proofValid` directly.
 -/
 theorem operational_iff_semantic {Γ : Database} {consts : ConstSet} {fr : Frame} {e : Expr}
     (h_wf : WellFormedDatabaseStrong Γ consts)

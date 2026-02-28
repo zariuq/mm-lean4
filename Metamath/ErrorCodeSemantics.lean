@@ -130,6 +130,8 @@ Each branch is the *tightest* statement extractable from the evidence layer. -/
   -- IncludeError (7)
   | .includeCycleDetected =>
       ∃ path, s.errorEvidence? = some (.includeErr (.cycleDetected path))
+  | .includeDepthExceeded =>
+      ∃ path, s.errorEvidence? = some (.includeErr (.depthExceeded path))
   | .includeInInnerScope =>
       ∃ pos depth inStmt witness,
         s.errorEvidence? = some (.includeErr (.inInnerScope pos depth inStmt witness))
@@ -445,6 +447,8 @@ theorem DB.parseErrorCode?_guardFacts_total (s : DB) (code : ParseErrorCode) :
   -- ═══════════════════════════════════════════════════════════════
   | includeCycleDetected =>
     exact DB.parseErrorCode?_includeCycleDetected_guardFacts s h
+  | includeDepthExceeded =>
+    exact DB.parseErrorCode?_includeDepthExceeded_guardFacts s h
   | includeInInnerScope =>
     exact DB.parseErrorCode?_includeInInnerScope_guardFacts s h
   | includeInsideStatement =>

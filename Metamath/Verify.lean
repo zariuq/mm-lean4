@@ -376,6 +376,7 @@ inductive Error
   | error (pos : Pos) (msg : String)
   | ax (pos : Pos) (l : String) (f : Formula) (fr : Frame)
   | thm (pos : Pos) (l : String) (f : Formula) (fr : Frame)
+  | includeRequest (sourceFile : String) (includePath : String)
 
 /-- Structured parser error codes for theorem-friendly diagnostics. -/
 inductive ParseErrorCode
@@ -423,6 +424,7 @@ inductive ParseErrorCode
   | unknownStatementType
   | internalIllFormedDatabaseAfterParse
   | includeCycleDetected
+  | includeDepthExceeded
   | includeInInnerScope
   | includeInsideStatement
   | includeExtractedEmptyPath
@@ -509,6 +511,7 @@ namespace ParseErrorCode
   | .unknownStatementType => "unknown statement type '<type>'"
   | .internalIllFormedDatabaseAfterParse => "internal error: ill-formed database after parse"
   | .includeCycleDetected => "include cycle detected: '<path>' is already being processed"
+  | .includeDepthExceeded => "include depth limit exceeded (increase maxIncludeDepth in ModeConfig)"
   | .includeInInnerScope => "include in inner scope (config requires outermost scope only, spec §4.1.2)"
   | .includeInsideStatement => "include inside statement (config forbids token splicing, spec §4.1.2)"
   | .includeExtractedEmptyPath => "extracted empty path from position <start> to <end> in <file>"
@@ -568,6 +571,7 @@ def toNat : ParseErrorCode → Nat
   | .unknownStatementType => 41
   | .internalIllFormedDatabaseAfterParse => 42
   | .includeCycleDetected => 43
+  | .includeDepthExceeded => 55
   | .includeInInnerScope => 44
   | .includeInsideStatement => 45
   | .includeExtractedEmptyPath => 46
@@ -626,6 +630,7 @@ def ofNat? : Nat → Option ParseErrorCode
   | 41 => some .unknownStatementType
   | 42 => some .internalIllFormedDatabaseAfterParse
   | 43 => some .includeCycleDetected
+  | 55 => some .includeDepthExceeded
   | 44 => some .includeInInnerScope
   | 45 => some .includeInsideStatement
   | 46 => some .includeExtractedEmptyPath
@@ -686,6 +691,7 @@ def specClause : ParseErrorCode → SpecClause
   | .unknownStatementType => .sec4_1_3_basicSyntax
   | .internalIllFormedDatabaseAfterParse => .impl_internalConsistency
   | .includeCycleDetected => .sec4_1_2_includes
+  | .includeDepthExceeded => .sec4_1_2_includes
   | .includeInInnerScope => .sec4_1_2_includes
   | .includeInsideStatement => .sec4_1_2_includes
   | .includeExtractedEmptyPath => .sec4_1_2_includes
@@ -918,6 +924,7 @@ end CompressedSaveError
 /-- Structured payload for include errors. -/
 inductive IncludeError where
   | cycleDetected (path : String)
+  | depthExceeded (path : String)
   | inInnerScope (pos : Nat) (scopeDepth : Nat) (inStatement : Bool) (allowIncludeInnerScopeWitness : Bool)
   | insideStatement (pos : Nat) (scopeDepth : Nat) (inStatement : Bool) (allowTokenSplicingWitness : Bool)
   | extractedEmptyPath (startPos endPos file : String)
@@ -930,6 +937,7 @@ namespace IncludeError
 
 def code : IncludeError → ParseErrorCode
   | .cycleDetected _ => .includeCycleDetected
+  | .depthExceeded _ => .includeDepthExceeded
   | .inInnerScope _ _ _ _ => .includeInInnerScope
   | .insideStatement _ _ _ _ => .includeInsideStatement
   | .extractedEmptyPath _ _ _ => .includeExtractedEmptyPath
@@ -940,6 +948,8 @@ def code : IncludeError → ParseErrorCode
 def message : IncludeError → String
   | .cycleDetected path =>
       "include cycle detected: '" ++ path ++ "' is already being processed"
+  | .depthExceeded path =>
+      "include depth limit exceeded while processing '" ++ path ++ "' (increase ModeConfig.maxIncludeDepth)"
   | .inInnerScope _ _ _ _ =>
       "include in inner scope (config requires outermost scope only, spec §4.1.2)"
   | .insideStatement _ _ _ _ =>
@@ -1059,8 +1069,8 @@ namespace DB
 def mkErrorWithEvidence (s : DB) (pos : Pos) (msg : String) (ev : ErrorEvidence) : DB :=
   { s with error? := some ⟨.error pos msg, default⟩, errorEvidence? := some ev }
 
-/-- Sealed legacy/raw error constructor.
-This keeps the message payload but forces the fallback internal evidence tag so
+/-- Fallback message-only error constructor.
+This keeps the message payload and assigns the internal fallback evidence tag so
 all emitted errors remain evidence-carrying. -/
 def mkError (s : DB) (pos : Pos) (msg : String) : DB :=
   s.mkErrorWithEvidence pos msg (.internalGate false false false)
@@ -1271,6 +1281,7 @@ def RuleSemanticViolation (s : DB) (code : ParseErrorCode) : Prop :=
   | .tokenNotConstantOrVariable => s.ScopeDeclViolation .tokenNotConstantOrVariable
   | .topLevelEssentialNotAllowed => s.ScopeDeclViolation .topLevelEssentialNotAllowed
   | .includeCycleDetected => s.IncludeViolation .includeCycleDetected
+  | .includeDepthExceeded => s.IncludeViolation .includeDepthExceeded
   | .includeInInnerScope => s.IncludeViolation .includeInInnerScope
   | .includeInsideStatement => s.IncludeViolation .includeInsideStatement
   | .includeExtractedEmptyPath => s.IncludeViolation .includeExtractedEmptyPath
@@ -1556,8 +1567,8 @@ def trimFrame (db : DB) (fmla : Formula) (fr := db.frame) : Bool × Frame := Id.
   let mut varsWithF : HashSet String := ∅
   for l in fr.hyps do
     if let some (.hyp false f _) := db.find? l then
-      -- Spec §4.2.4: $f and $e can be interleaved (appearance order)
-      -- No need to enforce "$f before $e" - that's a legacy restriction
+      -- Spec §4.2.4: $f and $e can be interleaved (appearance order).
+      -- We intentionally do not enforce "$f before $e".
       let v := f[1]!.value
       if vars.contains v then
         varsWithF := varsWithF.insert v
@@ -1762,6 +1773,8 @@ inductive TokenParser
   | djvars : Array String → TokenParser
   | math : Array Sym → TokensParser → TokenParser
   | label : Pos → String → TokenParser
+  | includePath : Pos → TokenParser
+  | includeClose : Pos → String → TokenParser
   | proof : ProofState → TokenParser
   deriving Inhabited
 
@@ -1773,6 +1786,8 @@ def TokenParser.toString : TokenParser → String
   | .djvars s => s!"djvars {s}"
   | .math s p => s!"math {s} {p}"
   | .label pos l => s!"at {pos}: ? {l}"
+  | .includePath pos => s!"at {pos}: include path"
+  | .includeClose pos path => s!"at {pos}: include close {path}"
   | .proof p => ToString.toString p
 
 instance : ToString TokenParser := ⟨TokenParser.toString⟩
@@ -1783,6 +1798,7 @@ structure ParserState where
   charp : CharParser
   line : Nat
   linepos : Nat
+  sourceFile : String := ""
   deriving Inhabited
 
 namespace ParserState
@@ -1802,6 +1818,30 @@ def mkErrorWithEvidence (s : ParserState) (pos : Pos) (msg : String) (ev : Error
 
 def mkErrorFromEvidence (s : ParserState) (pos : Pos) (ev : ErrorEvidence) : ParserState :=
   s.withDB fun db => db.mkErrorFromEvidence pos ev
+
+@[inline] def requestInclude (s : ParserState) (includePath : String) : ParserState :=
+  { s with
+      tokp := .start
+      db := { s.db with error? := some ⟨.includeRequest s.sourceFile includePath, default⟩ } }
+
+def normalizeIncludePath (sourceFile : String) (rawPath : String) : Except IncludeError String := do
+  if rawPath.isEmpty then
+    throw (.emptyPathBeforeNormalization sourceFile)
+  let normalized :=
+    if rawPath.startsWith "./" then
+      (rawPath.drop 2).toString
+    else
+      rawPath
+  if normalized.isEmpty then
+    throw (.pathEmptyAfterNormalization rawPath sourceFile)
+  pure normalized
+
+def includePathFromToken (tk : ByteSlice) : String × Bool :=
+  let raw := tk.toString
+  if raw.endsWith "$]" then
+    ((raw.take (raw.length - 2)).toString, true)
+  else
+    (raw, false)
 
 
 
@@ -2026,6 +2066,7 @@ def finishProof (s : ParserState) : ProofState → ParserState
 
 
 def feedToken (s : ParserState) (pos : Nat) (tk : ByteSlice) : ParserState :=
+  let absPos := pos
   let pos := s.mkPos pos
   match s.tokp with
   | .comment p =>
@@ -2037,6 +2078,18 @@ def feedToken (s : ParserState) (pos : Nat) (tk : ByteSlice) : ParserState :=
     else s
   | p =>
     if tk.eqArray "$(".toAscii then { s with tokp := p.comment } else
+    if tk.eqArray "$[".toAscii then
+      let scopeDepth := s.db.scopes.size
+      let inStatement :=
+        match p with
+        | .start => false
+        | _ => true
+      match includeDirectiveViolation? s.db.config scopeDepth inStatement absPos with
+      | some err =>
+          s.mkErrorFromEvidence pos (.includeErr err)
+      | none =>
+          { s with tokp := .includePath pos }
+    else
     match p with
     | .comment _ => unreachable!
     | .start =>
@@ -2085,6 +2138,24 @@ def feedToken (s : ParserState) (pos : Nat) (tk : ByteSlice) : ParserState :=
       else
         let ty := (toLabel tk).2
         s.mkErrorFromEvidence pos (.tokenForm (.unknownStatementType ty))
+    | .includePath includePos =>
+      if tk.eqArray "$]".toAscii then
+        s.mkErrorFromEvidence includePos (.includeErr (.emptyPathBeforeNormalization s.sourceFile))
+      else
+        let (rawPath, closesInline) := includePathFromToken tk
+        match normalizeIncludePath s.sourceFile rawPath with
+        | .error err =>
+            s.mkErrorFromEvidence includePos (.includeErr err)
+        | .ok includePath =>
+            if closesInline then
+              s.requestInclude includePath
+            else
+              { s with tokp := .includeClose includePos includePath }
+    | .includeClose includePos includePath =>
+      if tk.eqArray "$]".toAscii then
+        s.requestInclude includePath
+      else
+        s.mkErrorFromEvidence includePos (.tokenForm (.notACommand tk.toString))
     | .proof pr =>
       let s := { s with tokp := default }
       if tk.eqArray "$.".toAscii then s.finishProof pr
@@ -2170,6 +2241,8 @@ def done (s : ParserState) (base : Nat) : DB := Id.run do
     | .ax => db.mkParseError base .unclosedAx
     | .thm => db.mkParseError base .unclosedThm
   | .label pos lab => db.mkErrorFromEvidence pos (.tokenForm (.notACommand lab))
+  | .includePath pos => db.mkErrorFromEvidence pos (.tokenForm (.notACommand "$["))
+  | .includeClose pos _ => db.mkErrorFromEvidence pos (.tokenForm (.notACommand "$["))
   | .proof _ => db.mkParseError base .unclosedProof
 
 
@@ -2181,8 +2254,8 @@ end ParserState
 
 `checkBytes` is a pure parser entry point for proofs about parser invariants.
 It processes the full byte array in one pass. This is simpler to reason about
-than chunked IO, and the IO entry point (`check`) delegates to it after
-include-expansion.
+than chunked IO. The canonical IO entrypoint (`check`) is single-pass include-aware
+streaming (`checkSinglePass`), while `checkBytes` remains the pure parser model.
 -/
 def checkBytesCore (arr : ByteArray) (config : ModeConfig := {}) : DB :=
   let initialDB : DB := { (default : DB) with config := config }
@@ -2230,10 +2303,38 @@ inductive IncludeScanChunk where
 structure IncludeDriverFrame where
   fname : String
   canonStr : String
-  chunks : List IncludeScanChunk
+  contents : ByteArray
+  offset : Nat := 0
   nextDepth : Nat
   needsSep : Bool := false
   deriving Inhabited
+
+/-- Request emitted by the include-aware parser driver core.
+`pushFile` is raised when parser tokenization encounters `$[ ... $]`. -/
+inductive IncludeRequest where
+  | pushFile (sourceFile : String) (includePath : String)
+  deriving Inhabited
+
+/-- Mutable include-driver state carried by the IO driver loop.
+This keeps include-tracking (`processing`, `seen`, `stack`) explicit and separate
+from parser-core transition logic. -/
+structure IncludeDriverState where
+  parser : ParserState
+  base : Nat
+  processing : HashSet String
+  seen : HashSet String
+  stack : List IncludeDriverFrame
+  deriving Inhabited
+
+/-- Result of one pure driver step (no IO performed).
+- `fed`: bytes consumed or frame popped; driver state advanced, keep looping
+- `done`: include stack is empty; driver should finalize and return
+- `push`: parser requested a child include; driver must do IO then resume -/
+inductive FrameStep where
+  | fed  (st : IncludeDriverState)
+  | done (st : IncludeDriverState)
+  | push (sourceFile includePath : String)
+         (nextDepth : Nat) (st : IncludeDriverState)
 
 def scanIncludes (contents : ByteArray) (fname : String) (config : ModeConfig := {}) :
     Except IncludeError (List IncludeScanChunk) := Id.run do
@@ -2341,82 +2442,11 @@ def scanIncludes (contents : ByteArray) (fname : String) (config : ModeConfig :=
     chunks := chunks.concat (.bytes buf)
   return .ok chunks
 
-def expandIncludes (fname : String) (processing seen : HashSet String)
-    (config : ModeConfig := {}) (depth : Nat := config.maxIncludeDepth) :
-    IO (Except IncludeError (ByteArray × HashSet String)) := do
-  match depth with
-  | 0 =>
-      -- Totality guard: bound include expansion recursion.
-      return .error (.cycleDetected s!"include depth limit exceeded in {fname}")
-  | depth + 1 =>
-      -- Canonicalize path (resolve ./ and ../)
-      let canonPath ← IO.FS.realPath fname
-      let canonStr := canonPath.toString
-
-      -- Check for cycles (file is currently being processed)
-      -- Per spec §4.1.2 + metamath.exe: reject self-includes and cycles
-      -- Tests: metamath-test/tests/unit/test28_self_include.mm
-      --        metamath-test/tests/unit/test44_include_cycle_main.mm
-      if processing.contains canonStr then
-        return .error (.cycleDetected canonStr)
-
-      -- Check for duplicates (file was already fully processed)
-      -- Per spec §4.1.2: duplicate includes are silently ignored
-      -- Tests: metamath-test/tests/unit/test42_include_duplicate_main.mm
-      --        metamath-test/tests/unit/test46_duplicate_include_main.mm
-      if seen.contains canonStr then
-        return .ok (ByteArray.empty, seen)
-
-      let seen := seen.insert canonStr
-
-      -- Read file
-      let contents ← IO.FS.readBinFile fname
-
-      match scanIncludes contents fname config with
-      | .error err => return .error err
-      | .ok chunks =>
-          let mut result := ByteArray.empty
-          let mut seen := seen  -- Make seen mutable to thread through
-          for chunk in chunks do
-            match chunk with
-            | .bytes bytes =>
-                result := result ++ bytes
-            | .needInclude includeFile =>
-                -- Resolve relative path (relative to current file's directory)
-                let baseDir := System.FilePath.parent fname |>.getD "."
-                let fullPath := baseDir / includeFile
-
-                -- Recursively expand the included file
-                -- Pass `processing.insert canonStr` so the child knows we're currently processing this file
-                try
-                  match ← expandIncludes fullPath.toString (processing.insert canonStr) seen config depth with
-                  | .ok (expanded, seen') =>
-                    seen := seen'  -- Thread the updated seen set through
-                    result := result ++ expanded
-                    -- Add whitespace to separate from next token
-                    result := result.push ' '.toUInt8
-                  | .error e => return .error e
-                catch e =>
-                  return .error (.readFailure includeFile fullPath.toString e.toString)
-
-          return .ok (result, seen)
-termination_by depth
-decreasing_by
-  simp_wf
-
 /-- Canonical DB materialization for include-preprocessor errors. -/
 def includePreprocessErrorDB (config : ModeConfig) (err : IncludeError) : DB :=
   let initialDB : DB := { (default : DB) with config := config }
   initialDB.mkErrorFromEvidence ⟨1, 1⟩ (.includeErr err)
 
-
-/-- Pure entrypoint after include expansion. This is the semantic boundary between
-IO pre-processing and parser-core verification. -/
-def checkExpandedResult (config : ModeConfig)
-    (expanded : Except IncludeError (ByteArray × HashSet String)) : DB :=
-  match expanded with
-  | .error err => includePreprocessErrorDB config err
-  | .ok (processed, _) => checkBytes processed config
 
 /-- Feed one contiguous byte chunk into the parser state and advance absolute base offset. -/
 @[inline] def flushChunkToParser (s : ParserState) (base : Nat) (chunk : ByteArray) :
@@ -2427,6 +2457,88 @@ def checkExpandedResult (config : ModeConfig)
     let s := s.feedAll base chunk
     (s, base + chunk.size)
 
+/-- Extract a driver-level include request from parser error payloads. -/
+@[inline] def parserIncludeRequestOfError? (err : Error) :
+    Option IncludeRequest :=
+  match err with
+  | .includeRequest sourceFile includePath =>
+      some (.pushFile sourceFile includePath)
+  | _ =>
+      none
+
+/-- Extract include preprocessor errors emitted via parser evidence payload. -/
+@[inline] def parserIncludeErrorOfDB? (db : DB) : Option IncludeError :=
+  match db.errorEvidence? with
+  | some (.includeErr err) => some err
+  | _ => none
+
+/-- Build an include stack frame from a file path under depth/cycle/duplicate guards.
+Returns:
+- `none` when duplicate suppression (`seen`) skips this file
+- `some frame` when a new file frame is ready for scanning/feeding
+along with updated `processing` and `seen` sets. -/
+def prepareIncludeFrameWithIO
+    (realPath : String → IO System.FilePath)
+    (readFile : String → IO ByteArray)
+    (fname : String) (depth : Nat)
+    (processing seen : HashSet String) :
+    IO (Except IncludeError (Option IncludeDriverFrame × HashSet String × HashSet String)) := do
+  match depth with
+  | 0 =>
+      return .error (.depthExceeded fname)
+  | depth + 1 =>
+      let canonPath ← realPath fname
+      let canonStr := canonPath.toString
+      if processing.contains canonStr then
+        return .error (.cycleDetected canonStr)
+      if seen.contains canonStr then
+        return .ok (none, processing, seen)
+      let processing := processing.insert canonStr
+      let seen := seen.insert canonStr
+      let contents ← readFile fname
+      return .ok
+        (some {
+          fname := fname
+          canonStr := canonStr
+          contents := contents
+          nextDepth := depth
+        }, processing, seen)
+
+/-- Pure: advance the include-driver by one step without performing any IO.
+Returns `fed` when bytes were consumed or a frame was popped (keep looping),
+`done` when the stack is empty (finalize), or `push` when the parser
+encountered a `$[ ... $]` directive and the driver must read a file. -/
+def stepFrame (st : IncludeDriverState) : FrameStep :=
+  match st.stack with
+  | [] => .done st
+  | frame :: rest =>
+      if frame.needsSep then
+        let sep := ByteArray.empty.push ' '.toUInt8
+        let (s1, base1) := flushChunkToParser st.parser st.base sep
+        .fed { st with parser := s1, base := base1,
+                       stack := { frame with needsSep := false } :: rest }
+      else if frame.offset >= frame.contents.size then
+        -- frame exhausted: pop it (pure, no IO)
+        .fed { st with processing := st.processing.erase frame.canonStr, stack := rest }
+      else
+        let chunk := frame.contents.extract frame.offset frame.contents.size
+        let sInput := { st.parser with sourceFile := frame.fname }
+        let s1 := sInput.feedAll st.base chunk
+        match s1.db.error? with
+        | some ⟨err, consumed⟩ =>
+            match parserIncludeRequestOfError? err with
+            | some (.pushFile sourceFile includeFile) =>
+                let parentFrame := { frame with offset := frame.offset + consumed, needsSep := true }
+                let sCleared := { s1 with db := { s1.db with error? := none } }
+                .push sourceFile includeFile frame.nextDepth
+                  { st with parser := sCleared, base := st.base + consumed,
+                            stack := parentFrame :: rest }
+            | none =>
+                .fed { st with parser := s1, base := st.base + consumed }
+        | none =>
+            .fed { st with parser := s1, base := st.base + chunk.size,
+                           processing := st.processing.erase frame.canonStr, stack := rest }
+
 /-- Single-pass include-aware parser driver parameterized by filesystem hooks.
 Reads each file once, scans `$[ ... $]` directives on the fly, and streams non-include
 bytes directly into `ParserState.feedAll`. Recursive include traversal is bounded by
@@ -2434,107 +2546,68 @@ bytes directly into `ParserState.feedAll`. Recursive include traversal is bounde
 def processFileSinglePassWithIO
     (realPath : String → IO System.FilePath)
     (readFile : String → IO ByteArray)
-    (fname : String) (processing seen : HashSet String)
-    (config : ModeConfig) (depth : Nat)
-    (s0 : ParserState) (base0 : Nat) :
-    IO (Except IncludeError (ParserState × Nat × HashSet String)) := do
-  let prepareFrame (fname : String) (depth : Nat)
-      (processing seen : HashSet String) :
-      IO (Except IncludeError
-        (Option IncludeDriverFrame × HashSet String × HashSet String)) := do
-    match depth with
-    | 0 =>
-        return .error (.cycleDetected s!"include depth limit exceeded in {fname}")
-    | depth + 1 =>
-        let canonPath ← realPath fname
-        let canonStr := canonPath.toString
-        if processing.contains canonStr then
-          return .error (.cycleDetected canonStr)
-        if seen.contains canonStr then
-          return .ok (none, processing, seen)
-        let processing := processing.insert canonStr
-        let seen := seen.insert canonStr
-        let contents ← readFile fname
-        match scanIncludes contents fname config with
-        | .error err =>
-            return .error err
-        | .ok chunks =>
-            return .ok
-              (some {
-                fname := fname
-                canonStr := canonStr
-                chunks := chunks
-                nextDepth := depth
-              }, processing, seen)
-
-  match ← prepareFrame fname depth processing seen with
+    (fname : String) (_config : ModeConfig) (depth : Nat)
+    (st0 : IncludeDriverState) :
+    IO (Except IncludeError IncludeDriverState) := do
+  match ← prepareIncludeFrameWithIO realPath readFile fname depth st0.processing st0.seen with
   | .error err =>
       return .error err
   | .ok (none, _, seen) =>
-      return .ok (s0, base0, seen)
+      return .ok { st0 with seen := seen }
   | .ok (some rootFrame, processing, seen) =>
-      let mut stack : List IncludeDriverFrame := [rootFrame]
-      let mut processing := processing
-      let mut seen := seen
-      let mut s := s0
-      let mut base := base0
-
-      while !stack.isEmpty do
-        match stack with
-        | [] =>
-            pure ()
-        | frame :: rest =>
-            if frame.needsSep then
-              let sep := ByteArray.empty.push ' '.toUInt8
-              let (s1, base1) := flushChunkToParser s base sep
-              s := s1
-              base := base1
-              if s.db.error then
-                return .ok (s, base, seen)
-              stack := { frame with needsSep := false } :: rest
-            else
-              match frame.chunks with
-              | [] =>
-                  processing := processing.erase frame.canonStr
-                  stack := rest
-              | chunk :: tail =>
-                  match chunk with
-                  | .bytes bytes =>
-                      let (s1, base1) := flushChunkToParser s base bytes
-                      s := s1
-                      base := base1
-                      if s.db.error then
-                        return .ok (s, base, seen)
-                      stack := { frame with chunks := tail } :: rest
-                  | .needInclude includeFile =>
-                      let baseDir := System.FilePath.parent frame.fname |>.getD "."
-                      let fullPath := baseDir / includeFile
-                      let parentFrame := { frame with chunks := tail, needsSep := true }
-                      try
-                        match ← prepareFrame fullPath.toString frame.nextDepth processing seen with
-                        | .error err =>
-                            return .error err
-                        | .ok (none, processing', seen') =>
-                            processing := processing'
-                            seen := seen'
-                            stack := parentFrame :: rest
-                        | .ok (some childFrame, processing', seen') =>
-                            processing := processing'
-                            seen := seen'
-                            stack := childFrame :: parentFrame :: rest
-                      catch e =>
-                        return .error (.readFailure includeFile fullPath.toString e.toString)
-      return .ok (s, base, seen)
+      let mut st : IncludeDriverState :=
+        { st0 with processing := processing, seen := seen, stack := [rootFrame] }
+      -- IO dispatch loop: `stepFrame` is pure; IO only happens in the `.push` branch.
+      repeat
+        match stepFrame st with
+        | .done st' =>
+            let dbAtBoundary := st'.parser.done st'.base
+            match parserIncludeErrorOfDB? dbAtBoundary with
+            | some err => return .error err
+            | none     => return .ok st'
+        | .fed st' =>
+            -- Check for include-preprocessing errors embedded in DB evidence
+            match parserIncludeErrorOfDB? st'.parser.db with
+            | some incErr => return .error incErr
+            | none =>
+                if st'.parser.db.error then return .ok st'
+                st := st'
+        | .push sourceFile includeFile nextDepth st' =>
+            let baseDir := System.FilePath.parent sourceFile |>.getD "."
+            let fullPath := baseDir / includeFile
+            try
+              match ← prepareIncludeFrameWithIO
+                  realPath readFile fullPath.toString nextDepth st'.processing st'.seen with
+              | .error incErr =>
+                  return .error incErr
+              | .ok (none, processing', seen') =>
+                  st := { st' with processing := processing', seen := seen' }
+              | .ok (some childFrame, processing', seen') =>
+                  st := { st' with processing := processing', seen := seen',
+                                   stack := childFrame :: st'.stack }
+            catch e =>
+              return .error (.readFailure includeFile fullPath.toString e.toString)
+      return .ok st  -- unreachable; all paths exit via `return` inside `repeat`
 
 /-- Default single-pass include-aware parser driver using filesystem reads. -/
 def processFileSinglePass (fname : String) (processing seen : HashSet String)
     (config : ModeConfig) (depth : Nat)
     (s0 : ParserState) (base0 : Nat) :
     IO (Except IncludeError (ParserState × Nat × HashSet String)) :=
-  processFileSinglePassWithIO
-    (fun path => IO.FS.realPath path)
-    (fun path => IO.FS.readBinFile path)
-    fname processing seen config depth s0 base0
+  do
+    let st0 : IncludeDriverState := {
+      parser := s0
+      base := base0
+      processing := processing
+      seen := seen
+      stack := []
+    }
+    match (← processFileSinglePassWithIO
+      (fun path => IO.FS.realPath path)
+      (fun path => IO.FS.readBinFile path)
+      fname config depth st0) with
+    | .error err => return .error err
+    | .ok st => return .ok (st.parser, st.base, st.seen)
 
 /-- Pure post-processing for single-pass include results. -/
 def finalizeSinglePassResult (config : ModeConfig)
@@ -2579,13 +2652,6 @@ byte array before parsing. -/
 def checkSinglePass (fname : String) (config : ModeConfig := {}) : IO DB := do
   let result ← singlePassInitialResult fname config
   return finalizeSinglePassResult config result
-
-def checkTwoPassLegacy (fname : String) (config : ModeConfig := {}) : IO DB := do
-  -- Expand all includes recursively with config awareness
-  -- processing = {} (call stack for cycle detection)
-  -- seen = {} (all files ever processed for duplicate detection)
-  let expanded ← expandIncludes fname (HashSet.emptyWithCapacity 16) (HashSet.emptyWithCapacity 16) config config.maxIncludeDepth
-  return checkExpandedResult config expanded
 
 /-- Default IO entrypoint (single-pass include handling). -/
 def check (fname : String) (config : ModeConfig := {}) : IO DB :=

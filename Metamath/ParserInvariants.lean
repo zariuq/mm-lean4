@@ -27,8 +27,8 @@ For each well-formedness property:
 ## Trust Boundary
 
 - **Trusted**: Lean kernel + the ByteArray input presented to `checkBytes`
-  (produced either by the single-pass include driver `check`/`checkSinglePass`
-  or by the legacy two-pass wrapper `checkTwoPassLegacy`)
+  (produced by the default single-pass include driver `check`/`checkSinglePass`;
+  legacy two-pass compatibility is isolated behind `Metamath.Legacy.FrontendBridge`)
 - **Verified by theorem**: Everything else (parser ops, DB updates, invariants)
 - **No axioms**: Parser properties are theorems about `feed`/`insertHyp`/`done`
 

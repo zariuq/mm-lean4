@@ -9,6 +9,10 @@ namespace Metamath.ParserEquivalenceExamples
 open Metamath.ParserEquivalence
 open Metamath.Spec.Equivalence
 
+/-! These examples intentionally use only single-pass and supported-first API
+surfaces from `Metamath.ParserEquivalence`; they do not reference two-pass
+compatibility theorem names. -/
+
 /-- Small usage example: importing `Metamath.ParserEquivalence` gives direct access
     to the strict formula-equality upgrade theorem. -/
 theorem parserEquivalence_usage_example
