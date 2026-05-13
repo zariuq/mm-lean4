@@ -4102,6 +4102,7 @@ theorem feedTokens_ax_db (s : ParserState) (arr : Array Sym) (pos : Pos) (l : St
           if Formula.hasConstHead arr = true then s_inner
           else s.mkErrorFromEvidence pos (.scopeDecl .firstSymbolNotConstant))).db := by
     simp [ParserState.feedTokens, h_s_inner]
+    rfl
   calc
     (s.feedTokens arr ⟨.ax, pos, l⟩).db
         = (ParserState.withAt l (fun _ =>
@@ -4228,6 +4229,7 @@ theorem feedTokens_float_db (s : ParserState) (arr : Array Sym) (pos : Pos) (l :
             else s.mkErrorFromEvidence pos (.scopeDecl .expectedConstantAndVariable)
           else s.mkErrorFromEvidence pos (.scopeDecl .firstSymbolNotConstant))).db := by
     simp [ParserState.feedTokens, h_s_inner]
+    rfl
   calc
     (s.feedTokens arr ⟨.float, pos, l⟩).db
         = (ParserState.withAt l (fun _ =>
@@ -4334,6 +4336,7 @@ theorem feedTokens_ess_db (s : ParserState) (arr : Array Sym) (pos : Pos) (l : S
           if Formula.hasConstHead arr = true then s_inner
           else s.mkErrorFromEvidence pos (.scopeDecl .firstSymbolNotConstant))).db := by
     simp [ParserState.feedTokens, h_s_inner, h_gate_none]
+    rfl
   calc
     (s.feedTokens arr ⟨.ess, pos, l⟩).db
         = (ParserState.withAt l (fun _ =>
@@ -4861,8 +4864,9 @@ theorem initDB_wellScoped (config : ModeConfig) :
         exact this.elim
       · intro v w h_mem
         -- No DV constraints in the initial frame.
-        have : False := by simpa [db] using h_mem
-        exact this.elim
+        have h_nil : (v, w) ∈ ([] : List DJ) := by
+          simpa [db] using h_mem
+        cases h_nil
     · intro lbl obj h_find
       -- No objects in the initial DB.
       have : False := by simpa [DB.find?, db] using h_find
@@ -4973,7 +4977,11 @@ theorem wellScopedFrame_push_dj
     simpa using h_hyps
   · intro v w h_mem
     have h_mem' : (v, w) ∈ fr.dj.toList ∨ (v, w) = p := by
-      simpa [Array.toList_push] using h_mem
+      have h_mem_append : (v, w) ∈ fr.dj.toList ++ [p] := by
+        simpa [Array.toList_push] using h_mem
+      rcases List.mem_append.mp h_mem_append with h_old | h_last
+      · exact Or.inl h_old
+      · exact Or.inr (List.mem_singleton.mp h_last)
     cases h_mem' with
     | inl h_old => exact h_dj v w h_old
     | inr h_eq =>
@@ -5040,9 +5048,25 @@ theorem scopesOk_pushScope (db : DB) :
       have h_i : (db.scopes.push db.frame.size)[i] = db.scopes[i]'hi_old := by
         simpa using (Array.getElem_push_lt (xs := db.scopes) (x := db.frame.size) (i := i) hi_old)
       have h_j : (db.scopes.push db.frame.size)[db.scopes.size] = db.frame.size := by
-        simpa using (Array.getElem_push_eq (xs := db.scopes) (x := db.frame.size))
+        exact Array.getElem_push_eq (xs := db.scopes) (x := db.frame.size)
       have h_le : ScopeLE (db.scopes[i]'hi_old) db.frame.size := h_within i hi_old
-      simpa [DB.pushScope, h_i, h_j] using h_le
+      have hi_push : i < (db.scopes.push db.frame.size).size := by
+        simpa [DB.pushScope] using hi
+      have hj_push : db.scopes.size < (db.scopes.push db.frame.size).size := by
+        simpa [DB.pushScope] using hj
+      change ScopeLE ((db.scopes.push db.frame.size)[i]'hi_push)
+        ((db.scopes.push db.frame.size)[db.scopes.size]'hj_push)
+      unfold ScopeLE at h_le ⊢
+      have h_ifst : ((db.scopes.push db.frame.size)[i]'hi_push).fst = (db.scopes[i]'hi_old).fst := by
+        exact congrArg Prod.fst h_i
+      have h_isnd : ((db.scopes.push db.frame.size)[i]'hi_push).snd = (db.scopes[i]'hi_old).snd := by
+        exact congrArg Prod.snd h_i
+      have h_jfst : ((db.scopes.push db.frame.size)[db.scopes.size]'hj_push).fst = db.frame.size.fst := by
+        exact congrArg Prod.fst h_j
+      have h_jsnd : ((db.scopes.push db.frame.size)[db.scopes.size]'hj_push).snd = db.frame.size.snd := by
+        exact congrArg Prod.snd h_j
+      rw [h_ifst, h_jfst, h_isnd, h_jsnd]
+      exact h_le
     · have hj_le : j ≤ db.scopes.size := by
         -- j < size+1
         have : j < (db.scopes.push db.frame.size).size := by
@@ -5056,14 +5080,40 @@ theorem scopesOk_pushScope (db : DB) :
         simpa using (Array.getElem_push_lt (xs := db.scopes) (x := db.frame.size) (i := i) hi_old)
       have h_j : (db.scopes.push db.frame.size)[j] = db.scopes[j]'hj_old := by
         simpa using (Array.getElem_push_lt (xs := db.scopes) (x := db.frame.size) (i := j) hj_old)
-      simpa [DB.pushScope, h_i, h_j] using h_mono_ij
+      have hi_push : i < (db.scopes.push db.frame.size).size := by
+        simpa [DB.pushScope] using hi
+      have hj_push : j < (db.scopes.push db.frame.size).size := by
+        simpa [DB.pushScope] using hj
+      change ScopeLE ((db.scopes.push db.frame.size)[i]'hi_push)
+        ((db.scopes.push db.frame.size)[j]'hj_push)
+      unfold ScopeLE at h_mono_ij ⊢
+      have h_ifst : ((db.scopes.push db.frame.size)[i]'hi_push).fst = (db.scopes[i]'hi_old).fst := by
+        exact congrArg Prod.fst h_i
+      have h_isnd : ((db.scopes.push db.frame.size)[i]'hi_push).snd = (db.scopes[i]'hi_old).snd := by
+        exact congrArg Prod.snd h_i
+      have h_jfst : ((db.scopes.push db.frame.size)[j]'hj_push).fst = (db.scopes[j]'hj_old).fst := by
+        exact congrArg Prod.fst h_j
+      have h_jsnd : ((db.scopes.push db.frame.size)[j]'hj_push).snd = (db.scopes[j]'hj_old).snd := by
+        exact congrArg Prod.snd h_j
+      rw [h_ifst, h_jfst, h_isnd, h_jsnd]
+      exact h_mono_ij
   · intro i hi
     by_cases hi_last : i = db.scopes.size
     · subst hi_last
       -- New last element equals the current frame size.
       have h_i : (db.scopes.push db.frame.size)[db.scopes.size] = db.frame.size := by
-        simpa using (Array.getElem_push_eq (xs := db.scopes) (x := db.frame.size))
-      simpa [DB.pushScope, h_i] using ScopeLE.refl db.frame.size
+        exact Array.getElem_push_eq (xs := db.scopes) (x := db.frame.size)
+      have hi_push : db.scopes.size < (db.scopes.push db.frame.size).size := by
+        simpa [DB.pushScope] using hi
+      change ScopeLE ((db.scopes.push db.frame.size)[db.scopes.size]'hi_push) db.frame.size
+      have h_refl : ScopeLE db.frame.size db.frame.size := ScopeLE.refl db.frame.size
+      unfold ScopeLE at h_refl ⊢
+      have h_ifst : ((db.scopes.push db.frame.size)[db.scopes.size]'hi_push).fst = db.frame.size.fst := by
+        exact congrArg Prod.fst h_i
+      have h_isnd : ((db.scopes.push db.frame.size)[db.scopes.size]'hi_push).snd = db.frame.size.snd := by
+        exact congrArg Prod.snd h_i
+      rw [h_ifst, h_isnd]
+      exact h_refl
     · have hi_le : i ≤ db.scopes.size := by
         have : i < (db.scopes.push db.frame.size).size := by
           simpa [DB.pushScope] using hi
@@ -5072,7 +5122,16 @@ theorem scopesOk_pushScope (db : DB) :
       have h_le : ScopeLE (db.scopes[i]'hi_old) db.frame.size := h_within i hi_old
       have h_i : (db.scopes.push db.frame.size)[i] = db.scopes[i]'hi_old := by
         simpa using (Array.getElem_push_lt (xs := db.scopes) (x := db.frame.size) (i := i) hi_old)
-      simpa [DB.pushScope, h_i] using h_le
+      have hi_push : i < (db.scopes.push db.frame.size).size := by
+        simpa [DB.pushScope] using hi
+      change ScopeLE ((db.scopes.push db.frame.size)[i]'hi_push) db.frame.size
+      unfold ScopeLE at h_le ⊢
+      have h_ifst : ((db.scopes.push db.frame.size)[i]'hi_push).fst = (db.scopes[i]'hi_old).fst := by
+        exact congrArg Prod.fst h_i
+      have h_isnd : ((db.scopes.push db.frame.size)[i]'hi_push).snd = (db.scopes[i]'hi_old).snd := by
+        exact congrArg Prod.snd h_i
+      rw [h_ifst, h_isnd]
+      exact h_le
 
 /-- `popScope` preserves `WellFormedDB` when it succeeds. -/
 theorem wellFormedDB_popScope
