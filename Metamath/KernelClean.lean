@@ -1673,7 +1673,7 @@ theorem toFrame_hypsOnly_of_toFrame
         | mk hyps_val dv =>
             simp at h_fr
             have : hs = hyps_val ∧ dj.toList.map convertDV = dv := h_fr
-            simp [this.1]
+            exact ⟨this.1, rfl⟩
 
 theorem toFrame_dv_eq
     (db : Verify.DB) (fr_impl : Verify.Frame) (fr_spec : Spec.Frame)
@@ -7077,7 +7077,7 @@ theorem assert_step_ok
             simp at h_fr_assert
             -- h_fr_assert gives us hs = mand ∧ dj.toList.map convertDV = dv
             have : hs = hyps_val ∧ dj.toList.map convertDV = dv := h_fr_assert
-            simp [this.1]
+            exact ⟨this.1, rfl⟩
       have h_wf_hypsOnly : WellFormedFrame db {dj := #[], hyps := fr_impl.hyps} :=
         wellFormedFrame_hyps_only db fr_impl h_frame_wf
 

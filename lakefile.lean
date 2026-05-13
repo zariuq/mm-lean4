@@ -5,7 +5,7 @@ package «mm-lean4» where
   -- TODO: Enable strict mode once Verify.lean is updated
   -- moreLeanArgs := #["-DwarningAsError=true", "-DautoImplicit=false"]
 
-require batteries from git "https://github.com/leanprover-community/batteries" @ "v4.27.0-rc1"
+require batteries from git "https://github.com/leanprover-community/batteries" @ "v4.29.1"
 
 @[default_target]
 lean_lib Metamath where

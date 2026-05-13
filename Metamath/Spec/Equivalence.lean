@@ -1084,23 +1084,19 @@ theorem Expr_vars_iff_mem {vr : MarioVR} {e : MarioExpr} : vr ∈ e.vars ↔ vr 
           -- e.vars = v :: tl.vars
           -- e.mem = Sym.var vr ∈ (Sym.var v :: tl)
           simp only [Metamath.Expr.vars, Metamath.Expr.mem]
-          -- Both sides are now List.Mem, so we can use List.mem_cons to simplify both
-          rw [List.mem_cons, List.mem_cons]
-          -- Goal: (vr = v ∨ vr ∈ tl.vars) ↔ (Sym.var vr = Sym.var v ∨ Sym.var vr ∈ tl)
           constructor
           · intro h
             cases h with
-            | inl h_eq =>
-                subst h_eq
-                exact Or.inl rfl
-            | inr h_tail =>
-                exact Or.inr (ih.mp h_tail)
+            | head =>
+                exact List.Mem.head _
+            | tail _ h_tail =>
+                exact List.Mem.tail _ (ih.mp h_tail)
           · intro h
             cases h with
-            | inl h_eq =>
-                exact Or.inl (Metamath.Sym.var.inj h_eq)
-            | inr h_tail =>
-                exact Or.inr (ih.mpr h_tail)
+            | head =>
+                exact List.Mem.head _
+            | tail _ h_tail =>
+                exact List.Mem.tail _ (ih.mpr h_tail)
 
 /-- Extract the source symbol from membership in exprToMarioExpr.
     If vr ∈' exprToMarioExpr vm e, then there exists a symbol s in e.syms
@@ -1554,7 +1550,8 @@ theorem marioExpr_subst_eq_flatMap (σ : MarioVR → MarioExpr) (e : MarioExpr) 
       | const c =>
           simp only [Metamath.Expr.subst, List.flatMap_cons, List.singleton_append, ih]
       | var v =>
-          simp only [Metamath.Expr.subst, List.flatMap_cons, ih]
+          rw [Metamath.Expr.subst, List.flatMap_cons, ih]
+          rfl
 
 /-- Auxiliary lemma for substitution correspondence on symbol lists.
     Works on a general list with the const-preservation hypothesis. -/
@@ -1793,23 +1790,8 @@ theorem supported_wellformed {Γ : Database} {fr : Frame} {fmla : MarioFormula}
           have h_snd_eq : h.2 = exprToMarioExpr (varMapOfFrame fr) e_hyp := by
             rw [hyp_eq]; rfl
           rw [h_snd_eq] at h_vr_mem
-          unfold exprToMarioExpr at h_vr_mem
-          unfold Metamath.Expr.mem at h_vr_mem
-          rw [List.mem_map] at h_vr_mem
-          obtain ⟨s, _, h_s_eq⟩ := h_vr_mem
-          cases h_find : findVR (varMapOfFrame fr) ⟨s⟩ with
-          | none =>
-              have h_const : toMarioSym (varMapOfFrame fr) s = Metamath.Sym.const s := by
-                unfold toMarioSym; simp only [h_find]
-              rw [h_const] at h_s_eq
-              cases h_s_eq
-          | some vr' =>
-              have h_var : toMarioSym (varMapOfFrame fr) s = Metamath.Sym.var vr' := by
-                unfold toMarioSym; simp only [h_find]
-              rw [h_var] at h_s_eq
-              have h_vr_eq := Metamath.Sym.var.inj h_s_eq
-              subst h_vr_eq
-              exact ⟨⟨s⟩, findVR_findVar_inverse_frame h_find⟩
+          obtain ⟨s, _, h_find⟩ := exprToMarioExpr_mem_extract h_vr_mem
+          exact ⟨⟨s⟩, findVR_findVar_inverse_frame h_find⟩
       | floating c v =>
           obtain ⟨vr', h_findVR⟩ := findVR_of_float (fr := fr) (c := c) (v := v) hyp_in
           have h_float_eq := hypToMarioFormula_floating_expr (varMapOfFrame fr) c v h_findVR
@@ -2162,23 +2144,13 @@ theorem proofValid_stack_supported {Γ : Database} {consts : ConstSet} {fr : Fra
                 -- Goal: Provable ... (c_hyp.c, Expr.subst σ_mario [toMarioSym vmAx v_hyp.v])
                 -- toMarioSym vmAx v_hyp.v = .var vr since h_findVR
                 have h_sym : toMarioSym vmAx v_hyp.v = .var vr := toMarioSym_var h_findVR
-                rw [h_sym, Metamath.Expr.subst, Metamath.Expr.subst, List.append_nil]
+                simp [h_sym, Metamath.Expr.subst]
                 -- Goal: Provable ... (c_hyp.c, σ_mario vr)
                 -- σ_mario vr = exprToMarioExpr vm (σ v_hyp)
                 have h_sigma_eq : σ_mario vr = exprToMarioExpr vm (σ v_hyp) := by
                   have h_findVar := findVR_findVar_inverse_frame h_findVR
                   exact toMarioSubst_findVar h_findVar
                 rw [h_sigma_eq]
-                -- Goal: Provable ... (c_hyp.c, exprToMarioExpr vm (σ v_hyp))
-                -- By type preservation: (σ v_hyp).typecode = c_hyp
-                -- So exprToFormula vm (σ v_hyp) = ((σ v_hyp).typecode.c, exprToMarioExpr vm (σ v_hyp))
-                --                              = (c_hyp.c, exprToMarioExpr vm (σ v_hyp))
-                have h_formula_eq : (c_hyp.c, exprToMarioExpr vm (σ v_hyp)) =
-                    exprToFormula vm (σ v_hyp) := by
-                  unfold exprToFormula
-                  congr 1
-                  exact (congrArg Constant.c h_type_pres).symm
-                rw [h_formula_eq]
                 -- σ v_hyp is on the stack, so by IH it's provable
                 have h_in_needed : σ v_hyp ∈ needed := by
                   rw [h_needed]
@@ -2188,7 +2160,11 @@ theorem proofValid_stack_supported {Γ : Database} {consts : ConstSet} {fr : Fra
                 have h_in_stack : σ v_hyp ∈ stack := by
                   rw [h_stack_eq]
                   exact List.mem_append_left _ (List.mem_reverse.mpr h_in_needed)
-                exact ih (σ v_hyp) h_in_stack
+                rw [← (congrArg Constant.c h_type_pres)]
+                change SupportedProvable Γ fr
+                  ((σ v_hyp).typecode.c, List.append (exprToMarioExpr vm (σ v_hyp)) ([] : MarioExpr))
+                simpa [vm, exprToFormula, List.append_nil] using
+                  ih (σ v_hyp) h_in_stack
 
           -- Sub-goal 2b: Variable typing - for each VR in axiom, prove (v.type, σ_mario v)
           -- ax.vars contains MarioVRs from the axiom's formula and hypotheses
@@ -2410,7 +2386,9 @@ theorem hyp_formula_is_expr {fr : Frame} {h : Semantic.Formula}
       -- Goal: (c.c, [Sym.var vr]) = (vr.type, [Sym.var vr])
       -- We have h_type_eq : vr.type = c.c, so use its symmetry
       refine ⟨vr, ?_⟩
-      rw [h_type_eq]
+      apply Prod.ext
+      · exact h_type_eq.symm
+      · rfl
 
 /-- Helper: If two expressions have equal formulas, their components match. -/
 theorem exprToFormula_inj {vm : VarMap} {e e' : Expr}
@@ -2512,8 +2490,7 @@ theorem provable_const_separation {Γ : Database} {consts : ConstSet} {fr : Fram
           rw [h_snd_eq] at h_c_mem
           unfold exprToMarioExpr at h_c_mem
           -- h_c_mem : .const c ∈ e_hyp.syms.map (toMarioSym vm)
-          rw [List.mem_map] at h_c_mem
-          obtain ⟨s, _, h_s_eq⟩ := h_c_mem
+          obtain ⟨s, _, h_s_eq⟩ := List.mem_map.mp h_c_mem
           -- h_s_eq : toMarioSym vm s = .const c
           -- toMarioSym checks findVR and returns either .const or .var
           cases h_find : findVR (varMapOfFrame fr) ⟨s⟩ with
@@ -2603,8 +2580,7 @@ theorem provable_const_separation {Γ : Database} {consts : ConstSet} {fr : Fram
           -- Case 1: .const c was in exprToMarioExpr vmAx eAx originally
           -- By WellFormedDatabase, c is a global constant (not in any frame's vars)
           unfold exprToMarioExpr at h_in_orig
-          rw [List.mem_map] at h_in_orig
-          obtain ⟨s, h_s_in, h_s_eq⟩ := h_in_orig
+          obtain ⟨s, h_s_in, h_s_eq⟩ := List.mem_map.mp h_in_orig
           -- s ∈ eAx.syms, toMarioSym vmAx s = .const c
           match h_find : findVR vmAx ⟨s⟩ with
           | none =>
@@ -3086,28 +3062,8 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
 
           -- Get findVar for vr from membership in axiom expression
           have h_vr_in_varmap : ∃ v, findVar vmAx vr = some v := by
-            -- VRs in exprToMarioExpr vmAx eAx come from toMarioSym vmAx applied to syms
-            -- toMarioSym only produces .var vr when findVR vmAx ⟨s⟩ = some vr
-            -- So for vr to be in the expression, there's some s with findVR vmAx ⟨s⟩ = some vr
-            -- and findVar vmAx vr = some ⟨s⟩
-            -- The membership in exprToMarioExpr implies VR is in varmap range
-            unfold exprToMarioExpr at h_vr_mem
-            unfold Metamath.Expr.mem at h_vr_mem
-            rw [List.mem_map] at h_vr_mem
-            obtain ⟨s, _, h_s_eq⟩ := h_vr_mem
-            cases h_find : findVR vmAx ⟨s⟩ with
-            | none =>
-                have h_const : toMarioSym vmAx s = Metamath.Sym.const s := by
-                  unfold toMarioSym; simp only [h_find]
-                rw [h_const] at h_s_eq
-                cases h_s_eq  -- .const ≠ .var
-            | some vr' =>
-                have h_var : toMarioSym vmAx s = Metamath.Sym.var vr' := by
-                  unfold toMarioSym; simp only [h_find]
-                rw [h_var] at h_s_eq
-                have h_vr_eq := Metamath.Sym.var.inj h_s_eq
-                subst h_vr_eq
-                exact ⟨⟨s⟩, findVR_findVar_inverse_frame h_find⟩
+            obtain ⟨s, _, h_find⟩ := exprToMarioExpr_mem_extract h_vr_mem
+            exact ⟨⟨s⟩, findVR_findVar_inverse_frame h_find⟩
 
           obtain ⟨v, h_findVar⟩ := h_vr_in_varmap
 
@@ -3300,23 +3256,8 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
 
                   -- Get findVar for vr from membership in hypothesis expression
                   have h_vr_in_varmap : ∃ v, findVar vmAx vr = some v := by
-                    unfold exprToMarioExpr at h_vr_mem
-                    unfold Metamath.Expr.mem at h_vr_mem
-                    rw [List.mem_map] at h_vr_mem
-                    obtain ⟨s, _, h_s_eq⟩ := h_vr_mem
-                    cases h_find : findVR vmAx ⟨s⟩ with
-                    | none =>
-                        have h_const : toMarioSym vmAx s = Metamath.Sym.const s := by
-                          unfold toMarioSym; simp only [h_find]
-                        rw [h_const] at h_s_eq
-                        cases h_s_eq
-                    | some vr' =>
-                        have h_var : toMarioSym vmAx s = Metamath.Sym.var vr' := by
-                          unfold toMarioSym; simp only [h_find]
-                        rw [h_var] at h_s_eq
-                        have h_vr_eq := Metamath.Sym.var.inj h_s_eq
-                        subst h_vr_eq
-                        exact ⟨⟨s⟩, findVR_findVar_inverse_frame h_find⟩
+                    obtain ⟨s, _, h_find⟩ := exprToMarioExpr_mem_extract h_vr_mem
+                    exact ⟨⟨s⟩, findVR_findVar_inverse_frame h_find⟩
                   obtain ⟨v, h_findVar⟩ := h_vr_in_varmap
 
                   -- Show vr is in Statement.vars (via hypothesis membership)
@@ -3421,8 +3362,7 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
         -- First, show each element of needed has a Provable proof
         have h_each : ∀ e ∈ needed, Provable Γ fr e := by
           intro e h_mem
-          rw [List.mem_map] at h_mem
-          obtain ⟨hyp, h_in, rfl⟩ := h_mem
+          obtain ⟨hyp, h_in, rfl⟩ := List.mem_map.mp h_mem
           exact h_hyps_provable hyp h_in
         -- Suffices to show ProofValidFrom Γ fr [] needed.reverse steps
         suffices ∃ steps, ProofValidFrom Γ fr [] needed.reverse steps by

@@ -128,9 +128,13 @@ theorem Expr.subst_id : (e : Expr) → Expr.subst VR.expr e = e
 theorem Expr.subst_append (σ) : (e₁ e₂ : Expr) → Expr.subst σ (e₁ ++ e₂) = e₁.subst σ ++ e₂.subst σ
   | [], _ => rfl
   | const c :: (e₁ : Expr), e₂ => by
-    rw [subst, List.cons_append, subst, subst_append ..]; rfl
-  | var v :: e, e₂ => by
-    rw [List.cons_append]; simp only [Expr.subst]; rw [List.append_assoc, subst_append ..]
+    change const c :: subst σ (e₁ ++ e₂) = const c :: (subst σ e₁ ++ subst σ e₂)
+    rw [subst_append σ e₁ e₂]
+  | var v :: (e : Expr), e₂ => by
+    change List.append (σ v) (subst σ (e ++ e₂)) =
+      List.append (List.append (σ v) (subst σ e)) (subst σ e₂)
+    rw [subst_append σ e e₂]
+    exact (List.append_assoc (σ v) (subst σ e) (subst σ e₂)).symm
 
 theorem Expr.mem_subst {σ a} : {e : Expr} → a ∈' Expr.subst σ e → ∃ b, b ∈' e ∧ a ∈' σ b
   | const _ :: _, .tail _ h => let ⟨b, h₁, h₂⟩ := mem_subst h; ⟨b, .tail _ h₁, h₂⟩
@@ -516,7 +520,8 @@ theorem Provable.trans' {axs Γ} (σ) {Γ' fmla} (pr : Provable axs Γ' fmla)
   induction pr with
   | hyp f h => exact hh f h
   | var v =>
-      simpa [VR.vhyp, Formula.subst, Expr.subst, Expr, List.append_nil] using (hv v)
+      change Provable axs Γ (v.type, List.append (σ v) ([] : List Sym))
+      simpa [List.append_nil] using (hv v)
   | @ax σ' a ha dj' _ _ IH_h IH_v =>
     rw [← Formula.subst_tr]
     apply ax (subst.trans σ' σ) ha
