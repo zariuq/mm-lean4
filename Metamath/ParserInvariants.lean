@@ -579,8 +579,10 @@ These parser invariant theorems enable eliminating axioms in KernelClean.lean:
 
 ## Status
 
-All theorems in this file are sorry-free. Axioms in KernelClean.lean have been
-replaced with parser theorems. The project has 0 axioms and 0 sorries.
+All theorems in this file are sorry-free. The parser theorems replace the old
+KernelClean axioms. The active `Metamath/` Lean code has no project-declared
+axioms; the headline soundness theorems still depend on Lean's standard axioms
+(`propext`, `Classical.choice`, `Quot.sound`).
 -/
 
 /-! ## Usage Example

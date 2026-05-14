@@ -68,7 +68,7 @@ instance : Inhabited ModeConfig := ⟨{}⟩
 
 namespace ModeConfig
 
-/-- Zar mode: Strict spec compliance (138/138 tests) -/
+/-- Zar mode: strict spec compliance (150/150 on the current metamath-test suite). -/
 def zar : ModeConfig := {}
 
 /-- Knife mode: Stricter - rejects incomplete proofs, top-level $e -/
@@ -77,8 +77,10 @@ def knife : ModeConfig := {
   rejectToplevelEss := true
 }
 
-/-- Exe mode: More permissive - matches metamath.exe behavior exactly (132/138)
-    NOTE: allowConstInnerScope = false because metamath.exe rejects direct $c in inner scope -/
+/-- Exe mode: more permissive compatibility mode (147/150 on the current
+    metamath-test suite).
+    NOTE: allowConstInnerScope = false because metamath.exe rejects direct $c
+    in inner scope. -/
 def exe : ModeConfig := {
   allowDuplicateFloat := true
   allowIncludeInnerScope := true
