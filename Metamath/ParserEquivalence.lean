@@ -5,7 +5,7 @@ This module is the single entry point for the MM-Lean4 verification results.
 Import this module to access all top-level theorems.
 For compact usage patterns, see `Metamath/ParserEquivalenceExamples.lean`.
 
-**Main results (all sorry-free, axiom-free):**
+**Main results (no project-declared axioms, no sorries):**
 
 1. `verify_parser_acceptance_iff_spec_provable` — Normal-mode biconditional
 2. `verify_parser_acceptance_any_mode_iff_spec_provable` — Any-mode biconditional

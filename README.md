@@ -48,19 +48,22 @@ The project includes a proof.
 
 ## Toolchain
 
-- The toolchain pins Lean 4.27.0.
-- The toolchain pins Batteries v4.27.0-rc1.
+- The toolchain pins Lean 4.29.1.
+- The toolchain pins Batteries v4.29.1.
 
 ## Status
 
 - Sorries are 0.
-- Axioms are 0.
-- Build status is 129 jobs with 0 errors.
-- The default test suite is 151 of 151.
-- The small-only test suite is 141 of 141.
+- No project-declared axioms in active `Metamath/` Lean code; the headline
+  soundness theorem depends on Lean's standard axioms
+  (`propext`, `Classical.choice`, `Quot.sound`) under `#print axioms`.
+- `lake build` succeeds on the pinned toolchain.
+- The default test suite is 150 of 150.
+- The small-only test suite is 140 of 140.
 
 ```bash
-rg -n "sorry" Metamath/
+rg -n '^\s*sorry\b|by sorry' Metamath/ --glob '*.lean'
+lake env lean scripts/print_axioms.lean
 ```
 
 ## Correctness
@@ -99,15 +102,17 @@ h_success : (checkBytes bytes).error? = none
 
 ## Boundary
 
-- Formal theorems cover `checkBytes` on expanded `ByteArray` input.
-- Include expansion is a trusted preprocessing layer.
+- Formal theorems center on `checkBytes` over `ByteArray` input.
+- The active executable frontend is single-pass and include-aware.
+- `Metamath/FrontendBridge.lean` connects frontend outcomes back to the reviewed theorem chain.
 - `Metamath/ParserEquivalence.lean` is the review entry module for the composed chain.
 
 ## Reproduction
 
 ```bash
+ROOT="$(pwd)"
 lake build
-cd ../metamath-test && ./run-testsuite-all ./test-mm-lean4
+cd ../metamath-test && ./run-testsuite-all "$ROOT/.lake/build/bin/mm-lean4"
 ```
 
 ## Quick expert checklist
