@@ -667,16 +667,6 @@ end KernelExtras.List
 
 namespace Array
 
-/-- Array.toList preserves getElem! access (panic-safe version).
-
-If i < a.size, then a[i]! in the original array equals a.toList[i]! in the list.
-
-Uses Batteries 4.24's `getElem!_pos` lemma which says c[i]! = c[i] when i is valid.
--/
-theorem getElem!_toList {α} [Inhabited α] (a : Array α) (i : Nat) (h : i < a.size) :
-  a[i]! = a.toList[i]! := by
-  simp [getElem!_pos, h]
-
 /-- Array.toList preserves indexed get access.
 
 For any valid index i, a.toList.get gives the same element as a[i].
