@@ -42,7 +42,7 @@ theorem parseErrorCode?_topLevelEssentialNotAllowed_payload_inversion
   | tokenNotConstantOrVariable sym =>
       simp [ScopeDeclError.code] at h_err_code
   | topLevelEssentialNotAllowed =>
-      simpa using h_ev
+      exact h_ev
   | outOfOrderHypothesesInFrame => cases h_err_code
 
 /-- Inversion: decoded `.tokenNotInScope` carries scope-decl symbol payload. -/

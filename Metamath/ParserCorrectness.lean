@@ -967,7 +967,7 @@ theorem insertHyp_succeeds_when_unique
                     simpa using (Array.getBang_eq_get_nat (a := prevF) (i := 1) (h := h_pos1_prev))
                   simpa [h_eq] using h1_prev
                 have h_ne' : v_prev ≠ f[1]!.value := by
-                  simpa [h1_prev] using h_ne_prev
+                  simpa [h1_prev, Sym.value] using h_ne_prev
                 have h_beq_false : (v_prev == f[1]!.value) = false :=
                   String.beq_false_of_ne h_ne'
                 simp [h_size_prev, h1_prev', h_beq_false]
@@ -1709,7 +1709,7 @@ theorem structure_preserving_maintains_wf
   | pushScope =>
       -- Case: pushScope operation
       -- pushScope only modifies db.scopes, doesn't touch objects or frame
-      simpa [DB.pushScope] using And.intro h_frame_wf h_objs_wf
+      exact And.intro h_frame_wf h_objs_wf
   | popScope pos =>
       -- Case: popScope operation
       classical
@@ -1723,11 +1723,14 @@ theorem structure_preserving_maintains_wf
       | some sc =>
           have h_frame := wf_frame_shrink h_frame_wf sc
           refine ⟨?_, ?_⟩
-          · simpa [DB.popScope, h_scope] using h_frame
+          · simp only [DB.popScope, h_scope]
+            exact h_frame
           · intro lbl obj h_find
             have h_lookup : db.find? lbl = some obj := by
-              simpa [DB.popScope, h_scope] using h_find
-            simpa [DB.popScope, h_scope] using h_objs_wf lbl obj h_lookup
+              simp only [DB.popScope, h_scope] at h_find
+              exact h_find
+            simp only [DB.popScope, h_scope]
+            exact h_objs_wf lbl obj h_lookup
   | withFrame f h_preserves =>
       -- Case: withFrame operation
       -- withFrame modifies db.frame using f

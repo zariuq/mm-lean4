@@ -1173,12 +1173,12 @@ private theorem insertHyp_dup_list_forIn_preserves_frame
           db.mkError pos s!"variable {v} already has $f hypothesis"
         else db
      else db).frame = db.frame := by
-  by_cases h_if : !ess && f.size >= 2
-  · simp [h_if]
-    by_cases h_dup : db.floatVarOccursInFrame (f[1]!.value)
-    · simp [h_dup]
-    · simp [h_dup]
-  · simp [h_if]
+    by_cases h_if : !ess && f.size >= 2
+    · simp [h_if]
+      by_cases h_dup : db.floatVarOccursInFrame (f[1]!.value)
+      · simp [h_dup]
+      · simp [h_dup]
+    · simp [h_if]
 
   /-- insertHypChecks preserves frame (only mkError + duplicate check). -/
   private theorem insertHypChecks_preserves_frame
@@ -1378,16 +1378,16 @@ theorem finishProof_hyps_behavior (s : ParserState) (pr : ProofState) :
             cases h_size : (stack.size == 1) with
             | false =>
                 right
-                simpa [f, Id.run, pure, h_size] using
-                  (ParserState_mkErrorFromEvidence_sets_error_bool
+                simp only [f, Id.run, pure, bind, h_size, Bool.false_eq_true, ↓reduceIte]
+                exact (ParserState_mkErrorFromEvidence_sets_error_bool
                     { s with tokp := .start } pos
                     (.theoremFinality (.theoremMoreThanOneStackElement stack.size)))
             | true =>
                 cases h_claim : (stack[0]! == fmla) with
                 | false =>
                     right
-                    simpa [f, Id.run, pure, h_size, h_claim] using
-                      (ParserState_mkErrorFromEvidence_sets_error_bool
+                    simp only [f, Id.run, pure, bind, h_size, h_claim, Bool.false_eq_true, ↓reduceIte]
+                    exact (ParserState_mkErrorFromEvidence_sets_error_bool
                         { s with tokp := .start } pos
                         (.theoremFinality (.theoremClaimMismatch fmla stack[0]!)))
                 | true =>
@@ -1406,16 +1406,16 @@ theorem finishProof_hyps_behavior (s : ParserState) (pr : ProofState) :
         cases h_size : (stack.size == 1) with
         | false =>
             right
-            simpa [f, Id.run, pure, h_size] using
-              (ParserState_mkErrorFromEvidence_sets_error_bool
+            simp only [f, Id.run, pure, bind, h_size, Bool.false_eq_true, ↓reduceIte]
+            exact (ParserState_mkErrorFromEvidence_sets_error_bool
                 { s with tokp := .start } pos
                 (.theoremFinality (.theoremMoreThanOneStackElement stack.size)))
         | true =>
             cases h_claim : (stack[0]! == fmla) with
             | false =>
                 right
-                simpa [f, Id.run, pure, h_size, h_claim] using
-                  (ParserState_mkErrorFromEvidence_sets_error_bool
+                simp only [f, Id.run, pure, bind, h_size, h_claim, Bool.false_eq_true, ↓reduceIte]
+                exact (ParserState_mkErrorFromEvidence_sets_error_bool
                     { s with tokp := .start } pos
                     (.theoremFinality (.theoremClaimMismatch fmla stack[0]!)))
             | true =>

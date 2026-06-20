@@ -175,7 +175,7 @@ theorem checkBytes_no_error_assertDvVarsInFrame?
               (.internalGate (checkBytesCore arr config).config.allowDuplicateFloat
                 (checkBytesCore arr config).wellFormed?
                 (checkBytesCore arr config).assertDvVarsInFrame?)).assertDvVarsInFrame? = true := by
-            simpa [h_mk] using h_assert
+            rw [h_mk]; exact h_assert
         simpa [h_cond_false] using h_mk_true
     · simp [h_assert, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence] at h_ok
   · simp [checkBytes, h_err] at h_ok

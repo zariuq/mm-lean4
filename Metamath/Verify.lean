@@ -13,9 +13,12 @@ indexing internally) with user-facing specifications (which use `!` notation).
 -/
 
 
-def UInt8.toChar (n : UInt8) : Char := ⟨n.toUInt32, by
-  have := n.toFin.2
-  simp [size, UInt32.isValidChar, Nat.isValidChar] at *; omega⟩
+namespace Metamath.Verify
+
+def uint8ToChar (n : UInt8) : Char :=
+  ⟨n.toUInt32, .inl (Nat.lt_trans n.toBitVec.isLt (by decide))⟩
+
+end Metamath.Verify
 
 namespace UInt8
 
@@ -153,7 +156,7 @@ def toLabel (bs : ByteSlice) : Bool × String := Id.run do
   let mut ok := true
   let mut s := ""
   for c in bs do
-    s := s.push c.toChar
+    s := s.push (Metamath.Verify.uint8ToChar c)
     unless isLabelChar c do ok := false
   (ok, s)
 
@@ -161,7 +164,7 @@ def toMath (bs : ByteSlice) : Bool × String := Id.run do
   let mut ok := true
   let mut s := ""
   for c in bs do
-    s := s.push c.toChar
+    s := s.push (Metamath.Verify.uint8ToChar c)
     unless isMathChar c do ok := false
   (ok, s)
 
@@ -2096,7 +2099,7 @@ def feedToken (s : ParserState) (pos : Nat) (tk : ByteSlice) : ParserState :=
     | .comment _ => unreachable!
     | .start =>
       if tk.len == 2 && tk[0]! == '$'.toUInt8 then
-        match tk[1]!.toChar with
+        match Metamath.Verify.uint8ToChar (tk[1]!) with
         | '{' => s.withDB .pushScope
         | '}' => s.withDB (.popScope pos)
         | 'c' => { s with tokp := .const }
@@ -2129,7 +2132,7 @@ def feedToken (s : ParserState) (pos : Nat) (tk : ByteSlice) : ParserState :=
       if tk.len == 2 && tk[0]! == '$'.toUInt8 then
         let go (s : ParserState) (k : TokensKind) :=
           { s with tokp := .math #[] ⟨k, pos, lab⟩ }
-        match tk[1]!.toChar with
+        match Metamath.Verify.uint8ToChar (tk[1]!) with
         | 'f' => go s .float
         | 'e' => go s .ess
         | 'a' => go s .ax
@@ -2350,7 +2353,7 @@ def scanIncludes (contents : ByteArray) (fname : String) (config : ModeConfig :=
   while i < contents.size do
     -- Track comment state (comments take precedence over everything else)
     if i + 1 < contents.size && contents[i]! == '$'.toUInt8 then
-      let c := contents[i+1]!.toChar
+      let c := Metamath.Verify.uint8ToChar (contents[i+1]!)
       if c == '(' then
         inComment := true
         buf := buf.push contents[i]!
@@ -2372,7 +2375,7 @@ def scanIncludes (contents : ByteArray) (fname : String) (config : ModeConfig :=
 
     -- Track scope depth for strict mode validation
     if i + 1 < contents.size && contents[i]! == '$'.toUInt8 then
-      let c := contents[i+1]!.toChar
+      let c := Metamath.Verify.uint8ToChar (contents[i+1]!)
       if c == '{' then
         scopeDepth := scopeDepth + 1
       else if c == '}' then
@@ -2382,7 +2385,7 @@ def scanIncludes (contents : ByteArray) (fname : String) (config : ModeConfig :=
 
     -- Track if we're entering a statement (simplified: after $f, $e, $a, $p)
     if i + 1 < contents.size && contents[i]! == '$'.toUInt8 then
-      let c := contents[i+1]!.toChar
+      let c := Metamath.Verify.uint8ToChar (contents[i+1]!)
       if c == 'f' || c == 'e' || c == 'a' || c == 'p' then
         inStatement := true
 

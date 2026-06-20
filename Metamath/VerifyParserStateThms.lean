@@ -124,7 +124,8 @@ namespace ParserState
               fun dj => dj.push (if arr[i] < tk then (arr[i], tk) else (tk, arr[i])))).db.config
           = s.db.config := by
         simp [ParserState.withDB, DB.withDJ_config]
-      simpa [h_cfg] using ih (i + 1) _ hs'
+      rw [← h_cfg]
+      exact ih (i + 1) _ hs'
 
 @[simp] theorem djvars_loop_db_config (arr : Array String) (s : ParserState)
     (pos : Pos) (tk : String) :

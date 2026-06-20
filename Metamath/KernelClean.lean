@@ -432,7 +432,7 @@ theorem subst_preserves_head_of_const0 {σ : Std.HashMap String Formula} {f g : 
   obtain ⟨c, hc⟩ := hhead
   have h_fold0 :
       f.foldlM (Formula.substStep σ) #[] = Except.ok g := by
-    simpa [Formula.subst] using h_sub
+    exact h_sub
   have h_fold_list :
       f.toList.foldlM (Formula.substStep σ) #[] = Except.ok g := by
     exact
@@ -539,7 +539,7 @@ theorem subst_ok_flatMap_tail {σ : Std.HashMap String Formula} {f g : Formula}
   obtain ⟨c, hc⟩ := h_wf.head_const
   have h_fold0 :
       f.foldlM (Formula.substStep σ) #[] = Except.ok g := by
-    simpa [Formula.subst] using h_sub
+    exact h_sub
   have h_fold_list :
       f.toList.foldlM (Formula.substStep σ) #[] = Except.ok g := by
     exact
@@ -1775,8 +1775,8 @@ theorem wellFormedFrame_hyps_only (db : Verify.DB) (fr : Verify.Frame) :
   constructor
   · intro i hi
     exact h_hyps i hi
-  · simpa using h_unique
--- 
+  · exact h_unique
+--
 /-- Variables extracted from toFrame come from Sym.var.
 
     **Proof strategy:**
@@ -2833,7 +2833,7 @@ theorem flatMap_toSym_correspondence
             apply h_vars_match
             simp [List.mem_cons]
           have h_v_in' : Spec.Variable.mk (Verify.Sym.var v).value ∈ vars := by
-            simpa using h_v_in
+            simp only [Verify.Sym.value]; exact h_v_in
 
           -- From h_match, we get the binding
           have ⟨f_v, h_lookup, h_toExpr_match⟩ := h_match (Spec.Variable.mk v) h_v_in
@@ -3579,7 +3579,7 @@ theorem checkHyp_operational_semantics
         let vi := match fi[1]! with | .var v => v | _ => ""
         let vj := match fj[1]! with | .var v => v | _ => ""
         vi ≠ vj := by
-    simpa using h_frame_wf.2
+    exact h_frame_wf.2
   exact checkHyp_operational_general db hyps stack off 0 ∅ σ_impl h_wf h_unique h_empty h_checkHyp
 
 /-- **Generalized operational semantics**: checkHyp loop alignment.
@@ -4855,7 +4855,7 @@ theorem dv_check_sound
         have h_mem'' : convertDV (x.v, y.v) ∈ djTarget.toList.map convertDV := by
           apply List.mem_map.mpr
           exact ⟨(x.v, y.v), h_mem', rfl⟩
-        simpa [h_dv_target] using h_mem''
+        rw [h_dv_target]; exact h_mem''
       left
       simpa using this
     · have h_mem' : (y.v, x.v) ∈ djTarget.toList := by
@@ -4864,7 +4864,7 @@ theorem dv_check_sound
         have h_mem'' : convertDV (y.v, x.v) ∈ djTarget.toList.map convertDV := by
           apply List.mem_map.mpr
           exact ⟨(y.v, x.v), h_mem', rfl⟩
-        simpa [h_dv_target] using h_mem''
+        rw [h_dv_target]; exact h_mem''
       -- Swap order
       right
       simpa using this
@@ -5038,7 +5038,7 @@ theorem floatShape_wff (f : Verify.Formula) :
         (match f[0]!, f[1]! with
          | .const _, .var _ => true
          | _, _ => false) = true := by
-      simpa [h_size] using h_shape
+      rw [if_pos h_size] at h_shape; exact h_shape
     cases h0 : f[0]! <;> cases h1 : f[1]!
     ·
       have : False := by
@@ -5198,7 +5198,8 @@ theorem formulaSymsRespectFrame_mem
         (match s with
         | .var v => decide (v ∈ Verify.DB.frameFloatVars db fr)
         | .const c => decide (c ∉ Verify.DB.frameFloatVars db fr)) = true := by
-    simpa [Verify.DB.formulaSymsRespectFrame] using h_ok
+    simp only [Verify.DB.formulaSymsRespectFrame, List.all_eq_true] at h_ok
+    exact h_ok
   intro s h_mem
   specialize h_ok' s h_mem
   cases s with
@@ -5270,11 +5271,11 @@ theorem formula_eq_of_toExpr_eq_of_respects
       (f.toList.tail.map toSym).map (decodeSym vars) = f.toList.tail := by
     have h_dec := decodeSym_of_respects db fr f h_res_f
     -- rewrite map-map
-    simpa [List.map_map, Function.comp] using h_dec
+    rw [List.map_map]; exact h_dec
   have h_tail_g :
       (g.toList.tail.map toSym).map (decodeSym vars) = g.toList.tail := by
     have h_dec := decodeSym_of_respects db fr g h_res_g
-    simpa [List.map_map, Function.comp] using h_dec
+    rw [List.map_map]; exact h_dec
   have h_tail : f.toList.tail = g.toList.tail := by
     calc
       f.toList.tail = (f.toList.tail.map toSym).map (decodeSym vars) := by
@@ -5566,7 +5567,7 @@ theorem dv_check_complete
         have h_pair_spec : (Spec.Variable.mk v1, Spec.Variable.mk v2) ∈ fr_assert.dv := by
           have h_pair' : convertDV (v1, v2) ∈ djSource.toList.map convertDV := by
             exact List.mem_map.mpr ⟨(v1, v2), h_pair_mem, rfl⟩
-          simpa [h_dv_source] using h_pair'
+          rw [h_dv_source]; exact h_pair'
         have h_v1_in : Spec.Variable.mk v1 ∈ fr_assert.vars := (h_dv_vars _ _ h_pair_spec).1
         have h_v2_in : Spec.Variable.mk v2 ∈ fr_assert.vars := (h_dv_vars _ _ h_pair_spec).2
         obtain ⟨c1, h_float1⟩ := (vars_mem_iff_floats fr_assert (Spec.Variable.mk v1)).1 h_v1_in
@@ -5639,7 +5640,7 @@ theorem dv_check_complete
               have h_lt : s1 < s2 :=
                 h_dv_ordered (Spec.Variable.mk s1) (Spec.Variable.mk s2) h_mem
               have h_mem' : convertDV (s1, s2) ∈ djTarget.toList.map convertDV := by
-                simpa [h_dv_target] using h_mem
+                rw [h_dv_target] at h_mem; exact h_mem
               rcases List.mem_map.mp h_mem' with ⟨pair, h_pair_mem, h_pair_eq⟩
               have h_pair_eq' : pair = (s1, s2) := by
                 apply convertDV_injective
@@ -5650,7 +5651,7 @@ theorem dv_check_complete
               have h_lt : s2 < s1 :=
                 h_dv_ordered (Spec.Variable.mk s2) (Spec.Variable.mk s1) h_mem
               have h_mem' : convertDV (s2, s1) ∈ djTarget.toList.map convertDV := by
-                simpa [h_dv_target] using h_mem
+                rw [h_dv_target] at h_mem; exact h_mem
               rcases List.mem_map.mp h_mem' with ⟨pair, h_pair_mem, h_pair_eq⟩
               have h_pair_eq' : pair = (s2, s1) := by
                 apply convertDV_injective
@@ -5680,7 +5681,7 @@ theorem frameFloatVars_mem_iff_vars
   constructor
   · intro h_mem
     have h_mem' : s ∈ Verify.DB.frameFloatVars db (Verify.Frame.mk #[] fr_impl.hyps) := by
-      simpa using h_mem
+      exact h_mem
     obtain ⟨lbl, f, lbl', h_lbl_mem, h_find, h_shape, h_var⟩ :=
       (frameFloatVars_mem_iff db fr_impl.hyps s).1 h_mem'
     have h_wff : WellFormedFloat f := floatShape_wff f h_shape
@@ -5699,7 +5700,7 @@ theorem frameFloatVars_mem_iff_vars
       refine (h_corr (Spec.Constant.mk c) (Spec.Variable.mk s)).2 ?_
       exact ⟨i, lbl', f, hi, h_find_i, h_size, h0, by simp [h1]⟩
     have h_float_mem : (Spec.Constant.mk c, Spec.Variable.mk s) ∈ Bridge.floats fr_spec := by
-      simpa using h_float_mem'
+      exact h_float_mem'
     have h_vars := (vars_mem_iff_floats fr_spec (Spec.Variable.mk s)).2
     exact (varNames_mem_iff fr_spec.vars s).2 (h_vars ⟨Spec.Constant.mk c, h_float_mem⟩)
   · intro h_mem
@@ -5707,7 +5708,7 @@ theorem frameFloatVars_mem_iff_vars
       (varNames_mem_iff fr_spec.vars s).1 h_mem
     obtain ⟨c, h_float_mem⟩ := (vars_mem_iff_floats fr_spec (Spec.Variable.mk s)).1 h_var
     have h_float_mem' : (c, Spec.Variable.mk s) ∈ Bridge.floats ⟨fr_spec.hyps, []⟩ := by
-      simpa using h_float_mem
+      exact h_float_mem
     have h_exists := (h_corr c (Spec.Variable.mk s)).1 h_float_mem'
     rcases h_exists with ⟨i, lbl, f, hi, h_find, h_size, h0, h1⟩
     have h_shape : f.isFloatShape = true := by
@@ -5718,7 +5719,7 @@ theorem frameFloatVars_mem_iff_vars
     have h_mem' : s ∈ Verify.DB.frameFloatVars db (Verify.Frame.mk #[] fr_impl.hyps) := by
       apply (frameFloatVars_mem_iff db fr_impl.hyps s).2
       exact ⟨fr_impl.hyps[i]!, f, lbl, h_lbl_mem, h_find, h_shape, h1⟩
-    simpa using h_mem'
+    exact h_mem'
 
 /-- If a formula respects the frame and all its symbols are declared, then
     its spec expression has variables in scope (or declared constants). -/
@@ -5755,7 +5756,7 @@ theorem exprVarsInScope_of_formula
         (varNames_mem_iff fr_spec.vars v).1 h_vars
       left
       have h_v_eq : v = s := by
-        simpa using h_sym_val
+        simp only [Verify.Sym.value] at h_sym_val; exact h_sym_val
       simpa [h_v_eq] using h_vars'
   | const c =>
       have h_mem_full : Verify.Sym.const c ∈ f.toList := by
@@ -5769,7 +5770,7 @@ theorem exprVarsInScope_of_formula
         simpa using h_decl_c
       right
       have h_c_eq : c = s := by
-        simpa using h_sym_val
+        simp only [Verify.Sym.value] at h_sym_val; exact h_sym_val
       simpa [h_c_eq, toConsts] using h_isConst
 
 theorem formulaSymsRespectFrame_sound_hypsOnly
@@ -6604,9 +6605,7 @@ theorem checkHyp_hyp_matches
     | some hyps_spec =>
         simp [h_m] at h_fr
         have h_eq : (Spec.Frame.mk hyps_spec (fr_impl.dj.toList.map convertDV)) = fr_spec := by
-          have h_fr' := h_fr
-          simp at h_fr'
-          exact h_fr'
+          exact h_fr
         have h_hyps_eq : fr_spec.hyps = hyps_spec := by
           cases h_eq
           rfl
@@ -7628,7 +7627,7 @@ theorem fold_maintains_provable
           have h_fold' :
               rest.foldlM (fun pr step => Verify.DB.stepNormal db pr step) pr_next =
                 Except.ok pr_final := by
-            simpa using h_fold
+            exact h_fold
           exact ih pr_next pr_final stack_next steps_next h_inv_next h_fold'
 
   -- Use the fold invariant to get a proof-valid witness
@@ -8070,7 +8069,7 @@ theorem preload_fold_heap_toList
       cases h_fold
     | ok pr_mid =>
       have h_rest : rest.foldlM (Verify.DB.preload db) pr_mid = Except.ok pr_final := by
-        simpa [h_preload] using h_fold
+        rw [h_preload] at h_fold; exact h_fold
       obtain ⟨obj, el, h_find, h_el, h_mid⟩ :=
         preload_ok_heapEl db pr_init pr_mid label h_preload
       have h_label : heapElOfLabel db label = some el := by
@@ -8110,7 +8109,7 @@ theorem preload_fold_hyp_mem
           cases h_fold
       | ok pr_mid =>
           have h_rest : rest.foldlM (Verify.DB.preload db) pr_mid = Except.ok pr_final := by
-            simpa [h_preload] using h_fold
+            rw [h_preload] at h_fold; exact h_fold
           cases h_mem with
           | head =>
               -- label' = label, use preload_ok_hyp_mem which returns db.frame membership
@@ -8140,7 +8139,7 @@ theorem preload_fold_preserves_frame
           cases h_fold
       | ok pr_mid =>
           have h_rest : rest.foldlM (Verify.DB.preload db) pr_mid = Except.ok pr_final := by
-            simpa [h_preload] using h_fold
+            rw [h_preload] at h_fold; exact h_fold
           have h_frame_mid : pr_mid.frame = pr_init.frame :=
             preload_preserves_frame db pr_init pr_mid label h_preload
           have h_frame_final : pr_final.frame = pr_mid.frame :=
@@ -8314,7 +8313,7 @@ theorem compressed_proof_sound
         | ok pr_next =>
             have h_rest :
                 rest.foldlM (fun pr n => Verify.DB.stepProof db pr n) pr_next = Except.ok pr_final := by
-              simpa [h_step] using h_fold
+              rw [h_step] at h_fold; exact h_fold
             have h_idx : n < pr.heap.size :=
               stepProof_ok_bound db pr pr_next n h_step
             have h_idx' : n < labels.length := by
@@ -9009,7 +9008,7 @@ theorem checkHypOK_of_stack_window_aux
                   cases s with
                   | var v' =>
                       have h_v' : v' = v.v := by
-                        simpa [toSym] using h_toSym_eq
+                        simp only [toSym, Verify.Sym.value] at h_toSym_eq; exact h_toSym_eq
                       subst h_v'
                       have h_mem_var : Verify.Sym.var v.v ∈ f.toList.tail := by
                         simpa using h_s_mem
@@ -9055,14 +9054,15 @@ theorem checkHypOK_of_stack_window_aux
                             simpa [h_f1] using h_f1_var.symm
                           have h_v_eq' : v' = v := by
                             have : v' = Spec.Variable.mk (toSym (Verify.Sym.var v_str)) := h_v_eq
-                            simpa [h_v_str] using this
+                            rw [h_v_str] at this
+                            simp only [toSym, Verify.Sym.value] at this; exact this
                           have h_need_eq :
                               toExpr (stack[off.1 + j]!) = σ_spec v := by
                             simpa [Bridge.needOf, h_v_eq'] using h_need_j
                           exact ⟨stack[off.1 + j]!, h_lookup', h_need_eq⟩
                   | const c =>
                       have h_c_eq : c = v.v := by
-                        simpa [toSym] using h_toSym_eq
+                        simp only [toSym, Verify.Sym.value] at h_toSym_eq; exact h_toSym_eq
                       have h_not_in : Spec.Variable.mk c ∉ fr_spec.vars := h_syms_sound.2 c h_s_mem
                       have : False := by
                         apply h_not_in
@@ -10167,8 +10167,8 @@ theorem foldlM_proofSteps_complete
       -- Step 8: Get typed substitution from checkHyp success
       have h_fr_hypsOnly : toFrame db (Verify.Frame.mk #[] fr_impl.hyps) = some ⟨fr'.hyps, []⟩ :=
         toFrame_hypsOnly_of_toFrame db fr_impl fr' h_fr_impl
-      have h_wf_hypsOnly : WellFormedFrame db (Verify.Frame.mk #[] fr_impl.hyps) := by
-        simpa using h_wf_fr_impl
+      have h_wf_hypsOnly : WellFormedFrame db (Verify.Frame.mk #[] fr_impl.hyps) :=
+        wellFormedFrame_hyps_only db fr_impl h_wf_fr_impl
 
       obtain ⟨σ_typed_hypsOnly, h_toSubstTyped_hypsOnly⟩ := checkHyp_produces_TypedSubst
         db fr_impl.hyps pr_mid.stack off σ_impl ⟨fr'.hyps, []⟩

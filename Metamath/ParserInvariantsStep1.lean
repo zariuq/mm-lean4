@@ -89,7 +89,8 @@ theorem feedTokens_validates_float
       (match arr[0]!, arr[1]! with
         | Sym.const _, Sym.var _ => true
         | _, _ => false) = true := by
-    simpa [Formula.isFloatShape, h_size] using h_shape
+    simp only [Formula.isFloatShape, h_size, ↓reduceIte] at h_shape
+    exact h_shape
   cases h0 : arr[0]! with
   | const c =>
       cases h1 : arr[1]! with
