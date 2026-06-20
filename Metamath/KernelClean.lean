@@ -449,8 +449,8 @@ theorem subst_preserves_head_of_const0 {σ : Std.HashMap String Formula} {f g : 
   have h_toList_head : f.toList[0]! = s := by
     simp [h_list]
   have h_s_eq : s = f[0]! := by
-    have h_get := getElem!_toList f 0 hf
-    exact h_toList_head.symm.trans h_get.symm
+    have h_get : f.toList[0]! = f[0]! := getElem!_toList
+    exact h_toList_head.symm.trans h_get
   have h_s_const : s = Verify.Sym.const c := by simpa [h_s_eq] using hc
   have h_step :
       Formula.substStep σ #[] s = Except.ok #[Verify.Sym.const c] := by
@@ -556,8 +556,8 @@ theorem subst_ok_flatMap_tail {σ : Std.HashMap String Formula} {f g : Formula}
   have h_toList_head : f.toList[0]! = s := by
     simp [h_list]
   have h_s_eq : s = f[0]! := by
-    have h_get := getElem!_toList f 0 hf
-    exact h_toList_head.symm.trans h_get.symm
+    have h_get : f.toList[0]! = f[0]! := getElem!_toList
+    exact h_toList_head.symm.trans h_get
   have h_s_const : s = Verify.Sym.const c := by simpa [h_s_eq] using hc
   have h_step :
       Formula.substStep σ #[] s = Except.ok #[Verify.Sym.const c] := by
@@ -732,9 +732,8 @@ theorem array_size2_tail_is_second_elem {f : Verify.Formula} (h_size : f.size = 
     rfl
   rw [h_y_toList]
   -- Now: f.toList[1]! = f[1]!
-  -- Apply getElem!_toList which requires 1 < f.size
-  have h_bound : 1 < f.size := by omega
-  rw [getElem!_toList f 1 h_bound]
+  -- `getElem!_toList` gives exactly `f.toList[1]! = f[1]!`
+  exact getElem!_toList
 
 /-! ### Option and Do-Notation Lemmas -/
 

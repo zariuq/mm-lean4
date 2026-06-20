@@ -2752,7 +2752,7 @@ theorem trimFrameHyps_subsequence (db : DB) (vars : HashSet String) (hyps : Arra
         (pairs.toList.map Prod.fst)[i]? = some ((pairs.toList.map Prod.fst)[i]) := h_i
         _ = some ((pairs.toList.map Prod.fst)[j]) := by simp [h_eq_list]
         _ = (pairs.toList.map Prod.fst)[j]? := h_j.symm
-    have h_eq_ij := List.getElem?_inj (i := i) (j := j) (h₀ := hi_list) h_nodup h_get
+    have h_eq_ij := (List.getElem?_inj (i := i) (j := j) hi_list h_nodup).mp h_get
     exact (h_ne h_eq_ij).elim
 
 -- trimFrame produces an INJECTIVE subsequence of the input frame's hypotheses
