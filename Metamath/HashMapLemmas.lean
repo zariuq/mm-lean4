@@ -657,9 +657,11 @@ theorem foldlM_except_success_preserved
         | ok init' =>
             have h_step2 : step2 init a = .ok init' := h_step init a init' h_step1
             have h_rest : xs.foldlM step1 init' = .ok result := by
-              simpa [h_step1] using h_list
+              rw [h_step1] at h_list
+              exact h_list
             have h_rest' : xs.foldlM step2 init' = .ok result := ih init' result h_rest
-            simpa [List.foldlM_cons, h_step2] using h_rest'
+            rw [List.foldlM_cons, h_step2]
+            exact h_rest'
 
   have h_list' : as.toList.foldlM step2 init = .ok result :=
     h_list_preserve as.toList init result h_list

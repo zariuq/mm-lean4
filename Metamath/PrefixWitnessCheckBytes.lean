@@ -566,7 +566,9 @@ private theorem applyCompressedActions_ok_no_unknown
       | ok pr_mid =>
         have h_rest :
             ParserState.applyCompressedActions db pr_mid rest = .ok pr' := by
-          simpa [ParserState.applyCompressedActions, List.foldlM, h_save, bind, Except.bind] using h_ok
+          simp only [ParserState.applyCompressedActions, h_save, bind,
+            Except.bind, pure, Except.pure] at h_ok ⊢
+          exact h_ok
         have h_mem' : a = ParserState.CompressedAction.save ∨ a ∈ rest := by
           simpa using h_mem
         cases h_mem' with
@@ -740,7 +742,9 @@ private theorem preloadMandatoryHyps_replays
       | _ => throw (.proofCheck (.mandatoryHypothesisNotFoundInDatabase lbl))
   have h_for₁ : forIn pr₁.frame.hyps pr₁ body = Except.ok pr₁' := by
     unfold DB.preloadMandatoryHyps at h_ok
-    simpa [body] using h_ok
+    simp only [body]
+    simp only [bind_pure] at h_ok
+    exact h_ok
   have h_for₁_list : forIn pr₁.frame.hyps.toList pr₁ body = Except.ok pr₁' := by
     calc
       forIn pr₁.frame.hyps.toList pr₁ body = forIn pr₁.frame.hyps pr₁ body := by
@@ -775,13 +779,15 @@ private theorem preloadMandatoryHyps_replays
           simp [h_find, Bind.bind, Except.bind] at h_for
         | hyp ess f origin =>
           have h_tail₁ : forIn rest (acc₁.pushHeap (.fmla f)) body = .ok acc₁' := by
-            simpa [h_find, pure, Except.pure] using h_for
+            simp only [h_find, pure, Except.pure, bind, Except.bind, body] at h_for ⊢
+            exact h_for
           have h_push_eq : (acc₁.pushHeap (.fmla f)).heap = (acc₂.pushHeap (.fmla f)).heap := by
             simp [ProofState.pushHeap, h_heap_eq]
           obtain ⟨acc₂', h_tail₂, h_stack₂, h_heap₂⟩ :=
             ih (acc₁.pushHeap (.fmla f)) (acc₂.pushHeap (.fmla f)) acc₁' h_tail₁ h_push_eq
           refine ⟨acc₂', ?_, ?_, h_heap₂⟩
-          · simpa [h_find, pure, Except.pure] using h_tail₂
+          · simp only [pure, Except.pure, bind, Except.bind, body] at h_tail₂ ⊢
+            exact h_tail₂
           · rw [h_stack₂]
             simp [ProofState.pushHeap]
   obtain ⟨pr₂', h_for₂_list, h_stack₂, h_heap₂⟩ :=
@@ -794,7 +800,9 @@ private theorem preloadMandatoryHyps_replays
       _ = Except.ok pr₂' := h_for₂_list
   refine ⟨pr₂', ?_, h_stack₂, h_heap₂⟩
   unfold DB.preloadMandatoryHyps
-  simpa [body] using h_for₂
+  simp only [bind_pure]
+  simp only [body] at h_for₂
+  exact h_for₂
 
 /-- Replay a successful preload fold from a state with matching heap. -/
 private theorem foldlM_preload_replays
@@ -854,7 +862,10 @@ private theorem preloadMandatoryHyps_to_preload_fold
       | _ => throw (.proofCheck (.mandatoryHypothesisNotFoundInDatabase lbl))
   have h_for_list : forIn pr_start.frame.hyps.toList pr_start body = Except.ok pr_mand := by
     have h_for₁ : forIn pr_start.frame.hyps pr_start body = Except.ok pr_mand := by
-      unfold DB.preloadMandatoryHyps at h_mand; simpa [body] using h_mand
+      unfold DB.preloadMandatoryHyps at h_mand
+      simp only [body]
+      simp only [bind_pure] at h_mand
+      exact h_mand
     rwa [Array.forIn_toList]
   suffices ∀ (labels : List String) (acc₁ acc₂ acc₁' : ProofState),
       forIn labels acc₁ body = Except.ok acc₁' →
@@ -883,7 +894,8 @@ private theorem preloadMandatoryHyps_to_preload_fold
       | assert _ _ _ => simp [h_find, Bind.bind, Except.bind] at h_for
       | hyp ess f origin =>
         have h_tail : forIn rest (acc₁.pushHeap (.fmla f)) body = .ok acc₁' := by
-          simpa [h_find, pure, Except.pure] using h_for
+          simp only [h_find, pure, Except.pure, bind, Except.bind, body] at h_for ⊢
+          exact h_for
         have h_push_heap_eq : (acc₁.pushHeap (.fmla f)).heap =
             (acc₂.pushHeap (.fmla f)).heap := by
           simp [ProofState.pushHeap, h_heap]

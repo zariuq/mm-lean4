@@ -278,7 +278,8 @@ theorem formulaSymsRespectFrame_mem
         (fun s => match s with
           | .var v => decide (v ∈ DB.frameFloatVars db fr)
           | .const c => decide (c ∉ DB.frameFloatVars db fr)) = true := by
-    simpa [DB.formulaSymsRespectFrame] using h_ok
+    simp only [DB.formulaSymsRespectFrame] at h_ok ⊢
+    exact h_ok
   intro s h_mem
   have h_all := (List.all_eq_true).1 h_ok'
   have h_dec := h_all s h_mem
@@ -318,7 +319,8 @@ theorem formulaSymsRespectFrame_of_declared
             simpa [h_isVar] using h_isVar_false
           exact this.elim
         simpa using (decide_eq_true_iff.mpr h_not_in)
-  simpa [DB.formulaSymsRespectFrame] using h_all
+  simp only [DB.formulaSymsRespectFrame]
+  exact h_all
 
 theorem floatDeclaredBefore_of_symsRespectFrame
     (db : DB) (fr : Frame) (f : Formula)
@@ -359,7 +361,8 @@ theorem formulaSymsRespectFrame_push_float
         (fun s => match s with
           | .var v => decide (v ∈ DB.frameFloatVars db (Frame.mk #[] hyps))
           | .const c => decide (c ∉ DB.frameFloatVars db (Frame.mk #[] hyps))) = true := by
-    simpa [DB.formulaSymsRespectFrame] using h_ok
+    simp only [DB.formulaSymsRespectFrame] at h_ok ⊢
+    exact h_ok
   have h_all := (List.all_eq_true).1 h_ok'
   -- Show the predicate holds for the pushed frame.
   have h_ok'' :
@@ -435,7 +438,8 @@ theorem formulaSymsRespectFrame_push_float
         · -- Not in new frameFloatVars, so predicate holds.
           exact decide_eq_true_iff.mpr h_in_new
   -- Conclude formulaSymsRespectFrame for the pushed frame.
-  simpa [DB.formulaSymsRespectFrame] using h_ok''
+  simp only [DB.formulaSymsRespectFrame]
+  exact h_ok''
 
 theorem frameFloatVars_mem_push_ess_iff
     (db : DB) (hyps : Array String) (lbl : String)
@@ -479,7 +483,8 @@ theorem formulaSymsRespectFrame_push_ess
         (fun s => match s with
           | .var v => decide (v ∈ DB.frameFloatVars db (Frame.mk #[] hyps))
           | .const c => decide (c ∉ DB.frameFloatVars db (Frame.mk #[] hyps))) = true := by
-    simpa [DB.formulaSymsRespectFrame] using h_ok
+    simp only [DB.formulaSymsRespectFrame] at h_ok ⊢
+    exact h_ok
   have h_all := (List.all_eq_true).1 h_ok'
   have h_ok'' :
       (f.toList.tail).all
@@ -504,7 +509,8 @@ theorem formulaSymsRespectFrame_push_ess
             (frameFloatVars_mem_push_ess_iff db hyps lbl f_ess lbl_ess c h_find).1 h_in_new
           exact h_not_old h_in_old
         simpa using (decide_eq_true_iff.mpr h_not_new)
-  simpa [DB.formulaSymsRespectFrame] using h_ok''
+  simp only [DB.formulaSymsRespectFrame]
+  exact h_ok''
 
 theorem toList_tail_of_size_two {α : Type} [Inhabited α] (arr : Array α)
     (h_size : arr.size = 2) :
@@ -679,7 +685,8 @@ theorem wellFormedFloat_of_isFloatShape {f : Formula} :
         (match f[0]!, f[1]! with
           | Sym.const _, Sym.var _ => true
           | _, _ => false) = true := by
-        simpa [h_size] using h
+        simp only [h_size] at h ⊢
+        exact h
     cases h0 : f[0]! with
     | const c =>
         cases h1 : f[1]! with
@@ -770,7 +777,8 @@ theorem frameFloatVarsUnique_of_frameFloatVarsUnique?
           match db.find? fr.hyps[i]!, db.find? fr.hyps[j]! with
           | some (.hyp false fi _), some (.hyp false fj _) => Formula.floatVarsDistinct? fi fj
           | _, _ => true) = true := by
-    simpa using (List.all_eq_true).1 h
+    simp only [DB.frameFloatVarsUnique?] at h
+    exact (List.all_eq_true).1 h
   have h_i : (List.range fr.hyps.size).all (fun j =>
         if h_ij : i = j then
           true
@@ -812,7 +820,8 @@ theorem frameFloatVarsUnique_of_frameFloatVarsUnique?
     simpa [h_find_i, h_find_j] using h_pair'
   have h_ne : fi.floatVarName ≠ fj.floatVarName :=
     floatVarsDistinct_of_sizes (f := fi) (g := fj) h_sz_i h_sz_j h_distinct
-  simpa [Formula.floatVarName] using h_ne
+  simp only [Formula.floatVarName] at h_ne ⊢
+  exact h_ne
 
 theorem wellFormedFrame_of_wellFormedFrame?
     {db : DB} {fr : Frame} :
@@ -897,7 +906,8 @@ theorem assertDvVarsInFrame_of_assertDvVarsInFrame?
           match kv.2 with
           | .assert _ fr _ => db.frameDvVarsInFrame? fr
           | _ => true) = true := by
-    simpa [DB.assertDvVarsInFrame?] using h_ok
+    simp only [DB.assertDvVarsInFrame?] at h_ok
+    exact h_ok
   have h_find' : db.objects[lbl]? = some (.assert f fr name) := by
     simpa [DB.find?] using h_find
   have h_obj_mem : (lbl, .assert f fr name) ∈ db.objects.toList := by

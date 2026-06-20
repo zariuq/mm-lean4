@@ -189,14 +189,14 @@ theorem parseErrorCode?_ruleSemantic_sound
         simpa [ErrorEvidence.code] using Eq.symm h_code'
       subst code
       have h_sem := parseErrorCode?_allCodeSemantic_sound s (DoneModeError.code err) h_code_ev
-      cases err <;> simpa [DB.RuleSemanticViolation, DB.DoneModeViolation, DoneModeError.code] using h_sem
+      cases err <;> exact h_sem
   | tokenForm err =>
       have h_code_eq : code = TokenFormError.code err := by
         simpa [ErrorEvidence.code] using Eq.symm h_code'
       subst code
       have h_tf : s.TokenFormViolation (TokenFormError.code err) := ⟨err, h_ev, rfl⟩
       have h_rule : s.RuleSemanticViolation (TokenFormError.code err) := by
-        cases err <;> simpa [DB.RuleSemanticViolation] using h_tf
+        cases err <;> exact h_tf
       exact h_rule
   | scopeDecl err =>
       have h_code_eq : code = ScopeDeclError.code err := by
@@ -204,7 +204,7 @@ theorem parseErrorCode?_ruleSemantic_sound
       subst code
       have h_sc : s.ScopeDeclViolation (ScopeDeclError.code err) := ⟨err, h_ev, rfl⟩
       have h_rule : s.RuleSemanticViolation (ScopeDeclError.code err) := by
-        cases err <;> simpa [ScopeDeclError.code, DB.RuleSemanticViolation] using h_sc
+        cases err <;> exact h_sc
       exact h_rule
   | includeErr err =>
       have h_code_eq : code = IncludeError.code err := by
@@ -220,7 +220,7 @@ theorem parseErrorCode?_ruleSemantic_sound
       subst code
       have h_pc : s.ProofCheckViolation (ProofCheckError.code err) := ⟨err, h_ev, rfl⟩
       have h_rule : s.RuleSemanticViolation (ProofCheckError.code err) := by
-        cases err <;> simpa [DB.RuleSemanticViolation] using h_pc
+        cases err <;> exact h_pc
       exact h_rule
   | theoremFinality err =>
       have h_code_eq : code = TheoremFinalityError.code err := by
@@ -228,7 +228,7 @@ theorem parseErrorCode?_ruleSemantic_sound
       subst code
       have h_tf : s.TheoremFinalityViolation (TheoremFinalityError.code err) := ⟨err, h_ev, rfl⟩
       have h_rule : s.RuleSemanticViolation (TheoremFinalityError.code err) := by
-        cases err <;> simpa [DB.RuleSemanticViolation] using h_tf
+        cases err <;> exact h_tf
       exact h_rule
   | compressedSave err =>
       have h_code_eq : code = CompressedSaveError.code err := by
@@ -236,7 +236,7 @@ theorem parseErrorCode?_ruleSemantic_sound
       subst code
       have h_cs : s.CompressedSaveViolation := ⟨err, h_ev, rfl⟩
       have h_rule : s.RuleSemanticViolation (CompressedSaveError.code err) := by
-        cases err <;> simpa [DB.RuleSemanticViolation] using h_cs
+        cases err <;> exact h_cs
       exact h_rule
   | internalGate allowDup wf dv =>
       have h_code_eq : code = ParseErrorCode.internalIllFormedDatabaseAfterParse := by

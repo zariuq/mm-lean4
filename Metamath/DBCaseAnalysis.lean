@@ -1410,7 +1410,8 @@ theorem insertHyp_float_var_dup_float (db : DB) (pos : Pos) (label : String) (f 
   have h_f1_val : f[1]!.value = v := by
     simp [Sym.value, h_f1_var]
   have h_dup : db.floatVarOccursInFrame v = true := by
-    simpa [hasFloatBinding, Verify.DB.floatVarOccursInFrame, floatVarMatches] using h_has_float
+    simp only [hasFloatBinding, Verify.DB.floatVarOccursInFrame, floatVarMatches] at h_has_float ⊢
+    exact h_has_float
   have h_checks : (db.insertHypChecks pos false f).error = true := by
     unfold DB.insertHypChecks
     simp [h_head, h_no_err, h_shape, h_size, h_f1_val, h_dup, h_perm]
@@ -1431,7 +1432,8 @@ theorem insertHyp_float_var_insert_dup (db : DB) (pos : Pos) (label : String) (f
   have h_f1_val : f[1]!.value = v := by
     simp [Sym.value, h_f1_var]
   have h_no_float' : db.floatVarOccursInFrame v = false := by
-    simpa [hasFloatBinding, Verify.DB.floatVarOccursInFrame, floatVarMatches] using h_no_float
+    simp only [hasFloatBinding, Verify.DB.floatVarOccursInFrame, floatVarMatches] at h_no_float ⊢
+    exact h_no_float
   have h_checks_eq : db.insertHypChecks pos false f = db := by
     unfold DB.insertHypChecks
     simp [h_head, h_no_err, h_shape, h_size, h_f1_val, h_no_float']
@@ -1464,7 +1466,8 @@ theorem insertHyp_float_var_success (db : DB) (pos : Pos) (label : String) (f : 
   have h_f1_val : f[1]!.value = v := by
     simp [Sym.value, h_f1_var]
   have h_no_float' : db.floatVarOccursInFrame v = false := by
-    simpa [hasFloatBinding, Verify.DB.floatVarOccursInFrame, floatVarMatches] using h_no_float
+    simp only [hasFloatBinding, Verify.DB.floatVarOccursInFrame, floatVarMatches] at h_no_float ⊢
+    exact h_no_float
   have h_checks_eq : db.insertHypChecks pos false f = db := by
     unfold DB.insertHypChecks
     simp [h_head, h_no_err, h_shape, h_size, h_f1_val, h_no_float']
@@ -1756,7 +1759,8 @@ theorem insertHyp_maintains_unique_floats (db : DB) (pos : Pos) (label : String)
   have h_f1_val : f[1]!.value = v := by
     simp [Sym.value, h_f1]
   have h_no_float' : db.floatVarOccursInFrame v = false := by
-    simpa [hasFloatBinding, Verify.DB.floatVarOccursInFrame, floatVarMatches] using h_no_dup_bool
+    simp only [hasFloatBinding, Verify.DB.floatVarOccursInFrame, floatVarMatches] at h_no_dup_bool ⊢
+    exact h_no_dup_bool
   have h_checks_eq : db.insertHypChecks pos false f = db := by
     unfold DB.insertHypChecks
     simp [h_head, h_db_err, h_shape, h_size_ge, h_f1_val, h_no_float']

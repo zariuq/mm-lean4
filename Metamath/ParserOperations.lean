@@ -214,7 +214,6 @@ theorem insertVar_is_structure_preserving
     intro lbl v h_eq
     -- h_eq : (fun lbl => Object.var lbl) lbl = Object.var v
     -- So lbl = v, which is exactly what we need!
-    simp only at h_eq
     cases h_eq
     rfl
   · -- h_fresh_db
@@ -580,7 +579,8 @@ theorem formulaSymsRespectFrame_preserved_by_insert
         (fun s => match s with
           | .var v => decide (v ∈ DB.frameFloatVars db fr)
           | .const c => decide (c ∉ DB.frameFloatVars db fr)) = true := by
-    simpa [DB.formulaSymsRespectFrame] using h_ok
+    simp only [DB.formulaSymsRespectFrame] at h_ok ⊢
+    exact h_ok
   have h_all := (List.all_eq_true).1 h_ok'
   have h_ok'' :
       (f.toList.tail).all
@@ -608,7 +608,8 @@ theorem formulaSymsRespectFrame_preserved_by_insert
             (frameFloatVars_mem_preserved_by_insert db pos label obj fr h_not_in c).1 h_in_new
           exact h_not_old h_in_old
         simpa using (decide_eq_true_iff.mpr h_not_new)
-  simpa [DB.formulaSymsRespectFrame] using h_ok''
+  simp only [DB.formulaSymsRespectFrame] at h_ok'' ⊢
+  exact h_ok''
 
 theorem floatDeclaredBefore_preserved_by_insert
     (db : DB) (pos : Pos) (label : String) (obj : String → Object)
@@ -924,8 +925,10 @@ theorem withHyps_push_preserves_wf
           exact getElem_push_lt db.frame.hyps l i h_old hi'
         have h_old_ok : HypOK db (db.frame.hyps[i]'h_old) := h_wf.1.1 i h_old
         have h_old_ok' : HypOK (db.withHyps (·.push l)) (db.frame.hyps[i]'h_old) := by
-          simpa [HypOK, DBCaseAnalysis.DBLemmas.withHyps_preserves_find?] using h_old_ok
-        simpa [h_label] using h_old_ok'
+          simp only [HypOK, DBCaseAnalysis.DBLemmas.withHyps_preserves_find?,
+            DB.withHyps, DB.withFrame] at h_old_ok ⊢
+          exact h_old_ok
+        rw [h_label]; exact h_old_ok'
       · -- New hyp: i = size
         have hi' : i < db.frame.hyps.size + 1 := by
           simpa [Array.size_push] using hi
@@ -938,18 +941,22 @@ theorem withHyps_push_preserves_wf
         have h_label : (db.frame.hyps.push l)[db.frame.hyps.size]'hi'' = l := by
           exact getElem_push_eq db.frame.hyps l hi''
         have h_new_ok : HypOK (db.withHyps (·.push l)) l := by
-          simpa [HypOK, DBCaseAnalysis.DBLemmas.withHyps_preserves_find?] using h_hypok
-        simpa [h_label] using h_new_ok
+          simp only [HypOK, DBCaseAnalysis.DBLemmas.withHyps_preserves_find?,
+            DB.withHyps, DB.withFrame] at h_hypok ⊢
+          exact h_hypok
+        rw [h_label]; exact h_new_ok
     · -- UniqueFloatVars
       unfold UniqueFloatVars
       intro i j hi hj h_ne fi fj lbli lblj h_fi h_fj h_sizei h_sizej
       dsimp [DB.withHyps, DB.withFrame] at hi hj h_fi h_fj ⊢
       have h_fi' :
           db.find? (db.frame.hyps.push l)[i] = some (.hyp false fi lbli) := by
-        simpa [DBCaseAnalysis.DBLemmas.withHyps_preserves_find?] using h_fi
+        simp only [DB.find?] at h_fi ⊢
+        exact h_fi
       have h_fj' :
           db.find? (db.frame.hyps.push l)[j] = some (.hyp false fj lblj) := by
-        simpa [DBCaseAnalysis.DBLemmas.withHyps_preserves_find?] using h_fj
+        simp only [DB.find?] at h_fj ⊢
+        exact h_fj
       by_cases hi_old : i < db.frame.hyps.size
       · by_cases hj_old : j < db.frame.hyps.size
         · -- Both old indices: reuse UniqueFloatVars
@@ -1623,7 +1630,8 @@ theorem insertHyp_full_maintains_wf
             (h_dup_false h_ess) k hk_pre fi lbli h_find_k_pre h_sizei
         cases h_sym : arr[1]! with
         | var v_sym =>
-            simpa [h_sym] using h_vi_ne
+            simp only [h_sym, Sym.value] at h_vi_ne ⊢
+            exact h_vi_ne
         | const _ =>
             have h_var : arr[1]!.isVar = true := by
               simpa using (h_second h_ess).2
@@ -1703,7 +1711,8 @@ theorem withHyps_push_preserves_scoped_float
     | var _ => simp
     | assert f fr name =>
         have h_scoped_assert := h_scoped.2 lbl (.assert f fr name) h_find'
-        simpa [DBCaseAnalysis.DBLemmas.withHyps_preserves_find?] using h_scoped_assert
+        simp only [DB.withHyps, DB.withFrame] at h_scoped_assert ⊢
+        exact h_scoped_assert
     | hyp ess f lbl' =>
         constructor
         · intro h_mem_new
@@ -1732,7 +1741,8 @@ theorem withHyps_push_preserves_scoped_float
                 db db.frame.hyps lbl f_float lbl_float h_find h_shape
         · -- FormulaSymbolsDeclared is preserved by withHyps
           have h_decl := (h_scoped.2 lbl (.hyp ess f lbl') h_find').2
-          simpa [DBCaseAnalysis.DBLemmas.withHyps_preserves_find?] using h_decl
+          simp only [DB.withHyps, DB.withFrame] at h_decl ⊢
+          exact h_decl
 
 theorem withHyps_push_preserves_scoped_ess
     (db : DB) (l : String) (f_ess : Formula) (lbl_ess : String)
@@ -1751,7 +1761,8 @@ theorem withHyps_push_preserves_scoped_ess
     | var _ => simp
     | assert f fr name =>
         have h_scoped_assert := h_scoped.2 lbl (.assert f fr name) h_find'
-        simpa [DBCaseAnalysis.DBLemmas.withHyps_preserves_find?] using h_scoped_assert
+        simp only [DB.withHyps, DB.withFrame] at h_scoped_assert ⊢
+        exact h_scoped_assert
     | hyp ess f lbl' =>
         constructor
         · intro h_mem_new
@@ -1775,7 +1786,8 @@ theorem withHyps_push_preserves_scoped_ess
               cases h_eq_obj
               exact formulaSymsRespectFrame_push_ess db f_ess db.frame.hyps lbl f_ess lbl_ess h_syms h_find
         · have h_decl := (h_scoped.2 lbl (.hyp ess f lbl') h_find').2
-          simpa [DBCaseAnalysis.DBLemmas.withHyps_preserves_find?] using h_decl
+          simp only [DB.withHyps, DB.withFrame] at h_decl ⊢
+          exact h_decl
 
 theorem insertHyp_insert_part_maintains_scoped
     (db : DB) (pos : Pos) (l : String) (ess : Bool) (arr : Formula)
@@ -2009,16 +2021,18 @@ theorem wellScopedFrame_preserved_by_withHyps
   intro h
   -- `withHyps` does not change `find?`, and all scoping predicates are defined in terms of `find?`
   -- on labels appearing in `fr`.
-  simpa [WellScopedFrame, FloatDeclaredBefore, DB.formulaSymsRespectFrame, DB.frameFloatVars,
-    DBCaseAnalysis.DBLemmas.withHyps_preserves_find?, DB.find?] using h
+  simp only [WellScopedFrame, FloatDeclaredBefore, DB.formulaSymsRespectFrame, DB.frameFloatVars,
+    DBCaseAnalysis.DBLemmas.withHyps_preserves_find?, DB.find?] at h ⊢
+  exact h
 
 theorem wellScopedFrame_preserved_by_withDJ
     (db : DB) (f : Array DJ → Array DJ) (fr : Frame) :
     WellScopedFrame db fr → WellScopedFrame (db.withDJ f) fr := by
   intro h
   -- `withDJ` only mutates the current frame's DJ array; lookups and hypothesis arrays stay unchanged.
-  simpa [WellScopedFrame, FloatDeclaredBefore, DB.formulaSymsRespectFrame, DB.frameFloatVars,
-    DB.withDJ, DB.withFrame, DB.find?] using h
+  simp only [WellScopedFrame, FloatDeclaredBefore, DB.formulaSymsRespectFrame, DB.frameFloatVars,
+    DB.withDJ, DB.withFrame, DB.find?] at h ⊢
+  exact h
 
 -- Subsequence: arr2 is a subsequence of arr1 if every element in arr2 exists in arr1
 -- (preserving the string value, though not necessarily the position)
@@ -2096,11 +2110,13 @@ theorem foldlVars_contains_of_mem
             | Sym.var v => HashSet.insert a v
             | _ => a) vars := by
     unfold Formula.foldlVars
-    simpa using
+    have h :=
       (_root_.List.ArrayListExt.Array.foldl_eq_list_foldl_drop (arr := f) (init := vars) (start := 1)
         (f := fun a s => match s with
           | Sym.var v => HashSet.insert a v
           | _ => a))
+    simp only [List.drop_one] at h
+    exact h
   -- Prove the list fold inserts v.
   have h_list :
       ∀ (ls : List Sym) (acc : HashSet String),
@@ -2175,11 +2191,13 @@ theorem foldlVars_preserves_contains
             | Sym.var v => HashSet.insert a v
             | _ => a) vars := by
     unfold Formula.foldlVars
-    simpa using
+    have h :=
       (_root_.List.ArrayListExt.Array.foldl_eq_list_foldl_drop (arr := f) (init := vars) (start := 1)
         (f := fun a s => match s with
           | Sym.var v => HashSet.insert a v
           | _ => a))
+    simp only [List.drop_one] at h
+    exact h
   -- Folding with inserts preserves existing membership.
   have h_preserve :
       ∀ (ls : List Sym) (acc : HashSet String),
@@ -2222,7 +2240,7 @@ theorem collectVarsFromHypsList_preserves_contains
       simp [collectVarsFromHypsList]
       cases h_find : db.find? l with
       | none =>
-          simpa using ih (vars := vars) h_cont
+          exact ih (vars := vars) h_cont
       | some obj =>
           cases obj with
           | hyp ess f lbl =>
@@ -2231,11 +2249,11 @@ theorem collectVarsFromHypsList_preserves_contains
                   have h_cont' :
                       (f.foldlVars vars HashSet.insert).contains v0 = true :=
                     foldlVars_preserves_contains f vars v0 h_cont
-                  simpa using ih (vars := f.foldlVars vars HashSet.insert) h_cont'
+                  exact ih (vars := f.foldlVars vars HashSet.insert) h_cont'
               | false =>
-                  simpa using ih (vars := vars) h_cont
+                  exact ih (vars := vars) h_cont
           | _ =>
-              simpa using ih (vars := vars) h_cont
+              exact ih (vars := vars) h_cont
 
 theorem collectVarsFromHypsList_contains_of_mem
     (db : DB) (ls : List String) (vars : HashSet String)
@@ -2570,12 +2588,12 @@ theorem trimFrameHypsPairs_index_lt
       (_root_.Metamath.Verify.DB.trimFrameHypsPairs db vars hyps)[i] =
         (_root_.Metamath.Verify.DB.trimFrameHypsPairsList db vars 0 hyps.toList)[i] := by
     have h_eq := (Array.getElem_toList (xs := _root_.Metamath.Verify.DB.trimFrameHypsPairs db vars hyps) (i := i) hi)
-    simpa [h_pairs_list] using h_eq
+    exact h_eq.symm.trans (List.getElem_of_eq h_pairs_list (by simpa [Array.length_toList] using hi))
   have h_j :
       (_root_.Metamath.Verify.DB.trimFrameHypsPairs db vars hyps)[j] =
         (_root_.Metamath.Verify.DB.trimFrameHypsPairsList db vars 0 hyps.toList)[j] := by
     have h_eq := (Array.getElem_toList (xs := _root_.Metamath.Verify.DB.trimFrameHypsPairs db vars hyps) (i := j) hj)
-    simpa [h_pairs_list] using h_eq
+    exact h_eq.symm.trans (List.getElem_of_eq h_pairs_list (by simpa [Array.length_toList] using hj))
   simpa [h_i, h_j] using h_lt_list
 
 theorem trimFrameHypsPairsList_mem_of_keep
@@ -2636,9 +2654,7 @@ theorem trimFrameHyps_subsequence (db : DB) (vars : HashSet String) (hyps : Arra
       simp [_root_.Metamath.Verify.DB.trimFrameHyps, Array.size_map] at hi'
       exact hi'
     have hi_list : i < pairs.toList.length := by
-      have hi' := hi_pairs
-      simp at hi'
-      exact hi'
+      simpa [Array.length_toList] using hi_pairs
     have h_mem : pairs[i]'hi_pairs ∈ pairs.toList := by
       have h_mem' : pairs.toList[i] ∈ pairs.toList := List.getElem_mem (by simpa using hi_list)
       have h_eq : pairs.toList[i] = pairs[i]'hi_pairs := by
@@ -2662,9 +2678,7 @@ theorem trimFrameHyps_subsequence (db : DB) (vars : HashSet String) (hyps : Arra
       simp [_root_.Metamath.Verify.DB.trimFrameHyps, Array.size_map] at hi'
       exact hi'
     have hi_list : i < pairs.toList.length := by
-      have hi' := hi_pairs
-      simp at hi'
-      exact hi'
+      simpa [Array.length_toList] using hi_pairs
     have h_mem : pairs[i]'hi_pairs ∈ pairs.toList := by
       have h_mem' : pairs.toList[i] ∈ pairs.toList := List.getElem_mem (by simpa using hi_list)
       have h_eq : pairs.toList[i] = pairs[i]'hi_pairs := by
@@ -2712,7 +2726,7 @@ theorem trimFrameHyps_subsequence (db : DB) (vars : HashSet String) (hyps : Arra
     have h_nodup :
         (pairs.toList.map Prod.fst).Nodup := by
       have h := (trimFrameHypsPairsList_nodup (db := db) (vars := vars) (ls := hyps.toList))
-      simp at h
+      rw [h_pairs_list]
       exact h
     have hi_list : i < (pairs.toList.map Prod.fst).length := by
       simpa [Array.length_toList, List.length_map] using hi_pairs
@@ -3101,7 +3115,7 @@ theorem trimFrame'_success_implies_scoped_frame
         (ls := db.frame.dj.toList)
         (pred := fun p => vars.contains p.1 && vars.contains p.2)
         (acc := #[])
-      simpa using h
+      exact h
     exact h_simp_list.symm.trans h_filter
 
   -- Get well-scoped frame for db.frame
@@ -3186,8 +3200,7 @@ theorem trimFrame'_success_implies_scoped_frame
           -- Extract the original index for this hypothesis
           have h_pair_mem : pairs[i]'hi_pairs ∈ pairs.toList := by
             have h_mem : pairs.toList[i] ∈ pairs.toList :=
-              List.getElem_mem (by simpa using (by
-                have := hi_pairs; simp at this; exact this))
+              List.getElem_mem (by simpa [Array.length_toList] using hi_pairs)
             have h_eq : pairs.toList[i] = pairs[i]'hi_pairs :=
               Array.getElem_toList (xs := pairs) (i := i) hi_pairs
             simpa [h_eq] using h_mem
@@ -3663,10 +3676,9 @@ theorem trimFrame'_success_implies_formulaSymsRespectFrame
           (forIn vars.toList true (fun v ok =>
             pure (ForInStep.yield (ok && varsWithF.contains v)))) := by
     -- Reduce HashSet forIn to list forIn
-    have h_eq := (Std.HashSet.forIn_eq_forIn_toList (m := vars) (m' := Id)
+    exact (Std.HashSet.forIn_eq_forIn_toList (m := vars) (m' := Id)
       (init := true)
       (f := fun v ok => (pure (ForInStep.yield (ok && varsWithF.contains v)) : Id (ForInStep Bool))))
-    simpa using h_eq
   have h_fold :
       Id.run
           (forIn vars.toList true (fun v ok =>
@@ -4067,7 +4079,8 @@ theorem feedTokens_ax_db (s : ParserState) (arr : Array Sym) (pos : Pos) (l : St
       (ParserState.withAt l (fun _ =>
           if Formula.hasConstHead arr = true then s_inner
           else s.mkErrorFromEvidence pos (.scopeDecl .firstSymbolNotConstant))).db.error? = none := by
-    simpa [ParserState.feedTokens, h_s_inner] using h_success
+    simp only [ParserState.feedTokens, h_s_inner] at h_success ⊢
+    exact h_success
   have h_success' : (ParserState.withAt l (fun _ => s_inner)).db.error? = none := by
     have h_success_pre' := h_success_pre
     simp [h_inner] at h_success_pre'
@@ -4192,7 +4205,8 @@ theorem feedTokens_float_db (s : ParserState) (arr : Array Sym) (pos : Pos) (l :
             if Formula.isFloatShape arr = true then s_inner
             else s.mkErrorFromEvidence pos (.scopeDecl .expectedConstantAndVariable)
           else s.mkErrorFromEvidence pos (.scopeDecl .firstSymbolNotConstant))).db.error? = none := by
-    simpa [ParserState.feedTokens, h_s_inner] using h_success
+    simp only [ParserState.feedTokens, h_s_inner] at h_success ⊢
+    exact h_success
   have h_success' : (ParserState.withAt l (fun _ => s_inner)).db.error? = none := by
     have h_success_pre' := h_success_pre
     simp [h_inner] at h_success_pre'
@@ -4301,7 +4315,8 @@ theorem feedTokens_ess_db (s : ParserState) (arr : Array Sym) (pos : Pos) (l : S
       (ParserState.withAt l (fun _ =>
           if Formula.hasConstHead arr = true then s_inner
           else s.mkErrorFromEvidence pos (.scopeDecl .firstSymbolNotConstant))).db.error? = none := by
-    simpa [ParserState.feedTokens, h_s_inner, h_gate_none] using h_success
+    simp only [ParserState.feedTokens, h_s_inner, h_gate_none] at h_success ⊢
+    exact h_success
   have h_success' : (ParserState.withAt l (fun _ => s_inner)).db.error? = none := by
     have h_success_pre' := h_success_pre
     simp [h_inner] at h_success_pre'
@@ -4796,7 +4811,8 @@ theorem FormulaSymbolsDeclared.push
   | inl h_old =>
       exact h_decl s h_old
   | inr h_eq =>
-      simpa [h_eq] using h_sym
+      subst h_eq
+      exact h_sym
 
 /-- Fresh label is not present in any hypothesis array of a well-formed frame. -/
 theorem fresh_not_in_frame_of_wfFrame
@@ -4974,7 +4990,7 @@ theorem wellScopedFrame_push_dj
   rcases h_scoped with ⟨h_hyps, h_dj⟩
   refine ⟨?_, ?_⟩
   · -- Hypothesis scoping ignores `dj`.
-    simpa using h_hyps
+    exact h_hyps
   · intro v w h_mem
     have h_mem' : (v, w) ∈ fr.dj.toList ∨ (v, w) = p := by
       have h_mem_append : (v, w) ∈ fr.dj.toList ++ [p] := by
@@ -5003,7 +5019,7 @@ to `WellScopedDB`.
 theorem wellFormedDB_pushScope (db : DB) :
     WellFormedDB db → WellFormedDB db.pushScope := by
   intro h
-  simpa [DB.pushScope] using h
+  exact h
 
 /-- `pushScope` preserves `WellScopedDBWithScopes`. -/
 theorem wellScopedDBWithScopes_pushScope (db : DB) :
@@ -5012,7 +5028,7 @@ theorem wellScopedDBWithScopes_pushScope (db : DB) :
   rcases h with ⟨h_scoped, h_scopes⟩
   refine ⟨?_, ?_⟩
   · -- DB itself is unchanged, only scopes grow
-    simpa [DB.pushScope] using h_scoped
+    exact h_scoped
   · intro sc h_mem
     -- Either sc is from the old scopes, or it's the new scope snapshot at the end.
     have h_mem' : sc ∈ db.scopes.toList ∨ sc = db.frame.size := by
@@ -5022,14 +5038,22 @@ theorem wellScopedDBWithScopes_pushScope (db : DB) :
     | inl h_old =>
         -- Old scopes: reuse the invariant (scopes don't affect objects)
         have h0 := h_scopes sc h_old
-        simpa [DB.pushScope] using h0
+        simp only [DB.pushScope] at h0 ⊢
+        exact h0
     | inr h_eq =>
         subst h_eq
         -- New scope snapshot is the current frame size, so shrink is identity.
         have h0 : WellScopedFrame db db.frame := h_scoped.1
         -- Shrinking to the current size yields the same frame.
-        -- We keep this as a simp-proof to avoid relying on internal Array.shrink details.
-        simpa [DB.pushScope, Frame.size, Frame.shrink, Array.shrink] using h0
+        have h_shrink : db.frame.shrink db.frame.size = db.frame := by
+          obtain ⟨dj, hyps⟩ := db.frame
+          simp only [Frame.size, Frame.shrink]
+          refine Frame.mk.injEq .. |>.mpr ⟨?_, ?_⟩ <;>
+            · apply Array.toList_inj.mp
+              rw [Array.toList_shrink, ← Array.length_toList, List.take_length]
+        show WellScopedFrame db.pushScope (db.frame.shrink db.frame.size)
+        rw [h_shrink]
+        exact h0
 
 /-- `pushScope` preserves the scope-stack shape invariant. -/
 theorem scopesOk_pushScope (db : DB) :
@@ -5046,7 +5070,7 @@ theorem scopesOk_pushScope (db : DB) :
         -- i < j and j = size
         simpa using hij
       have h_i : (db.scopes.push db.frame.size)[i] = db.scopes[i]'hi_old := by
-        simpa using (Array.getElem_push_lt (xs := db.scopes) (x := db.frame.size) (i := i) hi_old)
+        exact (Array.getElem_push_lt (xs := db.scopes) (x := db.frame.size) (i := i) hi_old)
       have h_j : (db.scopes.push db.frame.size)[db.scopes.size] = db.frame.size := by
         exact Array.getElem_push_eq (xs := db.scopes) (x := db.frame.size)
       have h_le : ScopeLE (db.scopes[i]'hi_old) db.frame.size := h_within i hi_old
@@ -5077,9 +5101,9 @@ theorem scopesOk_pushScope (db : DB) :
       have h_mono_ij : ScopeLE (db.scopes[i]'hi_old) (db.scopes[j]'hj_old) :=
         h_mono i j hi_old hj_old hij
       have h_i : (db.scopes.push db.frame.size)[i] = db.scopes[i]'hi_old := by
-        simpa using (Array.getElem_push_lt (xs := db.scopes) (x := db.frame.size) (i := i) hi_old)
+        exact (Array.getElem_push_lt (xs := db.scopes) (x := db.frame.size) (i := i) hi_old)
       have h_j : (db.scopes.push db.frame.size)[j] = db.scopes[j]'hj_old := by
-        simpa using (Array.getElem_push_lt (xs := db.scopes) (x := db.frame.size) (i := j) hj_old)
+        exact (Array.getElem_push_lt (xs := db.scopes) (x := db.frame.size) (i := j) hj_old)
       have hi_push : i < (db.scopes.push db.frame.size).size := by
         simpa [DB.pushScope] using hi
       have hj_push : j < (db.scopes.push db.frame.size).size := by
@@ -5121,7 +5145,7 @@ theorem scopesOk_pushScope (db : DB) :
       have hi_old : i < db.scopes.size := Nat.lt_of_le_of_ne hi_le hi_last
       have h_le : ScopeLE (db.scopes[i]'hi_old) db.frame.size := h_within i hi_old
       have h_i : (db.scopes.push db.frame.size)[i] = db.scopes[i]'hi_old := by
-        simpa using (Array.getElem_push_lt (xs := db.scopes) (x := db.frame.size) (i := i) hi_old)
+        exact (Array.getElem_push_lt (xs := db.scopes) (x := db.frame.size) (i := i) hi_old)
       have hi_push : i < (db.scopes.push db.frame.size).size := by
         simpa [DB.pushScope] using hi
       change ScopeLE ((db.scopes.push db.frame.size)[i]'hi_push) db.frame.size
@@ -5297,7 +5321,7 @@ theorem wellScopedDBWithScopes_withDJ_push
       db'.isVar p.2 = true := by
     simpa [db', DB.isVar, DB.withDJ, DB.withFrame, DB.find?] using h_p
   have h_scoped_frame' : WellScopedFrame db' db'.frame := by
-    simpa [db'] using (wellScopedFrame_push_dj db' db.frame p h_scoped_frame_db' h_p')
+    exact (wellScopedFrame_push_dj db' db.frame p h_scoped_frame_db' h_p')
 
   have h_scoped_db' : WellScopedDB db' := by
     refine ⟨h_scoped_frame', ?_⟩
@@ -5314,16 +5338,16 @@ theorem wellScopedDBWithScopes_withDJ_push
         rcases h_obj with ⟨h_fr_scoped, h_syms, h_decl⟩
         refine ⟨?_, ?_, ?_⟩
         · simpa [db'] using (wellScopedFrame_preserved_by_withDJ db (f := (·.push p)) (fr := fr) h_fr_scoped)
-        · simpa [db', DB.formulaSymsRespectFrame, DB.frameFloatVars, DB.find?] using h_syms
-        · simpa [db', FormulaSymbolsDeclared, DB.isConst, DB.isVar, DB.find?] using h_decl
+        · exact h_syms
+        · exact h_decl
     | hyp ess f name =>
         constructor
         · intro h_in
           have h_in' : lbl ∈ db.frame.hyps.toList := by
             simpa [db', DB.withDJ, DB.withFrame] using h_in
           have h_syms := h_obj.1 h_in'
-          simpa [db', DB.formulaSymsRespectFrame, DB.frameFloatVars, DB.find?] using h_syms
-        · simpa [db', FormulaSymbolsDeclared, DB.isConst, DB.isVar, DB.find?] using h_obj.2
+          exact h_syms
+        · exact h_obj.2
 
   refine ⟨h_scoped_db', ?_⟩
   intro sc h_mem
@@ -5442,17 +5466,21 @@ theorem scopesOk_insertHypChecks
       | true =>
           by_cases h_syms : DB.formulaSymsRespectFrame db f (Verify.Frame.mk #[] db.frame.hyps) = true
           · simp [h_head, h_db_err, h_ess, h_syms, h_ok]
-          · simpa [h_head, h_db_err, h_ess, h_syms, DB.mkError] using h_ok
+          · simp [h_head, h_db_err, h_ess, h_syms, DB.mkError]
+            exact h_ok
       | false =>
           by_cases h_shape : f.isFloatShape = true
           · by_cases h_size : f.size >= 2
             · by_cases h_dup :
                 db.config.allowDuplicateFloat = false ∧ db.floatVarOccursInFrame f[1]!.value = true
-              · simpa [h_head, h_db_err, h_ess, h_shape, h_size, h_dup, DB.mkError] using h_ok
+              · simp [h_head, h_db_err, h_ess, h_shape, h_size, h_dup, DB.mkError]
+                exact h_ok
               · simpa [h_head, h_db_err, h_ess, h_shape, h_size, h_dup] using h_ok
             · simpa [h_head, h_db_err, h_ess, h_shape, h_size] using h_ok
-          · simpa [h_head, h_db_err, h_ess, h_shape, DB.mkError] using h_ok
-  · simpa [h_head, DB.mkError] using h_ok
+          · simp [h_head, h_db_err, h_ess, h_shape, DB.mkError]
+            exact h_ok
+  · simp only [h_head, DB.mkError]
+    exact h_ok
 
 theorem scopesOk_insertHyp
     (db : DB) (pos : Pos) (l : String) (ess : Bool) (f : Formula) :
@@ -5484,14 +5512,17 @@ theorem scopesOk_insertAxiom
     · simpa using h_ok
     · cases h_trim : db.trimFrame' fmla with
       | error msg =>
-          simpa [h_trim, DB.mkError] using h_ok
+          simp only [h_trim, DB.mkError]
+          exact h_ok
       | ok fr =>
           by_cases h_interrupt : db.interrupt
-          · simpa [h_trim, h_interrupt] using h_ok
+          · simp only [h_trim, h_interrupt]
+            exact h_ok
           · have h_ins : ScopesOk (db.insert pos l (.assert fmla fr)) :=
               scopesOk_insert db pos l (.assert fmla fr) h_ok
             simpa [h_trim, h_interrupt] using h_ins
-  · simpa [h_head, DB.mkError] using h_ok
+  · simp only [h_head, DB.mkError]
+    exact h_ok
 
 /-- Strengthening of `insertHyp_full_maintains_scoped`: also preserves the stored-scope snapshots. -/
 theorem insertHyp_full_maintains_scopedWithScopes
@@ -6586,9 +6617,8 @@ theorem wellScopedDBWithScopes_popScope
       have h_frame_scoped_old : WellScopedFrame db (db.frame.shrink sc) :=
         h_scopes sc h_sc_mem
       have h_frame_scoped : WellScopedFrame db' (db.frame.shrink sc) := by
-        -- `find?` is unchanged; unfold to rewrite.
-        simpa [db', WellScopedFrame, FloatDeclaredBefore, DB.formulaSymsRespectFrame, DB.frameFloatVars, DB.find?] using
-          h_frame_scoped_old
+        -- `find?` is unchanged; the frame predicate reads only `objects`, so this is definitional.
+        exact h_frame_scoped_old
 
       have h_scoped_db' : WellScopedDB db' := by
         refine ⟨?_, ?_⟩
@@ -6605,7 +6635,7 @@ theorem wellScopedDBWithScopes_popScope
               rcases h_obj with ⟨h_fr_scoped, h_syms, h_decl⟩
               refine ⟨?_, ?_, ?_⟩
               · -- frames are unaffected by popScope (objects unchanged)
-                simpa [WellScopedFrame, FloatDeclaredBefore, DB.formulaSymsRespectFrame, DB.frameFloatVars, DB.find?, h_find_eq] using h_fr_scoped
+                exact h_fr_scoped
               · simpa [DB.formulaSymsRespectFrame, DB.frameFloatVars, DB.find?, h_find_eq] using h_syms
               · simpa [FormulaSymbolsDeclared, DB.isConst, DB.isVar, DB.find?, h_find_eq] using h_decl
           | hyp ess f name =>
@@ -6632,7 +6662,7 @@ theorem wellScopedDBWithScopes_popScope
                     have h_syms_mk :
                         DB.formulaSymsRespectFrame db' f (Frame.mk #[] db'.frame.hyps) = true := by
                       simpa [db'] using h_scoped_i'.1
-                    simpa [frameFloatVars_mk_eq] using h_syms_mk
+                    exact h_syms_mk
                 | false =>
                     -- Float hypothesis: its own variable is in `frameFloatVars` since the label is in the frame.
                     have h_float : WellFormedFloat f := by
@@ -6709,7 +6739,7 @@ theorem wellScopedDBWithScopes_popScope
           simpa using Frame.shrink_shrink_of_le (fr := db.frame) (a := sc) (b := sc') h_le'
         -- Transfer and rewrite.
         have h_scoped_sc'' : WellScopedFrame db' (db.frame.shrink sc') := by
-          simpa [db', WellScopedFrame, FloatDeclaredBefore, DB.formulaSymsRespectFrame, DB.frameFloatVars, DB.find?] using h_scoped_sc'
+          exact h_scoped_sc'
         simpa [db', h_shrink] using h_scoped_sc''
 
 /-- In `.start` mode, successful `feedToken` preserves `WellFormedDB`. -/
@@ -6739,12 +6769,12 @@ theorem feedToken_start_maintains_wf
         simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate_none]
       simpa [h_db_eq] using h_wf
     · by_cases h_cmd : tk.len == 2 && tk[0]! == '$'.toUInt8
-      · by_cases h_lbrace : tk[1]!.toChar = '{'
+      · by_cases h_lbrace : Metamath.Verify.uint8ToChar (tk[1]!) = '{'
         · have h_db_eq : (s.feedToken i tk).db = s.db.pushScope := by
             simp [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_lbrace,
               ParserState.withDB]
           simpa [h_db_eq] using wellFormedDB_pushScope s.db h_wf
-        · by_cases h_rbrace : tk[1]!.toChar = '}'
+        · by_cases h_rbrace : Metamath.Verify.uint8ToChar (tk[1]!) = '}'
           · have h_pop_ok : (s.db.popScope (s.mkPos i)).error? = none := by
               simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_lbrace,
                 h_rbrace, ParserState.withDB] using h_success
@@ -6753,17 +6783,17 @@ theorem feedToken_start_maintains_wf
               wellFormedDB_popScope s.db (s.mkPos i) h_wf h_no_err h_pop_ok
             simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_lbrace,
               h_rbrace, ParserState.withDB] using h_wf_pop
-          · by_cases h_c : tk[1]!.toChar = 'c'
+          · by_cases h_c : Metamath.Verify.uint8ToChar (tk[1]!) = 'c'
             · have h_db_eq : (s.feedToken i tk).db = s.db := by
                 simp [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_lbrace,
                   h_rbrace, h_c]
               simpa [h_db_eq] using h_wf
-            · by_cases h_v : tk[1]!.toChar = 'v'
+            · by_cases h_v : Metamath.Verify.uint8ToChar (tk[1]!) = 'v'
               · have h_db_eq : (s.feedToken i tk).db = s.db := by
                   simp [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_lbrace,
                     h_rbrace, h_c, h_v]
                 simpa [h_db_eq] using h_wf
-              · by_cases h_d : tk[1]!.toChar = 'd'
+              · by_cases h_d : Metamath.Verify.uint8ToChar (tk[1]!) = 'd'
                 · have h_db_eq : (s.feedToken i tk).db = s.db := by
                     simp [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_lbrace,
                       h_rbrace, h_c, h_v, h_d]
@@ -6976,12 +7006,12 @@ theorem feedToken_start_maintains_scopedWithScopes
       simpa [h_db_eq] using h_scoped
     · by_cases h_cmd : tk.len == 2 && tk[0]! == '$'.toUInt8
       · -- One-character command after '$'.
-        by_cases h_lbrace : tk[1]!.toChar = '{'
+        by_cases h_lbrace : Metamath.Verify.uint8ToChar (tk[1]!) = '{'
         · have h_db_eq : (s.feedToken i tk).db = s.db.pushScope := by
             simp [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_lbrace,
               ParserState.withDB]
           simpa [h_db_eq] using wellScopedDBWithScopes_pushScope s.db h_scoped
-        · by_cases h_rbrace : tk[1]!.toChar = '}'
+        · by_cases h_rbrace : Metamath.Verify.uint8ToChar (tk[1]!) = '}'
           · have h_pop_ok : (s.db.popScope (s.mkPos i)).error? = none := by
               simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_lbrace,
                 h_rbrace, ParserState.withDB] using h_success
@@ -6990,17 +7020,17 @@ theorem feedToken_start_maintains_scopedWithScopes
               wellScopedDBWithScopes_popScope s.db (s.mkPos i) h_wf h_scoped h_ok h_pop_ok
             simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_lbrace,
               h_rbrace, ParserState.withDB] using h_scoped_pop
-          · by_cases h_c : tk[1]!.toChar = 'c'
+          · by_cases h_c : Metamath.Verify.uint8ToChar (tk[1]!) = 'c'
             · have h_db_eq : (s.feedToken i tk).db = s.db := by
                 simp [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_lbrace,
                   h_rbrace, h_c]
               simpa [h_db_eq] using h_scoped
-            · by_cases h_v : tk[1]!.toChar = 'v'
+            · by_cases h_v : Metamath.Verify.uint8ToChar (tk[1]!) = 'v'
               · have h_db_eq : (s.feedToken i tk).db = s.db := by
                   simp [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_lbrace,
                     h_rbrace, h_c, h_v]
                 simpa [h_db_eq] using h_scoped
-              · by_cases h_d : tk[1]!.toChar = 'd'
+              · by_cases h_d : Metamath.Verify.uint8ToChar (tk[1]!) = 'd'
                 · have h_db_eq : (s.feedToken i tk).db = s.db := by
                     simp [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_lbrace,
                       h_rbrace, h_c, h_v, h_d]
@@ -7201,12 +7231,12 @@ theorem feedToken_start_maintains_scopesOk
         simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate_none]
       simpa [h_db_eq] using h_ok
     · by_cases h_cmd : tk.len == 2 && tk[0]! == '$'.toUInt8
-      · by_cases h_lbrace : tk[1]!.toChar = '{'
+      · by_cases h_lbrace : Metamath.Verify.uint8ToChar (tk[1]!) = '{'
         · have h_db_eq : (s.feedToken i tk).db = s.db.pushScope := by
             simp [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_lbrace,
               ParserState.withDB]
           simpa [h_db_eq] using scopesOk_pushScope s.db h_ok
-        · by_cases h_rbrace : tk[1]!.toChar = '}'
+        · by_cases h_rbrace : Metamath.Verify.uint8ToChar (tk[1]!) = '}'
           · have h_pop_ok : (s.db.popScope (s.mkPos i)).error? = none := by
               simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_lbrace,
                 h_rbrace, ParserState.withDB] using h_success
@@ -7214,17 +7244,17 @@ theorem feedToken_start_maintains_scopesOk
               scopesOk_popScope s.db (s.mkPos i) h_ok h_pop_ok
             simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_lbrace,
               h_rbrace, ParserState.withDB] using h_ok_pop
-          · by_cases h_c : tk[1]!.toChar = 'c'
+          · by_cases h_c : Metamath.Verify.uint8ToChar (tk[1]!) = 'c'
             · have h_db_eq : (s.feedToken i tk).db = s.db := by
                 simp [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_lbrace,
                   h_rbrace, h_c]
               simpa [h_db_eq] using h_ok
-            · by_cases h_v : tk[1]!.toChar = 'v'
+            · by_cases h_v : Metamath.Verify.uint8ToChar (tk[1]!) = 'v'
               · have h_db_eq : (s.feedToken i tk).db = s.db := by
                   simp [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_lbrace,
                     h_rbrace, h_c, h_v]
                 simpa [h_db_eq] using h_ok
-              · by_cases h_d : tk[1]!.toChar = 'd'
+              · by_cases h_d : Metamath.Verify.uint8ToChar (tk[1]!) = 'd'
                 · have h_db_eq : (s.feedToken i tk).db = s.db := by
                     simp [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_lbrace,
                       h_rbrace, h_c, h_v, h_d]
@@ -7405,7 +7435,8 @@ theorem djvars_loop_aux_maintains_scopedWithScopes
               (s.withDB
                 (fun db => DB.withDJ (fun dj => dj.push (if arr[i] < tk then (arr[i], tk) else (tk, arr[i]))) db) )
               pos tk (i + 1)).db.error? = none := by
-          simpa [tk1, h_eq] using h_success
+          simp only [tk1, h_eq] at h_success
+          exact h_success
       have h_mem_tk1 : tk1 ∈ arr.toList := by
         -- `tk1` is `arr[i]`
         have h_mem := Array.getElem!_mem_toList arr i hi
@@ -7454,7 +7485,8 @@ theorem djvars_loop_aux_maintains_scopedWithScopes
         simpa [DB.isVar, DB.withDJ, DB.withFrame, DB.find?] using h_var
       have h_success_rec :
           (ParserState.djvars_loop_aux arr (s.withDB fun db => db.withDJ (·.push p)) pos tk (i + 1)).db.error? = none := by
-        simpa [tk1, h_p] using h_success'
+        simp only [tk1, h_p] at h_success' ⊢
+        exact h_success'
       -- Apply IH
       have h_rec :=
         ih (i + 1) (s.withDB fun db => db.withDJ (·.push p)) hs'
@@ -7508,15 +7540,17 @@ theorem djvars_loop_aux_maintains_scopesOk
               (s.withDB
                 (fun db => DB.withDJ (fun dj => dj.push (if arr[i] < tk then (arr[i], tk) else (tk, arr[i]))) db) )
               pos tk (i + 1)).db.error? = none := by
-          simpa [tk1, h_eq] using h_success
+          simp only [tk1, h_eq] at h_success
+          exact h_success
       let p : DJ := if tk1 < tk then (tk1, tk) else (tk, tk1)
       have h_ok' : ScopesOk (s.withDB (fun db => db.withDJ (·.push p))).db := by
         have h_db' : ScopesOk (s.db.withDJ (·.push p)) := scopesOk_withDJ_push s.db p h_ok
         simpa [ParserState.withDB] using h_db'
       have h_rec :=
         ih (i + 1) (s.withDB fun db => db.withDJ (·.push p)) hs' h_ok' (by simpa [tk1, p] using h_success')
-      simpa [ParserState.djvars_loop_aux, hi, tk1, h_eq, ParserState.withDB, p,
-        -ParserState.djvars_loop_aux.eq_1] using h_rec
+      simp only [ParserState.djvars_loop_aux, hi, tk1, h_eq, ParserState.withDB, p,
+        -ParserState.djvars_loop_aux.eq_1]
+      exact h_rec
 
 /-- `djvars_loop` preserves `ScopesOk` on success. -/
 theorem djvars_loop_maintains_scopesOk
@@ -7596,7 +7630,8 @@ theorem djvars_loop_aux_maintains_tokpInv
             (s.withDB
               (fun db => DB.withDJ (fun dj => dj.push (if arr[i] < tk then (arr[i], tk) else (tk, arr[i]))) db))
             pos tk (i + 1)).db.error? = none := by
-        simpa [tk1, h_eq] using h_success
+        simp only [tk1, h_eq] at h_success
+        exact h_success
       let p : DJ := if tk1 < tk then (tk1, tk) else (tk, tk1)
       have h_tokp' : TokpInv (s.db.withDJ (·.push p)) (.djvars arr) := by
         intro v h_mem
@@ -7610,8 +7645,9 @@ theorem djvars_loop_aux_maintains_tokpInv
       have h_rec :=
         ih (i + 1) (s.withDB fun db => db.withDJ (·.push p)) hs'
           h_tokp' h_var' h_success_rec
-      simpa [ParserState.djvars_loop_aux, hi, tk1, h_eq, ParserState.withDB, p,
-        -ParserState.djvars_loop_aux.eq_1] using h_rec
+      simp only [ParserState.djvars_loop_aux, hi, tk1, h_eq, ParserState.withDB, p,
+        -ParserState.djvars_loop_aux.eq_1]
+      exact h_rec
 
 /-- Internal: `djvars_loop_aux` preserves `WellFormedDB` on success. -/
 theorem djvars_loop_aux_maintains_wf
@@ -7658,7 +7694,8 @@ theorem djvars_loop_aux_maintains_wf
             (s.withDB
               (fun db => DB.withDJ (fun dj => dj.push (if arr[i] < tk then (arr[i], tk) else (tk, arr[i]))) db))
             pos tk (i + 1)).db.error? = none := by
-        simpa [tk1, h_eq] using h_success
+        simp only [tk1, h_eq] at h_success
+        exact h_success
       let p : DJ := if tk1 < tk then (tk1, tk) else (tk, tk1)
       have h_wf' : WellFormedDB (s.db.withDJ (·.push p)) := by
         exact wellFormedDB_preserved_by_withDJ s.db (·.push p) h_wf
@@ -7671,8 +7708,9 @@ theorem djvars_loop_aux_maintains_wf
       have h_rec :=
         ih (i + 1) (s.withDB fun db => db.withDJ (·.push p)) hs'
           h_wf_state h_success_rec
-      simpa [ParserState.djvars_loop_aux, hi, tk1, h_eq, ParserState.withDB, p,
-        -ParserState.djvars_loop_aux.eq_1] using h_rec
+      simp only [ParserState.djvars_loop_aux, hi, tk1, h_eq, ParserState.withDB, p,
+        -ParserState.djvars_loop_aux.eq_1]
+      exact h_rec
 
 /-- `djvars_loop` preserves `WellFormedDB` on success. -/
 theorem djvars_loop_maintains_wf
@@ -8068,7 +8106,9 @@ theorem preloadMandatoryHyps_ok_preserves_core
       | _ => throw (.proofCheck (.mandatoryHypothesisNotFoundInDatabase lbl))
   have h_for : forIn pr.frame.hyps pr body = Except.ok pr' := by
     unfold DB.preloadMandatoryHyps at h_ok
-    simpa [body] using h_ok
+    simp only [body]
+    simp at h_ok ⊢
+    exact h_ok
   have h_for_list : forIn pr.frame.hyps.toList pr body = Except.ok pr' := by
     calc
       forIn pr.frame.hyps.toList pr body = forIn pr.frame.hyps pr body := by
@@ -8226,7 +8266,8 @@ theorem applyCompressedActions_ok_preserves_core
                           else
                             pure (pr.push pr.fmla))
                     pr_mid = .ok pr' := by
-                simpa [h_step] using h_ok
+                simp only [h_step, bind, Except.bind, pure, Except.pure] at h_ok ⊢
+                exact h_ok
               have h_mid := stepProof_ok_preserves_core db pr pr_mid n h_step
               have h_tail := ih pr_mid h_rest
               exact ⟨h_tail.1.trans h_mid.1, h_tail.2.trans h_mid.2⟩
@@ -8252,7 +8293,8 @@ theorem applyCompressedActions_ok_preserves_core
                           else
                             pure (pr.push pr.fmla))
                     pr_mid = .ok pr' := by
-                simpa [h_save] using h_ok
+                simp only [h_save, bind, Except.bind, pure, Except.pure] at h_ok ⊢
+                exact h_ok
               have h_mid : pr_mid.fmla = pr.fmla ∧ pr_mid.frame = pr.frame := by
                 unfold ProofState.save at h_save
                 cases h_back : pr.stack.back? with
@@ -8287,7 +8329,8 @@ theorem applyCompressedActions_ok_preserves_core
                       else
                           pure (pr.push pr.fmla))
                   (pr.push pr.fmla) = .ok pr' := by
-              simpa [h_reject] using h_ok
+              simp only [h_reject, bind, Except.bind, pure, Except.pure] at h_ok ⊢
+              exact h_ok
             have h_tail := ih (pr.push pr.fmla) h_rest
             exact ⟨by simpa [ProofState.push] using h_tail.1, by simpa [ProofState.push] using h_tail.2⟩
 
@@ -8377,7 +8420,9 @@ theorem feedProof_go_ok_preserves_core
                          heap := pr_mid.heap, stack := pr_mid.stack,
                          ptp := ProofTokenParser.compressed chr' } : ProofState)
                       : Except ProofCheckFail ProofState) = Except.ok pr' := by
-                  simpa [h_ptp, h_dec, h_apply, Bind.bind, Except.bind, Functor.map, Except.map] using h_ok
+                  simp only [h_ptp, h_dec, h_apply, Bind.bind, Except.bind, Functor.map,
+                    Except.map, pure, Except.pure] at h_ok ⊢
+                  exact h_ok
                 cases h_ok'
                 rfl
               subst h_eq
@@ -9033,25 +9078,25 @@ theorem feedToken_maintains_tokpInv
                 simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_gate, TokpInv]
           · cases h_cmd : (tk.len == 2 && tk[0]! == '$'.toUInt8) with
             | true =>
-                by_cases h_lbrace : tk[1]!.toChar = '{'
+                by_cases h_lbrace : Metamath.Verify.uint8ToChar (tk[1]!) = '{'
                 · have h_inv_push :
                       TokpInv (ParserState.withDB DB.pushScope s).db (ParserState.withDB DB.pushScope s).tokp := by
                     simp [ParserState.withDB, TokpInv, h_tokp]
                   simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_lbrace] using h_inv_push
-                · by_cases h_rbrace : tk[1]!.toChar = '}'
+                · by_cases h_rbrace : Metamath.Verify.uint8ToChar (tk[1]!) = '}'
                   · have h_inv_pop :
                         TokpInv
                           (ParserState.withDB (DB.popScope (s.mkPos i)) s).db
                           (ParserState.withDB (DB.popScope (s.mkPos i)) s).tokp := by
                       simp [ParserState.withDB, TokpInv, h_tokp]
                     simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_lbrace, h_rbrace] using h_inv_pop
-                  · by_cases h_c : tk[1]!.toChar = 'c'
+                  · by_cases h_c : Metamath.Verify.uint8ToChar (tk[1]!) = 'c'
                     · simp [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_lbrace, h_rbrace, h_c, TokpInv,
                         FormulaSymbolsDeclared.nil]
-                    · by_cases h_v : tk[1]!.toChar = 'v'
+                    · by_cases h_v : Metamath.Verify.uint8ToChar (tk[1]!) = 'v'
                       · simp [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_lbrace, h_rbrace, h_c, h_v,
                           TokpInv, FormulaSymbolsDeclared.nil]
-                      · by_cases h_d : tk[1]!.toChar = 'd'
+                      · by_cases h_d : Metamath.Verify.uint8ToChar (tk[1]!) = 'd'
                         · simp [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_lbrace, h_rbrace, h_c, h_v, h_d,
                             TokpInv, FormulaSymbolsDeclared.nil]
                         · have h_inv_label :
@@ -9174,13 +9219,13 @@ theorem feedToken_maintains_tokpInv
                 simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_gate, TokpInv]
           · cases h_cmd : (tk.len == 2 && tk[0]! == '$'.toUInt8) with
             | true =>
-                by_cases h_f : tk[1]!.toChar = 'f'
+                by_cases h_f : Metamath.Verify.uint8ToChar (tk[1]!) = 'f'
                 · simp [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_f, TokpInv, FormulaSymbolsDeclared.nil]
-                · by_cases h_e : tk[1]!.toChar = 'e'
+                · by_cases h_e : Metamath.Verify.uint8ToChar (tk[1]!) = 'e'
                   · simp [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_f, h_e, TokpInv, FormulaSymbolsDeclared.nil]
-                  · by_cases h_a : tk[1]!.toChar = 'a'
+                  · by_cases h_a : Metamath.Verify.uint8ToChar (tk[1]!) = 'a'
                     · simp [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_f, h_e, h_a, TokpInv, FormulaSymbolsDeclared.nil]
-                    · by_cases h_p : tk[1]!.toChar = 'p'
+                    · by_cases h_p : Metamath.Verify.uint8ToChar (tk[1]!) = 'p'
                       · simp [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_f, h_e, h_a, h_p, TokpInv, FormulaSymbolsDeclared.nil]
                       · have h_inv_err :
                             TokpInv
@@ -9421,19 +9466,19 @@ theorem feedToken_maintains_wf
             simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate_none]
           simpa [h_db_eq] using h_wf
         · by_cases h_cmd : tk.len == 2 && tk[0]! == '$'.toUInt8
-          · by_cases h_f : tk[1]!.toChar = 'f'
+          · by_cases h_f : Metamath.Verify.uint8ToChar (tk[1]!) = 'f'
             · have h_db_eq : (s.feedToken i tk).db = s.db := by
                 simp [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_f]
               simpa [h_db_eq] using h_wf
-            · by_cases h_e : tk[1]!.toChar = 'e'
+            · by_cases h_e : Metamath.Verify.uint8ToChar (tk[1]!) = 'e'
               · have h_db_eq : (s.feedToken i tk).db = s.db := by
                   simp [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_f, h_e]
                 simpa [h_db_eq] using h_wf
-              · by_cases h_a : tk[1]!.toChar = 'a'
+              · by_cases h_a : Metamath.Verify.uint8ToChar (tk[1]!) = 'a'
                 · have h_db_eq : (s.feedToken i tk).db = s.db := by
                     simp [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_f, h_e, h_a]
                   simpa [h_db_eq] using h_wf
-                · by_cases h_p : tk[1]!.toChar = 'p'
+                · by_cases h_p : Metamath.Verify.uint8ToChar (tk[1]!) = 'p'
                   · have h_db_eq : (s.feedToken i tk).db = s.db := by
                       simp [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_f, h_e, h_a, h_p]
                     simpa [h_db_eq] using h_wf
@@ -9718,19 +9763,19 @@ theorem feedToken_maintains_scopedWithScopes
             simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate_none]
           simpa [h_db_eq] using h_scoped
         · by_cases h_cmd : tk.len == 2 && tk[0]! == '$'.toUInt8
-          · by_cases h_f : tk[1]!.toChar = 'f'
+          · by_cases h_f : Metamath.Verify.uint8ToChar (tk[1]!) = 'f'
             · have h_db_eq : (s.feedToken i tk).db = s.db := by
                 simp [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_f]
               simpa [h_db_eq] using h_scoped
-            · by_cases h_e : tk[1]!.toChar = 'e'
+            · by_cases h_e : Metamath.Verify.uint8ToChar (tk[1]!) = 'e'
               · have h_db_eq : (s.feedToken i tk).db = s.db := by
                   simp [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_f, h_e]
                 simpa [h_db_eq] using h_scoped
-              · by_cases h_a : tk[1]!.toChar = 'a'
+              · by_cases h_a : Metamath.Verify.uint8ToChar (tk[1]!) = 'a'
                 · have h_db_eq : (s.feedToken i tk).db = s.db := by
                     simp [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_f, h_e, h_a]
                   simpa [h_db_eq] using h_scoped
-                · by_cases h_p : tk[1]!.toChar = 'p'
+                · by_cases h_p : Metamath.Verify.uint8ToChar (tk[1]!) = 'p'
                   · have h_db_eq : (s.feedToken i tk).db = s.db := by
                       simp [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_f, h_e, h_a, h_p]
                     simpa [h_db_eq] using h_scoped
@@ -10012,19 +10057,19 @@ theorem feedToken_maintains_scopesOk
             simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate_none]
           simpa [h_db_eq] using h_ok
         · by_cases h_cmd : tk.len == 2 && tk[0]! == '$'.toUInt8
-          · by_cases h_f : tk[1]!.toChar = 'f'
+          · by_cases h_f : Metamath.Verify.uint8ToChar (tk[1]!) = 'f'
             · have h_db_eq : (s.feedToken i tk).db = s.db := by
                 simp [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_f]
               simpa [h_db_eq] using h_ok
-            · by_cases h_e : tk[1]!.toChar = 'e'
+            · by_cases h_e : Metamath.Verify.uint8ToChar (tk[1]!) = 'e'
               · have h_db_eq : (s.feedToken i tk).db = s.db := by
                   simp [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_f, h_e]
                 simpa [h_db_eq] using h_ok
-              · by_cases h_a : tk[1]!.toChar = 'a'
+              · by_cases h_a : Metamath.Verify.uint8ToChar (tk[1]!) = 'a'
                 · have h_db_eq : (s.feedToken i tk).db = s.db := by
                     simp [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_f, h_e, h_a]
                   simpa [h_db_eq] using h_ok
-                · by_cases h_p : tk[1]!.toChar = 'p'
+                · by_cases h_p : Metamath.Verify.uint8ToChar (tk[1]!) = 'p'
                   · have h_db_eq : (s.feedToken i tk).db = s.db := by
                       simp [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd, h_f, h_e, h_a, h_p]
                     simpa [h_db_eq] using h_ok

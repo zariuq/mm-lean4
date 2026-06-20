@@ -535,7 +535,10 @@ theorem preloadMandatoryHyps_preserves_label
       | _ => throw (.proofCheck (.mandatoryHypothesisNotFoundInDatabase lbl))
   have h_for_list : forIn pr.frame.hyps.toList pr body = Except.ok pr' := by
     unfold DB.preloadMandatoryHyps at h_ok
-    have h_for : forIn pr.frame.hyps pr body = Except.ok pr' := by simpa [body] using h_ok
+    have h_for : forIn pr.frame.hyps pr body = Except.ok pr' := by
+      simp only [body]
+      simp only [bind_pure] at h_ok
+      exact h_ok
     calc forIn pr.frame.hyps.toList pr body
         = forIn pr.frame.hyps pr body := by
           simp [Array.forIn_toList (xs := pr.frame.hyps) (b := pr) (f := body)]
