@@ -124,7 +124,20 @@ theorem insert_frame_unchanged (db : DB) (pos : Pos) (label : String) (obj : Str
           | none =>
               simp
           | some val =>
-              cases val <;> simp [DB.mkError]
+              cases val with
+              | const c => simp_all [DB.mkError, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence,
+        DB.find?, Std.HashMap.getElem?_insert, Option.isSome]
+              | var v =>
+        simp_all [DB.mkError, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence,
+          DB.find?, Std.HashMap.getElem?_insert, Option.isSome]
+        repeat' split
+        all_goals
+          simp_all [DB.mkError, DB.mkErrorFromEvidence,
+            DB.mkErrorWithEvidence, DB.find?, Std.HashMap.getElem?_insert]
+              | hyp e f n => simp_all [DB.mkError, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence,
+        DB.find?, Std.HashMap.getElem?_insert, Option.isSome]
+              | assert f fr n => simp_all [DB.mkError, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence,
+        DB.find?, Std.HashMap.getElem?_insert, Option.isSome]
   | var =>
       by_cases h_err : db.error
       · simp [h_err]
@@ -133,7 +146,8 @@ theorem insert_frame_unchanged (db : DB) (pos : Pos) (label : String) (obj : Str
         | none =>
             simp
         | some val =>
-            cases val <;> simp [DB.mkError]
+            cases val
+            all_goals (repeat' split) <;> simp [DB.mkError]
   | hyp =>
       by_cases h_err : db.error
       · simp [h_err]
@@ -142,7 +156,8 @@ theorem insert_frame_unchanged (db : DB) (pos : Pos) (label : String) (obj : Str
         | none =>
             simp
         | some val =>
-            cases val <;> simp [DB.mkError]
+            cases val
+            all_goals (repeat' split) <;> simp [DB.mkError]
   | assert =>
       by_cases h_err : db.error
       · simp [h_err]
@@ -151,7 +166,8 @@ theorem insert_frame_unchanged (db : DB) (pos : Pos) (label : String) (obj : Str
         | none =>
             simp
         | some val =>
-            cases val <;> simp [DB.mkError]
+            cases val
+            all_goals (repeat' split) <;> simp [DB.mkError]
 
 /-- insert doesn't change find? results for other labels. -/
 theorem insert_preserves_find?_ne (db : DB) (pos : Pos) (label other : String) (obj : String → Object)
@@ -173,7 +189,20 @@ theorem insert_preserves_find?_ne (db : DB) (pos : Pos) (label other : String) (
                 HashMapLemmas.HashMap.find?_insert_other db.objects label other (Object.const a) h_ne.symm
               simpa [h_find, DB.find?] using h_other
           | some val =>
-              cases val <;> simp [DB.mkError, DB.find?]
+              cases val with
+              | const c => simp_all [DB.mkError, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence,
+        DB.find?, Std.HashMap.getElem?_insert, Option.isSome]
+              | var v =>
+        simp_all [DB.mkError, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence,
+          DB.find?, Std.HashMap.getElem?_insert, Option.isSome]
+        repeat' split
+        all_goals
+          simp_all [DB.mkError, DB.mkErrorFromEvidence,
+            DB.mkErrorWithEvidence, DB.find?, Std.HashMap.getElem?_insert]
+              | hyp e f n => simp_all [DB.mkError, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence,
+        DB.find?, Std.HashMap.getElem?_insert, Option.isSome]
+              | assert f fr n => simp_all [DB.mkError, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence,
+        DB.find?, Std.HashMap.getElem?_insert, Option.isSome]
   | var a =>
       by_cases h_err : db.error
       · simp [h_err, DB.find?]
@@ -185,7 +214,20 @@ theorem insert_preserves_find?_ne (db : DB) (pos : Pos) (label other : String) (
               HashMapLemmas.HashMap.find?_insert_other db.objects label other (Object.var a) h_ne.symm
             simpa [h_find, DB.find?] using h_other
         | some val =>
-            cases val <;> simp [DB.mkError, DB.find?]
+            cases val with
+            | const c => simp_all [DB.mkError, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence,
+        DB.find?, Std.HashMap.getElem?_insert, Option.isSome]
+            | var v =>
+        simp_all [DB.mkError, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence,
+          DB.find?, Std.HashMap.getElem?_insert, Option.isSome]
+        repeat' split
+        all_goals
+          simp_all [DB.mkError, DB.mkErrorFromEvidence,
+            DB.mkErrorWithEvidence, DB.find?, Std.HashMap.getElem?_insert]
+            | hyp e f n => simp_all [DB.mkError, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence,
+        DB.find?, Std.HashMap.getElem?_insert, Option.isSome]
+            | assert f fr n => simp_all [DB.mkError, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence,
+        DB.find?, Std.HashMap.getElem?_insert, Option.isSome]
   | hyp ess f' lbl =>
       by_cases h_err : db.error
       · simp [h_err, DB.find?]
@@ -197,7 +239,20 @@ theorem insert_preserves_find?_ne (db : DB) (pos : Pos) (label other : String) (
               HashMapLemmas.HashMap.find?_insert_other db.objects label other (Object.hyp ess f' lbl) h_ne.symm
             simpa [h_find, DB.find?] using h_other
         | some val =>
-            cases val <;> simp [DB.mkError, DB.find?]
+            cases val with
+            | const c => simp_all [DB.mkError, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence,
+        DB.find?, Std.HashMap.getElem?_insert, Option.isSome]
+            | var v =>
+        simp_all [DB.mkError, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence,
+          DB.find?, Std.HashMap.getElem?_insert, Option.isSome]
+        repeat' split
+        all_goals
+          simp_all [DB.mkError, DB.mkErrorFromEvidence,
+            DB.mkErrorWithEvidence, DB.find?, Std.HashMap.getElem?_insert]
+            | hyp e f n => simp_all [DB.mkError, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence,
+        DB.find?, Std.HashMap.getElem?_insert, Option.isSome]
+            | assert f fr n => simp_all [DB.mkError, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence,
+        DB.find?, Std.HashMap.getElem?_insert, Option.isSome]
   | assert f' fr lbl =>
       by_cases h_err : db.error
       · simp [h_err, DB.find?]
@@ -209,7 +264,20 @@ theorem insert_preserves_find?_ne (db : DB) (pos : Pos) (label other : String) (
               HashMapLemmas.HashMap.find?_insert_other db.objects label other (Object.assert f' fr lbl) h_ne.symm
             simpa [h_find, DB.find?] using h_other
         | some val =>
-            cases val <;> simp [DB.mkError, DB.find?]
+            cases val with
+            | const c => simp_all [DB.mkError, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence,
+        DB.find?, Std.HashMap.getElem?_insert, Option.isSome]
+            | var v =>
+        simp_all [DB.mkError, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence,
+          DB.find?, Std.HashMap.getElem?_insert, Option.isSome]
+        repeat' split
+        all_goals
+          simp_all [DB.mkError, DB.mkErrorFromEvidence,
+            DB.mkErrorWithEvidence, DB.find?, Std.HashMap.getElem?_insert]
+            | hyp e f n => simp_all [DB.mkError, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence,
+        DB.find?, Std.HashMap.getElem?_insert, Option.isSome]
+            | assert f fr n => simp_all [DB.mkError, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence,
+        DB.find?, Std.HashMap.getElem?_insert, Option.isSome]
 
 end DBLemmas
 
@@ -228,7 +296,8 @@ inductive InsertOutcome : Type where
   | error_already : InsertOutcome  -- DB already had error
   | error_const_scope : InsertOutcome  -- Const not in outermost scope
   | error_duplicate : InsertOutcome  -- Duplicate non-var symbol
-  | success_var_redef : InsertOutcome  -- Var redefinition (allowed)
+  | success_var_reactivate : InsertOutcome  -- Inactive var redeclared: reactivated
+  | error_var_active : InsertOutcome  -- Var redeclared while still active
   | success_new : InsertOutcome  -- New symbol inserted
 
 /-- Classify the outcome of DB.insert -/
@@ -247,7 +316,12 @@ def classifyInsert (db : DB) (_: Pos) (label : String) (obj : String → Object)
           InsertOutcome.success_new
     | .var _ =>
       if let some (.var _) := db.find? label then
-        InsertOutcome.success_var_redef
+        -- [MM §4.2.2] redeclaration is legal only once the previous
+        -- declaration's block has closed
+        if db.isActiveVar label then
+          InsertOutcome.error_var_active
+        else
+          InsertOutcome.success_var_reactivate
       else if db.find? label |>.isSome then
         InsertOutcome.error_duplicate
       else
@@ -262,13 +336,13 @@ def classifyInsert (db : DB) (_: Pos) (label : String) (obj : String → Object)
 
     Mario's approach: Strengthen the precondition to exclude the problematic case!
 
-    The var-to-var case (ok=true) is handled separately by insert_var_redef.
+    The var-to-var case is handled separately by insert_var_redef.
     This lemma handles all other duplicate cases where mkError is called.
 -/
 theorem insert_duplicate_error (db : DB) (pos : Pos) (label : String) (obj : String → Object)
     (h_no_err : ¬(db.error = true))
     (h_dup : (db.find? label |>.isSome) = true)
-    -- Exclude var-to-var case (that's handled by insert_var_redef)
+    -- Exclude var-to-var case (handled by insert_var_redef)
     (h_not_var_redef : ¬∃ v v', obj label = .var v ∧ db.find? label = some (.var v')) :
     (db.insert pos label obj).error = true := by
   -- Mario's approach: Just compute it!
@@ -291,10 +365,10 @@ theorem insert_duplicate_error (db : DB) (pos : Pos) (label : String) (obj : Str
           cases h : db.find? label
           · simp [h, Option.isSome] at h_dup
           · exact ⟨_, rfl⟩
-        simp [h_some, h_obj_const]
-        -- ok is false for const (obj is const, o is anything)
-        -- Need to case on o to reduce the ok computation
-        cases o <;> (unfold DB.error; exact DBLemmas.mkError_sets_error db pos _)
+        -- `obj label` is a constant, so the registry hit is a duplicate
+        cases o <;>
+          simp_all [h_some, h_obj_const, DB.error, DB.mkErrorFromEvidence,
+            DB.mkErrorWithEvidence, DB.mkError]
   · -- Case: obj label is not .const (var/hyp/assert)
     by_cases h_err : db.error
     · -- db.error = true
@@ -311,32 +385,29 @@ theorem insert_duplicate_error (db : DB) (pos : Pos) (label : String) (obj : Str
       cases o
       · -- o = .const c_found
         rename_i c_found
-        simp [h_some, DB.error]
+        cases h_obj : obj label <;>
+          simp_all [h_some, DB.error, DB.mkErrorFromEvidence,
+            DB.mkErrorWithEvidence, DB.mkError]
       · -- o = .var v_found
         rename_i v_found
-        simp [h_some]
-        -- ok = if let .var _ := obj label then true else false
-        -- Check obj label
-        split
-        · -- ok = true: obj label is .var, this is var-to-var redef
-          rename_i h_ok
-          -- Extract that obj label = .var v for some v
-          cases h_obj : obj label
-          · simp [h_obj] at h_ok  -- const: impossible
-          · -- var v: this is the var-to-var case!
-            rename_i v
-            have h_var_redef : ∃ v v', obj label = .var v ∧ db.find? label = some (.var v') :=
-              ⟨v, v_found, h_obj, h_some⟩
-            exact absurd h_var_redef h_not_var_redef
-          · simp [h_obj] at h_ok  -- hyp: impossible
-          · simp [h_obj] at h_ok  -- assert: impossible
-        · -- ok = false: mkError
-          unfold DB.error
-          exact DBLemmas.mkError_sets_error db pos _
+        cases h_obj : obj label
+        · simp [h_some, h_obj, DB.error, DB.mkErrorFromEvidence,
+            DB.mkErrorWithEvidence, DB.mkError]
+        · -- var-to-var is excluded by hypothesis
+          rename_i v
+          exact absurd ⟨v, v_found, h_obj, h_some⟩ h_not_var_redef
+        · simp [h_some, h_obj, DB.error, DB.mkErrorFromEvidence,
+            DB.mkErrorWithEvidence, DB.mkError]
+        · simp [h_some, h_obj, DB.error, DB.mkErrorFromEvidence,
+            DB.mkErrorWithEvidence, DB.mkError]
       · -- o = .hyp
-        simp [h_some, DB.error]
+        cases h_obj : obj label <;>
+          simp_all [h_some, DB.error, DB.mkErrorFromEvidence,
+            DB.mkErrorWithEvidence, DB.mkError]
       · -- o = .assert
-        simp [h_some, DB.error]
+        cases h_obj : obj label <;>
+          simp_all [h_some, DB.error, DB.mkErrorFromEvidence,
+            DB.mkErrorWithEvidence, DB.mkError]
 
 /-- Helper: insert with no error and no duplicate succeeds
 
@@ -463,21 +534,39 @@ theorem insert_success_new (db : DB) (pos : Pos) (label : String) (obj : String 
     When db has no error and a var already exists at label,
     and we're inserting another var (obj label = .var), insert returns db unchanged.
 -/
-theorem insert_var_redef (db : DB) (pos : Pos) (label : String) (obj : String → Object) (v : String)
+theorem insert_var_redef (db : DB) (pos : Pos) (label : String)
+    (obj : String → Object) (v : String)
     (h_no_err : ¬(db.error = true))
     (h_obj_var : obj label = .var v)
+    (h_inactive : db.isActiveVar label = false)
     (h_var_exists : ∃ v', db.find? label = some (.var v')) :
-    db.insert pos label obj = db := by
-  -- Mario's approach: Just compute it!
+    db.insert pos label obj =
+      { db with activeVars := db.activeVars.push (label, db.scopes.size) } := by
   unfold DB.insert
   simp only [h_obj_var]
-  -- Handle error check
   by_cases h_err : db.error
   · simp [h_err] at h_no_err
   · simp [h_err]
-    -- Handle find? check
     obtain ⟨v', h_eq⟩ := h_var_exists
-    simp [h_eq]  -- ok is true (var to var), returns db
+    simp [h_eq, h_inactive]
+
+/-- [MM §4.2.2] Redeclaring a *still active* variable is rejected. -/
+theorem insert_var_redef_active (db : DB) (pos : Pos) (label : String)
+    (obj : String → Object) (v : String)
+    (h_no_err : ¬(db.error = true))
+    (h_obj_var : obj label = .var v)
+    (h_active : db.isActiveVar label = true)
+    (h_var_exists : ∃ v', db.find? label = some (.var v')) :
+    db.insert pos label obj =
+      db.mkErrorFromEvidence pos
+        (.scopeDecl (.variableAlreadyActive label)) := by
+  unfold DB.insert
+  simp only [h_obj_var]
+  by_cases h_err : db.error
+  · simp [h_err] at h_no_err
+  · simp [h_err]
+    obtain ⟨v', h_eq⟩ := h_var_exists
+    simp [h_eq, h_active]
 
 /-- Case analysis theorem for DB.insert
 
@@ -496,7 +585,9 @@ theorem insert_cases (db : DB) (pos : Pos) (label : String) (obj : String → Ob
     | .error_already => db'.error = true
     | .error_const_scope => db'.error = true
     | .error_duplicate => db'.error = true
-    | .success_var_redef => db' = db
+    | .success_var_reactivate =>
+        db' = { db with activeVars := db.activeVars.push (label, db.scopes.size) }
+    | .error_var_active => db'.error = true
     | .success_new => db'.find? label = some (obj label) ∧ db'.error = db.error := by
   -- Mario's key insight: COMPUTE the classifier value first!
   -- Then the match reduces to a single branch automatically
@@ -568,12 +659,26 @@ theorem insert_cases (db : DB) (pos : Pos) (label : String) (obj : String → Ob
       · -- Duplicate: check if var-to-var
         match h_find : db.find? label with
         | some (.var v') =>
-          -- Var-to-var: classifier = .success_var_redef
-          have h_classifier : classifyInsert db pos label obj = .success_var_redef := by
-            unfold classifyInsert
-            simp [h_err, h_obj, h_find]
-          simp only [h_classifier]
-          exact insert_var_redef db pos label obj v h_err h_obj ⟨v', h_find⟩
+          -- Var-to-var now splits on activity
+          cases h_act : db.isActiveVar label with
+          | false =>
+              have h_classifier :
+                  classifyInsert db pos label obj = .success_var_reactivate := by
+                unfold classifyInsert
+                simp [h_err, h_obj, h_find, h_act]
+              simp only [h_classifier]
+              exact insert_var_redef db pos label obj v h_err h_obj h_act
+                ⟨v', h_find⟩
+          | true =>
+              have h_classifier :
+                  classifyInsert db pos label obj = .error_var_active := by
+                unfold classifyInsert
+                simp [h_err, h_obj, h_find, h_act]
+              simp only [h_classifier]
+              rw [insert_var_redef_active db pos label obj v h_err h_obj
+                h_act ⟨v', h_find⟩]
+              simp [DB.error, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence,
+                DB.mkError]
 
         | some (.const c) | some (.hyp ess f l) | some (.assert concl fr l) =>
           -- Duplicate non-var: classifier = .error_duplicate
@@ -2007,4 +2112,3 @@ theorem insertHyp_maintains_unique_floats (db : DB) (pos : Pos) (label : String)
       exact (h_ne rfl).elim
 
 end Metamath.DBCaseAnalysis
-

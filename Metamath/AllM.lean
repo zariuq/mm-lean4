@@ -92,7 +92,7 @@ theorem allM_true_of_mem {α} (p : α → Option Bool) {xs : List α}
 This eliminates eta-expansion issues when pattern-matching lambdas are
 elaborated differently than projection lambdas.
 -/
-@[simp] theorem pair_eta₂ {α β γ} (f : α → β → γ) :
+theorem pair_eta₂ {α β γ} (f : α → β → γ) :
   (fun (p : α × β) => f p.fst p.snd) = (fun (a, b) => f a b) := rfl
 
 /-- Congruence for allM in the function argument.
@@ -125,4 +125,3 @@ end List
 
 **Next step:** Phase 3 - Implement toSubstTyped using these lemmas
 -/
-

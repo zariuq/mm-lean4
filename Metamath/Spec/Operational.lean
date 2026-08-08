@@ -61,7 +61,7 @@ inductive ProofValid (Γ : Database) : Frame → List Expr → List ProofStep �
 
   | useAxiom : ∀ fr stack steps l fr' e σ,
       Γ l = some (fr', e) →
-      dvOK fr.vars fr'.dv fr.dv σ →  -- Per §4.2.5: callee DV in caller context
+      dvOK fr.vars fr'.dv fr.dv σ →  -- Per §4.2.4: callee DV in caller context
       -- Type preservation: substitution respects floating hypothesis typecodes
       (∀ c v, Hyp.floating c v ∈ fr'.hyps → (σ v).typecode = c) →
       ProofValid Γ fr stack steps →
@@ -76,8 +76,9 @@ inductive ProofValid (Γ : Database) : Frame → List Expr → List ProofStep �
 
 /-! ## Provability (Operational Definition)
 
-Per §4.2.6 and §4.3: An assertion is provable if there exists a valid proof
-sequence that produces a singleton stack containing the assertion.
+Per §4.2.6 and the formal verification algorithm in §4.1.4, an assertion is
+provable if there exists a valid proof sequence that produces a singleton
+stack containing the assertion.
 -/
 
 /-- An assertion is provable if there exists a valid proof.
@@ -267,4 +268,3 @@ theorem Provable.mono_db
   exact ⟨steps, finalStack, h_valid.mono_db h_sub, h_eq⟩
 
 end Metamath.Spec
-

@@ -613,7 +613,7 @@ end Metamath.ParserInvariants
 /-! ## Validation Tests
 
 We can test these theorems empirically:
-- ✅ set.mm (109,220 objects) satisfies all properties
+- ✅ set.mm (67,764 objects under the current object accounting) satisfies all properties
 - ✅ demo0.mm (29 objects) satisfies all properties
 - ✅ Invalid databases are rejected by parser
 

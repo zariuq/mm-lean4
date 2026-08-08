@@ -29,6 +29,9 @@ theorem parseErrorCode_specClause_invalidLabel :
 theorem parseErrorCode_specClause_duplicateDisjointVariable :
     ParseErrorCode.specClause .duplicateDisjointVariable = .sec4_2_4_djvars := rfl
 
+theorem parseErrorCode_specClause_disjointStatementTooShort :
+    ParseErrorCode.specClause .disjointStatementTooShort = .sec4_2_4_djvars := rfl
+
 theorem parseErrorCode_specClause_tokenNotInScope :
     ParseErrorCode.specClause .tokenNotInScope = .sec4_2_4_djvars := rfl
 
@@ -89,6 +92,13 @@ theorem duplicateDisjointVariable_violation_implies_sec4_2_4_duplicate
   intro h
   simpa [DB.Sec4_2_4_DjvarsDuplicateViolation] using h
 
+theorem disjointStatementTooShort_violation_implies_sec4_2_4_arity
+    (s : DB) :
+    s.DisjointStatementTooShortViolation →
+    s.Sec4_2_4_DjvarsArityViolation := by
+  intro h
+  simpa [DB.Sec4_2_4_DjvarsArityViolation] using h
+
 theorem tokenNotInScope_violation_implies_sec4_2_4_scope
     (s : DB) :
     s.TokenNotInScopeViolation →
@@ -119,6 +129,13 @@ theorem checkBytes_duplicateDisjointVariable_implies_clause
     (checkBytes arr config).ParserSpecClauseViolation .sec4_2_4_djvars := by
   intro h_code
   exact ⟨.duplicateDisjointVariable, h_code, rfl⟩
+
+theorem checkBytes_disjointStatementTooShort_implies_clause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .disjointStatementTooShort →
+    (checkBytes arr config).ParserSpecClauseViolation .sec4_2_4_djvars := by
+  intro h_code
+  exact ⟨.disjointStatementTooShort, h_code, rfl⟩
 
 theorem checkBytes_tokenNotInScope_implies_clause
     (arr : ByteArray) (config : ModeConfig) :

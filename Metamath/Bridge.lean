@@ -68,7 +68,7 @@ Complex proofs remain in Kernel.lean:
 1. Clear separation: definitions vs. proofs
 2. Easier to understand: thin interface layer
 3. Follows best practices: keep verification separate from definitions
-4. Matches Codex architecture: Bridge was a separate module
+4. Preserves the existing architecture: Bridge remains a separate module
 
 **Why keep proofs in Kernel?**
 1. Verification theorems need checkHyp infrastructure
@@ -88,4 +88,3 @@ To complete Phase 3:
 
 **Estimated remaining:** ~150-200 lines of Kernel.lean updates
 -/
-

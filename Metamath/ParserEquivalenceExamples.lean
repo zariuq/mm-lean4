@@ -70,7 +70,7 @@ theorem recommended_usage_soundness_supported_total
       ∃ (proof : Array String) (pr_final : Verify.ProofState) (f' : Verify.Formula),
         proof.foldlM (fun pr step => Verify.DB.stepNormal (Verify.checkBytes bytes) pr step)
           ⟨⟨0, 0⟩, label, f, (Verify.checkBytes bytes).frame, #[], #[],
-           Verify.ProofTokenParser.normal⟩ = Except.ok pr_final ∧
+           Verify.ProofTokenParser.normal, false⟩ = Except.ok pr_final ∧
         pr_final.stack.size = 1 ∧
         pr_final.stack[0]? = some f' ∧
         toExpr f' = toExpr f) :
@@ -80,7 +80,7 @@ theorem recommended_usage_soundness_supported_total
         (toDatabaseTotal (Verify.checkBytes bytes))
         fr
         (exprToFormula (varMapOfFrame fr) (toExpr f)) := by
-  exact (verify_parser_acceptance_iff_supported_semantic_provable_total
+  exact (proofChecker_normal_iff_supported_semantic_provable_in_parsedDB
     bytes label f h_success).1 h_accept
 
 /-- Recommended soundness-first template to canonical semantics:
@@ -94,7 +94,7 @@ theorem recommended_usage_soundness_semantic_total
       ∃ (proof : Array String) (pr_final : Verify.ProofState) (f' : Verify.Formula),
         proof.foldlM (fun pr step => Verify.DB.stepNormal (Verify.checkBytes bytes) pr step)
           ⟨⟨0, 0⟩, label, f, (Verify.checkBytes bytes).frame, #[], #[],
-           Verify.ProofTokenParser.normal⟩ = Except.ok pr_final ∧
+           Verify.ProofTokenParser.normal, false⟩ = Except.ok pr_final ∧
         pr_final.stack.size = 1 ∧
         pr_final.stack[0]? = some f' ∧
         toExpr f' = toExpr f) :
@@ -104,7 +104,7 @@ theorem recommended_usage_soundness_semantic_total
         (dbToAxioms (toDatabaseTotal (Verify.checkBytes bytes)))
         (frameToContext fr)
         (exprToFormula (varMapOfFrame fr) (toExpr f)) := by
-  exact verify_parser_acceptance_implies_semantic_provable_total
+  exact proofChecker_normal_implies_semantic_provable_in_parsedDB
     bytes label f h_success h_accept
 
 /-- Recommended completeness-first template: a supported semantic witness
@@ -124,11 +124,11 @@ theorem recommended_usage_completeness_supported_total
     ∃ (proof : Array String) (pr_final : Verify.ProofState) (f' : Verify.Formula),
       proof.foldlM (fun pr step => Verify.DB.stepNormal (Verify.checkBytes bytes) pr step)
         ⟨⟨0, 0⟩, label, f, (Verify.checkBytes bytes).frame, #[], #[],
-         Verify.ProofTokenParser.normal⟩ = Except.ok pr_final ∧
+         Verify.ProofTokenParser.normal, false⟩ = Except.ok pr_final ∧
       pr_final.stack.size = 1 ∧
       pr_final.stack[0]? = some f' ∧
       toExpr f' = toExpr f := by
-  exact (verify_parser_acceptance_iff_supported_semantic_provable_total
+  exact (proofChecker_normal_iff_supported_semantic_provable_in_parsedDB
     bytes label f h_success).2 ⟨fr, h_frame, h_supported⟩
 
 /-- Usage example: `soundDefault` is prefix-certified, so the certified API applies. -/
@@ -148,10 +148,34 @@ theorem parserEquivalence_soundDefault_example
         (({ (default : Verify.ParserState) with
           db := { (default : Verify.DB) with config := .soundDefault } }).feedAll 0 arr).db.frame = some fr ∧
       Spec.Provable Γ fr (toExpr pr.fmla) := by
-  exact Metamath.PrefixWitnessCheckBytes.checkBytes_done_finishProofEvent_certified
+  exact Metamath.PrefixWitnessCheckBytes.checkBytes_finalState_finishProofEvent_certified
     arr .soundDefault Verify.ModeConfig.soundDefault_prefixCertified h_success pos tk pr h_evt
 
-/-- Usage example: `knife` is also prefix-certified. -/
+/-- **Headline usage**: an accepted run under a prefix-certified profile gives the
+fold-wide guarantee — every finish-proof event in the feed loop was checked
+against the database as it stood before that theorem was inserted.
+
+This, not the final-state eliminators below, is what acceptance means. -/
+theorem parserEquivalence_soundDefault_headline
+    (arr : ByteArray)
+    (h_success : (Verify.checkBytes arr .soundDefault).error? = none) :
+    Metamath.PrefixWitnessCheckBytes.AllFeedAllEventsProvable 0 arr
+      { (default : Verify.ParserState) with
+        db := { (default : Verify.DB) with config := .soundDefault } } :=
+  Metamath.PrefixWitnessCheckBytes.checkBytes_feedEvents_prefix_provable_certified
+    arr .soundDefault Verify.ModeConfig.soundDefault_prefixCertified h_success
+
+/-- The same headline guarantee under the `knife` profile. -/
+theorem parserEquivalence_knife_headline
+    (arr : ByteArray)
+    (h_success : (Verify.checkBytes arr .knife).error? = none) :
+    Metamath.PrefixWitnessCheckBytes.AllFeedAllEventsProvable 0 arr
+      { (default : Verify.ParserState) with
+        db := { (default : Verify.DB) with config := .knife } } :=
+  Metamath.PrefixWitnessCheckBytes.checkBytes_feedEvents_prefix_provable_certified
+    arr .knife Verify.ModeConfig.knife_prefixCertified h_success
+
+/-- Narrow example (final-state eliminator only): `knife` is also prefix-certified. -/
 theorem parserEquivalence_knife_example
     (arr : ByteArray)
     (h_success : (Verify.checkBytes arr .knife).error? = none)
@@ -168,7 +192,7 @@ theorem parserEquivalence_knife_example
         (({ (default : Verify.ParserState) with
           db := { (default : Verify.DB) with config := .knife } }).feedAll 0 arr).db.frame = some fr ∧
       Spec.Provable Γ fr (toExpr pr.fmla) := by
-  exact Metamath.PrefixWitnessCheckBytes.checkBytes_done_finishProofEvent_certified
+  exact Metamath.PrefixWitnessCheckBytes.checkBytes_finalState_finishProofEvent_certified
     arr .knife Verify.ModeConfig.knife_prefixCertified h_success pos tk pr h_evt
 
 /-- Semantic canary (canonical `Provable.var` behavior):

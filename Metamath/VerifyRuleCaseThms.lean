@@ -20,6 +20,15 @@ theorem checkBytes_parseErrorCode?_duplicateDisjointVariable_violation
   have h_rule := checkBytes_parseErrorCode?_ruleSemantic_sound arr config .duplicateDisjointVariable h_code
   simpa [DB.RuleSemanticViolation, DB.DuplicateDisjointVariableViolation] using h_rule
 
+theorem checkBytes_parseErrorCode?_disjointStatementTooShort_violation
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .disjointStatementTooShort →
+    (checkBytes arr config).DisjointStatementTooShortViolation := by
+  intro h_code
+  have h_rule :=
+    checkBytes_parseErrorCode?_ruleSemantic_sound arr config .disjointStatementTooShort h_code
+  simpa [DB.RuleSemanticViolation, DB.DisjointStatementTooShortViolation] using h_rule
+
 theorem checkBytes_parseErrorCode?_tokenNotInScope_violation
     (arr : ByteArray) (config : ModeConfig) :
     (checkBytes arr config).parseErrorCode? = some .tokenNotInScope →
@@ -339,6 +348,14 @@ theorem checkBytes_parseErrorCode?_duplicateDisjointVariable_ruleClause
     (checkBytes arr config).RuleClauseSemanticViolation .duplicateDisjointVariable := by
   intro h_code
   exact checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .duplicateDisjointVariable h_code
+
+theorem checkBytes_parseErrorCode?_disjointStatementTooShort_ruleClause
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .disjointStatementTooShort →
+    (checkBytes arr config).RuleClauseSemanticViolation .disjointStatementTooShort := by
+  intro h_code
+  exact
+    checkBytes_parseErrorCode?_ruleClauseSemantic_sound arr config .disjointStatementTooShort h_code
 
 theorem checkBytes_parseErrorCode?_tokenNotInScope_ruleClause
     (arr : ByteArray) (config : ModeConfig) :

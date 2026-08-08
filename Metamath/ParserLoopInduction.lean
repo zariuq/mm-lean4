@@ -90,14 +90,17 @@ theorem ParserState_mkErrorFromEvidence_sets_error_bool (s : ParserState) (pos :
   simp [ParserState.mkErrorFromEvidence, ParserState.withDB]
 
 /-- `requestInclude` always sets an interrupt-like parser error. -/
-theorem ParserState_requestInclude_sets_error (s : ParserState) (includePath : String) :
-    (s.requestInclude includePath).db.error? ≠ none := by
+theorem ParserState_requestInclude_sets_error (s : ParserState)
+    (resume : TokenParser) (includePath : String) :
+    (s.requestInclude resume includePath).db.error? ≠ none := by
   simp [ParserState.requestInclude]
 
 /-- Boolean form of `ParserState_requestInclude_sets_error`. -/
-theorem ParserState_requestInclude_sets_error_bool (s : ParserState) (includePath : String) :
-    (s.requestInclude includePath).db.error = true := by
-  exact (error_iff_error?_ne_none _).2 (ParserState_requestInclude_sets_error s includePath)
+theorem ParserState_requestInclude_sets_error_bool (s : ParserState)
+    (resume : TokenParser) (includePath : String) :
+    (s.requestInclude resume includePath).db.error = true := by
+  exact (error_iff_error?_ne_none _).2
+    (ParserState_requestInclude_sets_error s resume includePath)
 /-- label either preserves db or sets error -/
 theorem label_preserves_error (s : ParserState) (pos : Pos) (tk : ByteSlice) :
     s.db.error? ≠ none → (s.label pos tk).db.error? ≠ none := by
@@ -258,7 +261,7 @@ theorem finishProof_preserves_error (s : ParserState) (pr : ProofState) :
   intro h_err
   unfold ParserState.finishProof
   cases pr with
-  | mk pos l fmla fr saves stack ptp =>
+  | mk pos l fmla fr saves stack ptp incomplete =>
     simp only
     apply withAt_preserves_error
     simp only [Id.run, pure]
@@ -270,7 +273,8 @@ theorem finishProof_preserves_error (s : ParserState) (pr : ProofState) :
         · -- stack[0]! == fmla
           apply withDB_preserves_error?
           · intro h
-            exact ParserCorrectness.insert_preserves_error _ pos l (.assert fmla fr) h
+            simpa using ParserCorrectness.insert_preserves_error _ pos l
+              (.assert fmla fr) h
           · exact h_err
         · -- stack[0]! != fmla
           exact ParserState_mkErrorFromEvidence_sets_error ({ s with tokp := .start }) pos
@@ -283,7 +287,8 @@ theorem finishProof_preserves_error (s : ParserState) (pr : ProofState) :
       · split
         · apply withDB_preserves_error?
           · intro h
-            exact ParserCorrectness.insert_preserves_error _ pos l (.assert fmla fr) h
+            simpa using ParserCorrectness.insert_preserves_error _ pos l
+              (.assert fmla fr) h
           · exact h_err
         · exact ParserState_mkErrorFromEvidence_sets_error ({ s with tokp := .start }) pos
             (.theoremFinality (.theoremClaimMismatch fmla stack[0]!))
@@ -517,7 +522,7 @@ theorem feedToken_preserves_error (s : ParserState) (pos : Nat) (tk : ByteSlice)
           · exact h_err
           · exact label_preserves_error s (s.mkPos pos) tk h_err
         · exact label_preserves_error s (s.mkPos pos) tk h_err
-  | const =>
+  | const seen =>
     by_cases h_comment : tk.eqArray "$(".toAscii = true
     · simp [h_comment, h_err]
     · by_cases h_include : tk.eqArray "$[".toAscii = true
@@ -526,8 +531,13 @@ theorem feedToken_preserves_error (s : ParserState) (pos : Nat) (tk : ByteSlice)
         · exact ParserState_mkErrorFromEvidence_sets_error s (s.mkPos pos) _
         · exact h_err
       · simp [h_comment, h_include]
-        exact sym_preserves_error s (s.mkPos pos) tk .const h_err
-  | var =>
+        split
+        · split
+          · exact h_err
+          · exact ParserState_mkErrorFromEvidence_sets_error s
+              (s.mkPos pos) _
+        · exact sym_preserves_error s (s.mkPos pos) tk .const h_err
+  | var seen =>
     by_cases h_comment : tk.eqArray "$(".toAscii = true
     · simp [h_comment, h_err]
     · by_cases h_include : tk.eqArray "$[".toAscii = true
@@ -536,7 +546,12 @@ theorem feedToken_preserves_error (s : ParserState) (pos : Nat) (tk : ByteSlice)
         · exact ParserState_mkErrorFromEvidence_sets_error s (s.mkPos pos) _
         · exact h_err
       · simp [h_comment, h_include]
-        exact sym_preserves_error s (s.mkPos pos) tk .var h_err
+        split
+        · split
+          · exact h_err
+          · exact ParserState_mkErrorFromEvidence_sets_error s
+              (s.mkPos pos) _
+        · exact sym_preserves_error s (s.mkPos pos) tk .var h_err
   | djvars arr =>
     by_cases h_comment : tk.eqArray "$(".toAscii = true
     · simp [h_comment, h_err]
@@ -547,7 +562,10 @@ theorem feedToken_preserves_error (s : ParserState) (pos : Nat) (tk : ByteSlice)
         · exact h_err
       · simp [h_comment, h_include]
         split
-        · exact h_err
+        · split
+          · exact ParserState_mkErrorFromEvidence_sets_error
+              s (s.mkPos pos) _
+          · exact h_err
         · apply withMath_preserves_error
           · intro s' tk' h_err'
             exact djvars_loop_preserves_error arr s' (s.mkPos pos) tk' h_err'
@@ -568,7 +586,10 @@ theorem feedToken_preserves_error (s : ParserState) (pos : Nat) (tk : ByteSlice)
             simp only [Id.run]
             split
             · exact h_err'
-            · exact h_err'
+            · -- the `.var` arm now gates on activity: both sides keep the error set
+              split
+              · exact h_err'
+              · exact ParserState_mkErrorFromEvidence_sets_error s' (s.mkPos pos) _
             · split <;> exact ParserState_mkErrorFromEvidence_sets_error s' (s.mkPos pos) _
           · exact h_err
   | label pos' lab =>
@@ -588,7 +609,7 @@ theorem feedToken_preserves_error (s : ParserState) (pos : Nat) (tk : ByteSlice)
           · exact h_err
           · exact ParserState_mkErrorFromEvidence_sets_error s pos' _
         · exact ParserState_mkErrorFromEvidence_sets_error s pos' _
-  | includePath includePos =>
+  | includePath resume includePos =>
     by_cases h_comment : tk.eqArray "$(".toAscii = true
     · simp [h_comment, h_err]
     · by_cases h_include : tk.eqArray "$[".toAscii = true
@@ -604,9 +625,9 @@ theorem feedToken_preserves_error (s : ParserState) (pos : Nat) (tk : ByteSlice)
           split
           · exact ParserState_mkErrorFromEvidence_sets_error s includePos _
           · split
-            · exact ParserState_requestInclude_sets_error s _
+            · exact ParserState_requestInclude_sets_error s resume _
             · exact h_err
-  | includeClose includePos includePath =>
+  | includeClose resume includePos includePath =>
     by_cases h_comment : tk.eqArray "$(".toAscii = true
     · simp [h_comment, h_err]
     · by_cases h_include : tk.eqArray "$[".toAscii = true
@@ -616,7 +637,7 @@ theorem feedToken_preserves_error (s : ParserState) (pos : Nat) (tk : ByteSlice)
         · exact h_err
       · simp [h_comment, h_include]
         split
-        · exact ParserState_requestInclude_sets_error s includePath
+        · exact ParserState_requestInclude_sets_error s resume includePath
         · exact ParserState_mkErrorFromEvidence_sets_error s includePos _
   | proof pr =>
     by_cases h_comment : tk.eqArray "$(".toAscii = true
@@ -1341,7 +1362,7 @@ theorem finishProof_hyps_behavior (s : ParserState) (pr : ProofState) :
     (s.finishProof pr).db.frame.hyps = s.db.frame.hyps ∨
     (s.finishProof pr).db.error = true := by
   unfold ParserState.finishProof
-  obtain ⟨pos, l, fmla, fr, _, stack, ptp⟩ := pr
+  obtain ⟨pos, l, fmla, fr, _, stack, ptp, hInc⟩ := pr
   -- Work with the inner computation; then lift through `withAt`.
   let f : Unit → ParserState := fun _ => Id.run do
     let s := { s with tokp := .start }
@@ -1356,7 +1377,7 @@ theorem finishProof_hyps_behavior (s : ParserState) (pr : ProofState) :
     unless stack[0]! == fmla do
       return s.mkErrorFromEvidence pos (.theoremFinality
         (.theoremClaimMismatch fmla stack[0]!))
-    s.withDB fun db => db.insert pos l (.assert fmla fr)
+    s.withDB fun db => (db.insert pos l (.assert fmla fr)).recordIncomplete hInc l
   have h_inner : (f ()).db.frame.hyps = s.db.frame.hyps ∨ (f ()).db.error = true := by
     -- Case split on `ptp`; only `.normal` and `.compressed 0` can succeed.
     cases ptp with
@@ -1394,7 +1415,10 @@ theorem finishProof_hyps_behavior (s : ParserState) (pr : ProofState) :
                     left
                     -- Success path: reduce to `DB.insert` and use `insert_preserves_frame`.
                     simp [f, Id.run, pure, h_size, h_claim]
-                    exact congrArg Frame.hyps (insert_preserves_frame s.db pos l (.assert fmla fr))
+                    exact (congrArg Frame.hyps (DB.recordIncomplete_frame
+                        (s.db.insert pos l (.assert fmla fr)) hInc l)).trans
+                      (congrArg Frame.hyps (insert_preserves_frame s.db pos l
+                        (.assert fmla fr)))
         | succ n =>
             -- Compressed with nonzero state: parse error.
             right
@@ -1421,7 +1445,10 @@ theorem finishProof_hyps_behavior (s : ParserState) (pr : ProofState) :
             | true =>
                 left
                 simp [f, Id.run, pure, h_size, h_claim]
-                exact congrArg Frame.hyps (insert_preserves_frame s.db pos l (.assert fmla fr))
+                exact (congrArg Frame.hyps (DB.recordIncomplete_frame
+                    (s.db.insert pos l (.assert fmla fr)) hInc l)).trans
+                  (congrArg Frame.hyps (insert_preserves_frame s.db pos l
+                    (.assert fmla fr)))
   cases h_inner with
   | inl hhyps =>
       left
@@ -1653,7 +1680,7 @@ theorem feedToken_frame_behavior (s : ParserState) (pos : Nat) (tk : ByteSlice) 
           cases label_frame_behavior s (s.mkPos pos) tk with
           | inl h => left; exact congrArg Frame.hyps h
           | inr h => right; right; right; exact h
-  | const =>
+  | const seen =>
     by_cases h_comment : tk.eqArray "$(".toAscii = true
     · left; simp [h_comment]
     · by_cases h_include : tk.eqArray "$[".toAscii = true
@@ -1664,10 +1691,16 @@ theorem feedToken_frame_behavior (s : ParserState) (pos : Nat) (tk : ByteSlice) 
         · left; rfl
       ·
         simp [h_comment, h_include]
-        cases sym_frame_behavior s (s.mkPos pos) tk .const with
-        | inl h => left; exact congrArg Frame.hyps h
-        | inr h => right; right; right; exact h
-  | var =>
+        split
+        · split
+          · left; rfl
+          · right; right; right
+            exact ParserState_mkErrorFromEvidence_sets_error_bool s
+              (s.mkPos pos) _
+        · cases sym_frame_behavior s (s.mkPos pos) tk .const with
+          | inl h => left; exact congrArg Frame.hyps h
+          | inr h => right; right; right; exact h
+  | var seen =>
     by_cases h_comment : tk.eqArray "$(".toAscii = true
     · left; simp [h_comment]
     · by_cases h_include : tk.eqArray "$[".toAscii = true
@@ -1678,9 +1711,15 @@ theorem feedToken_frame_behavior (s : ParserState) (pos : Nat) (tk : ByteSlice) 
         · left; rfl
       ·
         simp [h_comment, h_include]
-        cases sym_frame_behavior s (s.mkPos pos) tk .var with
-        | inl h => left; exact congrArg Frame.hyps h
-        | inr h => right; right; right; exact h
+        split
+        · split
+          · left; rfl
+          · right; right; right
+            exact ParserState_mkErrorFromEvidence_sets_error_bool s
+              (s.mkPos pos) _
+        · cases sym_frame_behavior s (s.mkPos pos) tk .var with
+          | inl h => left; exact congrArg Frame.hyps h
+          | inr h => right; right; right; exact h
   | djvars arr =>
     by_cases h_comment : tk.eqArray "$(".toAscii = true
     · left; simp [h_comment]
@@ -1693,7 +1732,12 @@ theorem feedToken_frame_behavior (s : ParserState) (pos : Nat) (tk : ByteSlice) 
       ·
         simp [h_comment, h_include]
         split
-        · left; rfl
+        · split
+          · left
+            simp [ParserState.mkErrorFromEvidence,
+              ParserState.withDB, DB.mkErrorFromEvidence,
+              DB.mkErrorWithEvidence]
+          · left; rfl
         ·
           cases djvars_withMath_hyps_behavior arr s (s.mkPos pos) tk with
           | inl h => left; exact h
@@ -1748,8 +1792,15 @@ theorem feedToken_frame_behavior (s : ParserState) (pos : Nat) (tk : ByteSlice) 
                   left
                   simp [Id.run, Bind.bind]
                 | var _ =>
-                  left
-                  simp [Id.run, Bind.bind]
+                  cases h_act : s.db.isActiveVar tkStr with
+                  | true =>
+                    left
+                    simp [Id.run, Bind.bind]
+                  | false =>
+                    right; right; right
+                    simp [Id_pure_eq]
+                    exact ParserState_mkErrorFromEvidence_sets_error_bool s (s.mkPos pos)
+                      (.scopeDecl (.tokenNotInScope tkStr))
                 | hyp _ _ _ =>
                   cases h_gate : s.db.mathSymbolViolation? tkStr with
                   | some err =>
@@ -1799,7 +1850,7 @@ theorem feedToken_frame_behavior (s : ParserState) (pos : Nat) (tk : ByteSlice) 
         · right; right; right
           simp [h_kw]
           exact ParserState_mkErrorFromEvidence_sets_error_bool s pos' _
-  | includePath includePos =>
+  | includePath resume includePos =>
     by_cases h_comment : tk.eqArray "$(".toAscii = true
     · left; simp [h_comment]
     · by_cases h_include : tk.eqArray "$[".toAscii = true
@@ -1820,9 +1871,9 @@ theorem feedToken_frame_behavior (s : ParserState) (pos : Nat) (tk : ByteSlice) 
             exact ParserState_mkErrorFromEvidence_sets_error_bool s includePos _
           · split
             · right; right; right
-              exact ParserState_requestInclude_sets_error_bool s _
+              exact ParserState_requestInclude_sets_error_bool s resume _
             · left; rfl
-  | includeClose includePos includePath =>
+  | includeClose resume includePos includePath =>
     by_cases h_comment : tk.eqArray "$(".toAscii = true
     · left; simp [h_comment]
     · by_cases h_include : tk.eqArray "$[".toAscii = true
@@ -1835,7 +1886,7 @@ theorem feedToken_frame_behavior (s : ParserState) (pos : Nat) (tk : ByteSlice) 
         simp [h_comment, h_include]
         split
         · right; right; right
-          exact ParserState_requestInclude_sets_error_bool s includePath
+          exact ParserState_requestInclude_sets_error_bool s resume includePath
         · right; right; right
           exact ParserState_mkErrorFromEvidence_sets_error_bool s includePos _
   | proof pr =>

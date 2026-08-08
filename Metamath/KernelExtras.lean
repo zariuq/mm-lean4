@@ -50,7 +50,7 @@ This eliminates eta-expansion issues between different lambda representations:
 
 Used throughout checkHyp proofs for allM/match alignment.
 -/
-@[simp] theorem pair_eta₂ {α β γ} (f : α → β → γ) :
+theorem pair_eta₂ {α β γ} (f : α → β → γ) :
   (fun p : α × β => f p.1 p.2) = (fun (a, b) => f a b) := rfl
 
 /-! ## Arithmetic helpers for offset calculations -/
@@ -235,4 +235,3 @@ that `k == k'` would imply `k = k'` for lawful `BEq`, contradicting `h`.
 end HashMap
 
 end KernelExtras
-

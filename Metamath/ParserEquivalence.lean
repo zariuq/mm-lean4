@@ -7,8 +7,8 @@ For compact usage patterns, see `Metamath/ParserEquivalenceExamples.lean`.
 
 **Main results (no project-declared axioms, no sorries):**
 
-1. `verify_parser_acceptance_iff_spec_provable` — Normal-mode biconditional
-2. `verify_parser_acceptance_any_mode_iff_spec_provable` — Any-mode biconditional
+1. `proofChecker_normal_acceptance_iff_specProvable_in_parsedDB` — Normal-mode biconditional
+2. `proofChecker_anyMode_acceptance_iff_specProvable_in_parsedDB` — Any-mode biconditional
 3. `ProofReachableZ_iff_NormalProofReachable` — Mode equivalence
 4. `compressed_completeness_of_normal_completeness` — Compressed completeness
 5. `toExpr_eq_implies_formula_eq` — Strict formula equality upgrade
@@ -18,11 +18,11 @@ For compact usage patterns, see `Metamath/ParserEquivalenceExamples.lean`.
 9. `parser_supported_semantic_to_operational_total` — Same completeness with total DB extraction
 10. `parser_operational_to_supported_total` — Parser-specialized operational -> local-support bridge
 11. `parser_operational_to_semantic_total` — Parser-specialized unconditional soundness (total DB)
-12. `verify_parser_acceptance_iff_supported_semantic_provable_total` — Normal acceptance <-> supported semantic provability (total DB)
-13. `verify_parser_acceptance_any_mode_iff_supported_semantic_provable_total` — Any-mode acceptance <-> supported semantic provability (total DB)
-14. `verify_parser_acceptance_implies_semantic_provable_total` — Normal acceptance -> canonical semantic provability (total DB)
-15. `verify_parser_acceptance_any_mode_implies_semantic_provable_total` — Any-mode acceptance -> canonical semantic provability (total DB)
-16. `parser_operational_iff_semantic(_total)` and `verify_parser_acceptance_*_iff_semantic_provable_total` — legacy global-support compatibility wrappers
+12. `proofChecker_normal_iff_supported_semantic_provable_in_parsedDB` — Normal acceptance <-> supported semantic provability (total DB)
+13. `proofChecker_anyMode_iff_supported_semantic_provable_in_parsedDB` — Any-mode acceptance <-> supported semantic provability (total DB)
+14. `proofChecker_normal_implies_semantic_provable_in_parsedDB` — Normal acceptance -> canonical semantic provability (total DB)
+15. `proofChecker_anyMode_implies_semantic_provable_in_parsedDB` — Any-mode acceptance -> canonical semantic provability (total DB)
+16. `parser_operational_iff_semantic(_total)` and `proofChecker__*_iff_semantic_provable_total` — legacy global-support compatibility wrappers
 -/
 
 import Metamath.ParserAnyModeEquivalence
@@ -30,18 +30,18 @@ import Metamath.ParserAnyModeEquivalence
 /-!
 ## Theorem Map: Trust Chain Layers
 
-### Layer 1 — Bytes-level biconditionals (completeness + soundness)
-- `verify_parser_acceptance_iff_spec_provable` (KernelClean.lean:10976)
+### Layer 1 — Fixed-parsed-database checker-adequacy biconditionals
+- `proofChecker_normal_acceptance_iff_specProvable_in_parsedDB` (KernelClean.lean:10976)
   Normal-mode `foldlM stepNormal` ↔ `Spec.Provable`. Canonical biconditional.
-- `verify_parser_acceptance_any_mode_iff_spec_provable` (ParserAnyModeEquivalence.lean:185)
+- `proofChecker_anyMode_acceptance_iff_specProvable_in_parsedDB` (ParserAnyModeEquivalence.lean:185)
   (Normal `foldlM` ∨ `ProofReachableZ`) ↔ `Spec.Provable`. Mode-agnostic wrapper.
-- `verify_parser_acceptance_iff_supported_semantic_provable_total` (this file):
+- `proofChecker_normal_iff_supported_semantic_provable_in_parsedDB` (this file):
   normal-mode acceptance ↔ supported semantic provability over `toDatabaseTotal`.
-- `verify_parser_acceptance_any_mode_iff_supported_semantic_provable_total` (this file):
+- `proofChecker_anyMode_iff_supported_semantic_provable_in_parsedDB` (this file):
   any-mode acceptance ↔ supported semantic provability over `toDatabaseTotal`.
-- `verify_parser_acceptance_implies_semantic_provable_total` (this file):
+- `proofChecker_normal_implies_semantic_provable_in_parsedDB` (this file):
   normal-mode acceptance → canonical semantic provability over `toDatabaseTotal`.
-- `verify_parser_acceptance_any_mode_implies_semantic_provable_total` (this file):
+- `proofChecker_anyMode_implies_semantic_provable_in_parsedDB` (this file):
   any-mode acceptance → canonical semantic provability over `toDatabaseTotal`.
 
 ### Layer 2 — Token-trace soundness (parser execution → Spec.Provable)
@@ -78,8 +78,11 @@ These prove that actual parser execution implies correctness — no abstract rea
   successful `checkBytesCore` run implies all feed/feedAll finishProof events are prefix-provable
 - `checkBytes_prefix_provenance` (PrefixWitnessCheckBytes.lean:2033):
   lifts event-lift theorem to `checkBytes`
-- `checkBytes_done_finishProofEvent_prefix_provable` (PrefixWitnessCheckBytes.lean:2068):
-  direct eliminator for concrete `FinishProofEvent` at final `feedAll` state
+- `checkBytes_feedEvents_prefix_provable` (PrefixWitnessCheckBytes.lean):
+  the fold-wide statement — every finish-proof event anywhere in the feed loop is
+  provable in the database as it stood at that event (pre-insertion)
+- `checkBytes_finalState_finishProofEvent_prefix_provable` (PrefixWitnessCheckBytes.lean):
+  narrow eliminator for a `FinishProofEvent` at the final `feedAll` state only
 
 ### How the layers connect
 - Layer 1 biconditionals are the canonical completeness results (bytes → `Spec.Provable` ↔).
@@ -96,13 +99,13 @@ For new integrations, use this sequence:
 1. Completeness target:
    build/provide `SupportedProvable ... (exprToFormula ... (toExpr f))`,
    then call `parser_supported_semantic_to_operational_total`, or directly use
-   `verify_parser_acceptance_iff_supported_semantic_provable_total`.
+   `proofChecker_normal_iff_supported_semantic_provable_in_parsedDB`.
 2. Soundness target to canonical semantics:
    from acceptance witnesses, call
-   `verify_parser_acceptance_implies_semantic_provable_total`
+   `proofChecker_normal_implies_semantic_provable_in_parsedDB`
    (or any-mode analogue).
 3. Any-mode completeness:
-   use `verify_parser_acceptance_any_mode_iff_supported_semantic_provable_total`.
+   use `proofChecker_anyMode_iff_supported_semantic_provable_in_parsedDB`.
 4. Use global-support wrappers only for legacy downstream code that still
    depends on `SemanticFrameSupported`.
 
@@ -125,13 +128,13 @@ open Metamath.Spec.Equivalence
 -- Users can access these via `open Metamath.ParserEquivalence`.
 export Metamath.Kernel
   (toDatabase toDatabaseTotal toFrame toExpr
-   verify_parser_acceptance_iff_spec_provable
+   proofChecker_normal_acceptance_iff_specProvable_in_parsedDB
    verify_parser_sound_of_impl_acceptance_equiv
    verify_parser_accepts_of_spec_provable
    parser_construction_wf_scoped)
 
 export Metamath.ParserAnyModeEquivalence
-  (verify_parser_acceptance_any_mode_iff_spec_provable
+  (proofChecker_anyMode_acceptance_iff_specProvable_in_parsedDB
    ProofReachableZ_iff_NormalProofReachable
    compressed_completeness_of_normal_completeness
    finishProof_success_stack_conditions)
@@ -218,7 +221,7 @@ structure CompressedTraceAccepts (s : ParserState) (label : String) (fmla : Form
     (tk_close : ByteSlice) (comp_toks : List ByteSlice)
     (all_acts : List ParserState.CompressedAction)
     (pr₀ pr₁ pr₂ pr₃ pr_final : ProofState) : Prop where
-  init : pr₀ = ⟨⟨0,0⟩, label, fmla, s.db.frame, #[], #[], .start⟩
+  init : pr₀ = ⟨⟨0,0⟩, label, fmla, s.db.frame, #[], #[], .start, false⟩
   open_ok : (s.feedProof tk_open pr₀).db.error? = none
   is_open : tk_open.eqArray "(".toAscii
   open_tokp : (s.feedProof tk_open pr₀).tokp = .proof pr₁
@@ -402,14 +405,14 @@ private theorem parser_structural_premises
 The next wrappers intentionally preserve the old public API shape that
 requires a global support premise:
 - `parser_operational_iff_semantic(_total)`
-- `verify_parser_acceptance_iff_semantic_provable_total`
-- `verify_parser_acceptance_any_mode_iff_semantic_provable_total`
+- `proofChecker_normal_iff_semantic_provable_in_parsedDB`
+- `proofChecker_anyMode_iff_semantic_provable_in_parsedDB`
 
 New code should prefer the supported-first and unconditional-soundness APIs:
 - completeness: `parser_supported_semantic_to_operational(_total)` and
-  `verify_parser_acceptance_*_iff_supported_semantic_provable_total`
+  `proofChecker_*_iff_supported_semantic_provable_in_parsedDB`
 - soundness: `parser_operational_to_semantic(_total)` and
-  `verify_parser_acceptance*_implies_semantic_provable_total`
+  `proofChecker_*_implies_semantic_provable_in_parsedDB`
 - operational-to-supported bridge:
   `parser_operational_to_supported(_total)` -/
 
@@ -630,7 +633,7 @@ private theorem parser_spec_exists_iff_semantic_total_exists
 /-- Legacy compatibility wrapper: normal-mode parser acceptance is equivalent
 to canonical semantic provability, using `toDatabaseTotal` as the canonical DB
 extraction (requires global support bridge). -/
-theorem verify_parser_acceptance_iff_semantic_provable_total
+theorem proofChecker_normal_iff_semantic_provable_in_parsedDB
     (bytes : ByteArray)
     (label : String)
     (f : Verify.Formula)
@@ -639,7 +642,7 @@ theorem verify_parser_acceptance_iff_semantic_provable_total
       SemanticFrameSupported (toDatabaseTotal (Verify.checkBytes bytes)) fr) :
     (∃ (proof : Array String) (pr_final : Verify.ProofState) (f' : Verify.Formula),
       proof.foldlM (fun pr step => Verify.DB.stepNormal (Verify.checkBytes bytes) pr step)
-        ⟨⟨0, 0⟩, label, f, (Verify.checkBytes bytes).frame, #[], #[], Verify.ProofTokenParser.normal⟩ =
+        ⟨⟨0, 0⟩, label, f, (Verify.checkBytes bytes).frame, #[], #[], Verify.ProofTokenParser.normal, false⟩ =
           Except.ok pr_final ∧
       pr_final.stack.size = 1 ∧
       pr_final.stack[0]? = some f' ∧
@@ -651,13 +654,13 @@ theorem verify_parser_acceptance_iff_semantic_provable_total
         (dbToAxioms (toDatabaseTotal (Verify.checkBytes bytes)))
         (frameToContext fr)
         (exprToFormula (varMapOfFrame fr) (toExpr f))) :=
-  (verify_parser_acceptance_iff_spec_provable bytes label f h_success).trans
+  (proofChecker_normal_acceptance_iff_specProvable_in_parsedDB bytes label f h_success).trans
     (parser_spec_exists_iff_semantic_total_exists bytes f h_success h_supported)
 
 /-- Legacy compatibility wrapper: any-mode parser acceptance (normal ∨ compressed)
 is equivalent to canonical semantic provability, using `toDatabaseTotal` as the
 canonical DB extraction (requires global support bridge). -/
-theorem verify_parser_acceptance_any_mode_iff_semantic_provable_total
+theorem proofChecker_anyMode_iff_semantic_provable_in_parsedDB
     (bytes : ByteArray)
     (label : String)
     (f : Verify.Formula)
@@ -667,7 +670,7 @@ theorem verify_parser_acceptance_any_mode_iff_semantic_provable_total
     ((∃ (proof : Array String) (pr_final : Verify.ProofState) (f' : Verify.Formula),
       proof.foldlM (fun pr step => Verify.DB.stepNormal (Verify.checkBytes bytes) pr step)
         ⟨⟨0, 0⟩, label, f, (Verify.checkBytes bytes).frame, #[], #[],
-         Verify.ProofTokenParser.normal⟩ = Except.ok pr_final ∧
+         Verify.ProofTokenParser.normal, false⟩ = Except.ok pr_final ∧
       pr_final.stack.size = 1 ∧
       pr_final.stack[0]? = some f' ∧
       toExpr f' = toExpr f)
@@ -683,7 +686,7 @@ theorem verify_parser_acceptance_any_mode_iff_semantic_provable_total
         (dbToAxioms (toDatabaseTotal (Verify.checkBytes bytes)))
         (frameToContext fr)
         (exprToFormula (varMapOfFrame fr) (toExpr f))) :=
-    (verify_parser_acceptance_any_mode_iff_spec_provable bytes label f h_success).trans
+    (proofChecker_anyMode_acceptance_iff_specProvable_in_parsedDB bytes label f h_success).trans
     (parser_spec_exists_iff_semantic_total_exists bytes f h_success h_supported)
 
 /-- Parser success turns the Spec-level existential witness into a semantic
@@ -765,14 +768,14 @@ private theorem parser_spec_exists_iff_supported_total_exists
 
 /-- Normal-mode parser acceptance implies canonical semantic provability over
 `toDatabaseTotal` (unconditional soundness, no global support premise). -/
-theorem verify_parser_acceptance_implies_semantic_provable_total
+theorem proofChecker_normal_implies_semantic_provable_in_parsedDB
     (bytes : ByteArray)
     (label : String)
     (f : Verify.Formula)
     (h_success : (Verify.checkBytes bytes).error? = none) :
     (∃ (proof : Array String) (pr_final : Verify.ProofState) (f' : Verify.Formula),
       proof.foldlM (fun pr step => Verify.DB.stepNormal (Verify.checkBytes bytes) pr step)
-        ⟨⟨0, 0⟩, label, f, (Verify.checkBytes bytes).frame, #[], #[], Verify.ProofTokenParser.normal⟩ =
+        ⟨⟨0, 0⟩, label, f, (Verify.checkBytes bytes).frame, #[], #[], Verify.ProofTokenParser.normal, false⟩ =
           Except.ok pr_final ∧
       pr_final.stack.size = 1 ∧
       pr_final.stack[0]? = some f' ∧
@@ -790,12 +793,12 @@ theorem verify_parser_acceptance_implies_semantic_provable_total
         toDatabase (Verify.checkBytes bytes) = some Γ ∧
         toFrame (Verify.checkBytes bytes) (Verify.checkBytes bytes).frame = some fr ∧
         Spec.Provable Γ fr (toExpr f) :=
-    (verify_parser_acceptance_iff_spec_provable bytes label f h_success).1 h_accept
+    (proofChecker_normal_acceptance_iff_specProvable_in_parsedDB bytes label f h_success).1 h_accept
   exact parser_spec_exists_implies_semantic_total_exists bytes f h_success h_spec
 
 /-- Any-mode parser acceptance implies canonical semantic provability over
 `toDatabaseTotal` (unconditional soundness, no global support premise). -/
-theorem verify_parser_acceptance_any_mode_implies_semantic_provable_total
+theorem proofChecker_anyMode_implies_semantic_provable_in_parsedDB
     (bytes : ByteArray)
     (label : String)
     (f : Verify.Formula)
@@ -803,7 +806,7 @@ theorem verify_parser_acceptance_any_mode_implies_semantic_provable_total
     ((∃ (proof : Array String) (pr_final : Verify.ProofState) (f' : Verify.Formula),
       proof.foldlM (fun pr step => Verify.DB.stepNormal (Verify.checkBytes bytes) pr step)
         ⟨⟨0, 0⟩, label, f, (Verify.checkBytes bytes).frame, #[], #[],
-         Verify.ProofTokenParser.normal⟩ = Except.ok pr_final ∧
+         Verify.ProofTokenParser.normal, false⟩ = Except.ok pr_final ∧
       pr_final.stack.size = 1 ∧
       pr_final.stack[0]? = some f' ∧
       toExpr f' = toExpr f)
@@ -825,19 +828,19 @@ theorem verify_parser_acceptance_any_mode_implies_semantic_provable_total
         toDatabase (Verify.checkBytes bytes) = some Γ ∧
         toFrame (Verify.checkBytes bytes) (Verify.checkBytes bytes).frame = some fr ∧
         Spec.Provable Γ fr (toExpr f) :=
-    (verify_parser_acceptance_any_mode_iff_spec_provable bytes label f h_success).1 h_accept
+    (proofChecker_anyMode_acceptance_iff_specProvable_in_parsedDB bytes label f h_success).1 h_accept
   exact parser_spec_exists_implies_semantic_total_exists bytes f h_success h_spec
 
 /-- Normal-mode parser acceptance is equivalent to derivation-local supported
 semantic provability over `toDatabaseTotal` (no global support premise). -/
-theorem verify_parser_acceptance_iff_supported_semantic_provable_total
+theorem proofChecker_normal_iff_supported_semantic_provable_in_parsedDB
     (bytes : ByteArray)
     (label : String)
     (f : Verify.Formula)
     (h_success : (Verify.checkBytes bytes).error? = none) :
     (∃ (proof : Array String) (pr_final : Verify.ProofState) (f' : Verify.Formula),
       proof.foldlM (fun pr step => Verify.DB.stepNormal (Verify.checkBytes bytes) pr step)
-        ⟨⟨0, 0⟩, label, f, (Verify.checkBytes bytes).frame, #[], #[], Verify.ProofTokenParser.normal⟩ =
+        ⟨⟨0, 0⟩, label, f, (Verify.checkBytes bytes).frame, #[], #[], Verify.ProofTokenParser.normal, false⟩ =
           Except.ok pr_final ∧
       pr_final.stack.size = 1 ∧
       pr_final.stack[0]? = some f' ∧
@@ -849,12 +852,12 @@ theorem verify_parser_acceptance_iff_supported_semantic_provable_total
         (toDatabaseTotal (Verify.checkBytes bytes))
         fr
         (exprToFormula (varMapOfFrame fr) (toExpr f))) :=
-  (verify_parser_acceptance_iff_spec_provable bytes label f h_success).trans
+  (proofChecker_normal_acceptance_iff_specProvable_in_parsedDB bytes label f h_success).trans
     (parser_spec_exists_iff_supported_total_exists bytes f h_success)
 
 /-- Any-mode parser acceptance is equivalent to derivation-local supported
 semantic provability over `toDatabaseTotal` (no global support premise). -/
-theorem verify_parser_acceptance_any_mode_iff_supported_semantic_provable_total
+theorem proofChecker_anyMode_iff_supported_semantic_provable_in_parsedDB
     (bytes : ByteArray)
     (label : String)
     (f : Verify.Formula)
@@ -862,7 +865,7 @@ theorem verify_parser_acceptance_any_mode_iff_supported_semantic_provable_total
     ((∃ (proof : Array String) (pr_final : Verify.ProofState) (f' : Verify.Formula),
       proof.foldlM (fun pr step => Verify.DB.stepNormal (Verify.checkBytes bytes) pr step)
         ⟨⟨0, 0⟩, label, f, (Verify.checkBytes bytes).frame, #[], #[],
-         Verify.ProofTokenParser.normal⟩ = Except.ok pr_final ∧
+         Verify.ProofTokenParser.normal, false⟩ = Except.ok pr_final ∧
       pr_final.stack.size = 1 ∧
       pr_final.stack[0]? = some f' ∧
       toExpr f' = toExpr f)
@@ -878,7 +881,7 @@ theorem verify_parser_acceptance_any_mode_iff_supported_semantic_provable_total
         (toDatabaseTotal (Verify.checkBytes bytes))
         fr
         (exprToFormula (varMapOfFrame fr) (toExpr f))) :=
-    (verify_parser_acceptance_any_mode_iff_spec_provable bytes label f h_success).trans
+    (proofChecker_anyMode_acceptance_iff_specProvable_in_parsedDB bytes label f h_success).trans
     (parser_spec_exists_iff_supported_total_exists bytes f h_success)
 
 end Metamath.ParserEquivalence

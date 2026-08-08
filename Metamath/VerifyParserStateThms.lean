@@ -70,11 +70,6 @@ namespace ParserState
       | mk e idx =>
           cases e <;> simp [h_err, ParserState.withDB]
 
-@[simp] theorem resumeAxiom_db_config (s : ParserState)
-    (pos : Pos) (l : String) (fmla : Formula) (fr : Frame) :
-    (s.resumeAxiom pos l fmla fr).db.config = s.db.config := by
-  simp [ParserState.resumeAxiom, ParserState.withDB, DB.insert_config]
-
 @[simp] theorem label_db_config (s : ParserState) (pos : Pos) (tk : ByteSlice) :
     (s.label pos tk).db.config = s.db.config := by
   unfold ParserState.label
@@ -222,20 +217,18 @@ namespace ParserState
               simp [ParserState.withDB, DB.pushScope_config, DB.popScope_config,
                 ParserState.label_db_config]
           · simp [ParserState.label_db_config]
-  | const =>
+  | const seen =>
       simp only []
-      split
-      · rfl
-      · split
-        · split <;> simp [ParserState.mkErrorFromEvidence_db_config]
-        · simp [ParserState.sym_db_config]
-  | var =>
+      repeat' split
+      all_goals
+        simp [ParserState.mkErrorFromEvidence_db_config,
+          ParserState.sym_db_config]
+  | var seen =>
       simp only []
-      split
-      · rfl
-      · split
-        · split <;> simp [ParserState.mkErrorFromEvidence_db_config]
-        · simp [ParserState.sym_db_config]
+      repeat' split
+      all_goals
+        simp [ParserState.mkErrorFromEvidence_db_config,
+          ParserState.sym_db_config]
   | djvars arr =>
       simp only []
       split
@@ -244,7 +237,7 @@ namespace ParserState
         · split <;> simp [ParserState.mkErrorFromEvidence_db_config]
         ·
           split
-          · rfl
+          · split <;> simp [ParserState.mkErrorFromEvidence_db_config]
           · simp [ParserState.djvars_loop_db_config]
   | math arr' p =>
       simp only []
@@ -266,7 +259,9 @@ namespace ParserState
             | some obj =>
                 cases obj with
                 | const _ => simp [h_find]
-                | var _ => simp [h_find]
+                | var _ =>
+                    cases h_act : s.db.isActiveVar tk1 <;>
+                      simp [h_find, h_act, ParserState.mkErrorFromEvidence_db_config]
                 | hyp _ _ _ =>
                     cases h_gate : s.db.mathSymbolViolation? tk1 <;>
                       simp [h_find, h_gate, ParserState.mkErrorFromEvidence_db_config]

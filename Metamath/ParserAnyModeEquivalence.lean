@@ -3,13 +3,13 @@ ParserAnyModeEquivalence — Phase C8: Any-Mode Biconditional
 
 Integration module connecting compressed and normal proof verification
 to the canonical spec-level biconditional. Strengthens the normal-only
-`verify_parser_acceptance_iff_spec_provable` to cover both proof modes.
+`proofChecker_normal_acceptance_iff_specProvable_in_parsedDB` to cover both proof modes.
 
 **Theorem chain (each used by the next):**
 1. `finishProof_success_stack_conditions` — extract stack properties from finishProof success
 2. `compressed_proof_full_provenance_tight` — drop redundant h_stack_one/h_stack_fmla
 3. `compressed_acceptance_implies_normal_acceptance` — compressed ⊂ normal at DB level
-4. `verify_parser_acceptance_any_mode_iff_spec_provable` — bytes-level biconditional
+4. `proofChecker_anyMode_acceptance_iff_specProvable_in_parsedDB` — fixed-parsed-database checker-adequacy biconditional
 -/
 
 import Metamath.PrefixTraceCompressed
@@ -48,17 +48,17 @@ theorem finishProof_success_stack_conditions
     pr.stack[0]? = some pr.fmla ∧
     (pr.ptp = .normal ∨ pr.ptp = .compressed 0) := by
   cases pr with
-  | mk pos l fmla fr heap stack ptp =>
+  | mk pos l fmla fr heap stack ptp inc =>
       cases ptp with
       | start =>
           exfalso
-          have : (s.finishProof ⟨pos, l, fmla, fr, heap, stack, .start⟩).db.error? ≠ none := by
+          have : (s.finishProof ⟨pos, l, fmla, fr, heap, stack, .start, inc⟩).db.error? ≠ none := by
             simp [ParserState.finishProof]
             exact withAt_preserves_error l _ (ParserState_mkErrorFromEvidence_sets_error _ _ _)
           exact this h_success
       | preload =>
           exfalso
-          have : (s.finishProof ⟨pos, l, fmla, fr, heap, stack, .preload⟩).db.error? ≠ none := by
+          have : (s.finishProof ⟨pos, l, fmla, fr, heap, stack, .preload, inc⟩).db.error? ≠ none := by
             simp [ParserState.finishProof]
             exact withAt_preserves_error l _ (ParserState_mkErrorFromEvidence_sets_error _ _ _)
           exact this h_success
@@ -71,7 +71,7 @@ theorem finishProof_success_stack_conditions
             unless stack[0]! == fmla do
               return s.mkErrorFromEvidence pos
                 (.theoremFinality (.theoremClaimMismatch fmla stack[0]!))
-            s.withDB fun db => db.insert pos l (.assert fmla fr)
+            s.withDB fun db => (db.insert pos l (.assert fmla fr)).recordIncomplete inc l
           have h_at : (ParserState.withAt l inner).db.error? = none := by
             simpa [ParserState.finishProof, inner] using h_success
           rcases withAt_success_eq l inner h_at with ⟨h_ok, _⟩
@@ -97,7 +97,7 @@ theorem finishProof_success_stack_conditions
               unless stack[0]! == fmla do
                 return s.mkErrorFromEvidence pos
                   (.theoremFinality (.theoremClaimMismatch fmla stack[0]!))
-              s.withDB fun db => db.insert pos l (.assert fmla fr)
+              s.withDB fun db => (db.insert pos l (.assert fmla fr)).recordIncomplete inc l
             have h_at : (ParserState.withAt l inner).db.error? = none := by
               simpa [ParserState.finishProof, inner] using h_success
             rcases withAt_success_eq l inner h_at with ⟨h_ok, _⟩
@@ -113,7 +113,7 @@ theorem finishProof_success_stack_conditions
             · exact absurd h_ok (by simp [inner, h_size,
                 ParserState.mkErrorFromEvidence, ParserState.withDB])
           · exfalso
-            have : (s.finishProof ⟨pos, l, fmla, fr, heap, stack, .compressed chr⟩).db.error? ≠ none := by
+            have : (s.finishProof ⟨pos, l, fmla, fr, heap, stack, .compressed chr, inc⟩).db.error? ≠ none := by
               simp [ParserState.finishProof, h_chr]
               exact withAt_preserves_error l _ (ParserState_mkErrorFromEvidence_sets_error _ _ _)
             exact this h_success
@@ -129,7 +129,7 @@ theorem compressed_proof_full_provenance_tight
     (tk_close : ByteSlice) (comp_toks : List ByteSlice)
     (all_acts : List ParserState.CompressedAction)
     (pr₀ pr₁ pr₂ pr₃ pr_final : ProofState)
-    (h_init : pr₀ = ⟨⟨0,0⟩, label, fmla, s.db.frame, #[], #[], .start⟩)
+    (h_init : pr₀ = ⟨⟨0,0⟩, label, fmla, s.db.frame, #[], #[], .start, false⟩)
     (h_open_ok : (s.feedProof tk_open pr₀).db.error? = none)
     (h_open : tk_open.eqArray "(".toAscii)
     (h_open_tokp : (s.feedProof tk_open pr₀).tokp = .proof pr₁)
@@ -167,14 +167,14 @@ theorem compressed_acceptance_implies_normal_acceptance
     (h_size : stack.size = 1) (h_fmla : stack[0]? = some f') :
     ∃ (proof : Array String) (pr_final : ProofState) (f'' : Formula),
       proof.foldlM (fun pr step => db.stepNormal pr step)
-        ⟨⟨0,0⟩, label, f', db.frame, #[], #[], .normal⟩ = .ok pr_final ∧
+        ⟨⟨0,0⟩, label, f', db.frame, #[], #[], .normal, false⟩ = .ok pr_final ∧
       pr_final.stack.size = 1 ∧ pr_final.stack[0]? = some f'' ∧
       toExpr f'' = toExpr f' := by
   obtain ⟨labels, pr_final, h_fold, h_stack_eq⟩ :=
     compressed_implies_normal_fold db label f' stack h_reach h_wf h_size h_fmla
   exact ⟨labels, pr_final, f', h_fold, h_stack_eq ▸ h_size, h_stack_eq ▸ h_fmla, rfl⟩
 
-/-! ## Step 4: Any-mode biconditional (bytes level)
+/-! ## Step 4: Any-mode checker-adequacy biconditional (fixed parsed database)
 
 Under parse success, implementation acceptance in either normal or compressed
 mode (up to expression equivalence) is equivalent to spec provability.
@@ -182,7 +182,7 @@ mode (up to expression equivalence) is equivalent to spec provability.
 - **Forward (soundness)**: Compressed branch → normal fold (Step 3) → soundness
 - **Backward (completeness)**: Spec provable → normal acceptance (Or.inl) -/
 
-theorem verify_parser_acceptance_any_mode_iff_spec_provable
+theorem proofChecker_anyMode_acceptance_iff_specProvable_in_parsedDB
     (bytes : ByteArray)
     (label : String)
     (f : Verify.Formula)
@@ -191,7 +191,7 @@ theorem verify_parser_acceptance_any_mode_iff_spec_provable
     ((∃ (proof : Array String) (pr_final : Verify.ProofState) (f' : Verify.Formula),
       proof.foldlM (fun pr step => Verify.DB.stepNormal (Verify.checkBytes bytes) pr step)
         ⟨⟨0, 0⟩, label, f, (Verify.checkBytes bytes).frame, #[], #[],
-         Verify.ProofTokenParser.normal⟩ = Except.ok pr_final ∧
+         Verify.ProofTokenParser.normal, false⟩ = Except.ok pr_final ∧
       pr_final.stack.size = 1 ∧
       pr_final.stack[0]? = some f' ∧
       toExpr f' = toExpr f)
