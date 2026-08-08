@@ -7,6 +7,86 @@ import Metamath.VerifyClauseThms
 namespace Metamath
 namespace Verify
 
+/-! ## Include-continuation laws -/
+
+/-- The parser mode is not the temporary wrapper used while scanning a
+Metamath comment. -/
+def TokenParser.OutsideComment : TokenParser → Prop
+  | .comment _ => False
+  | _ => True
+
+/-- Raising an include request restores exactly the parser mode suspended at
+the `$[` token. -/
+@[simp] theorem ParserState.requestInclude_tokp
+    (s : ParserState) (resume : TokenParser) (includePath : String) :
+    (s.requestInclude resume includePath).tokp = resume := rfl
+
+/-- Clearing a driver-consumed include request changes only the database error
+field, never the token-parser continuation. -/
+@[simp] theorem clearIncludeRequest_tokp (s : ParserState) :
+    (clearIncludeRequest s).tokp = s.tokp := rfl
+
+/-- The request/driver boundary therefore preserves the suspended parser mode
+end to end. -/
+@[simp] theorem clearIncludeRequest_requestInclude_tokp
+    (s : ParserState) (resume : TokenParser) (includePath : String) :
+    (clearIncludeRequest (s.requestInclude resume includePath)).tokp = resume :=
+  rfl
+
+/-- Once the driver consumes an include request raised from an error-free
+parser state, clearing that request restores the complete parser state except
+for the explicitly selected continuation. -/
+theorem clearIncludeRequest_requestInclude_eq_of_errorFree
+    (s : ParserState) (resume : TokenParser) (includePath : String)
+    (h_errorFree : s.db.error? = none) :
+    clearIncludeRequest (s.requestInclude resume includePath) =
+      { s with tokp := resume } := by
+  cases s with
+  | mk db tokp charp line linepos sourceFile =>
+      simp only [ParserState.requestInclude, clearIncludeRequest]
+      congr
+      exact h_errorFree.symm
+
+/-- An accepted include opener stores the entire current parser mode as its
+continuation.  This is the mode-independent preservation law behind token
+splicing. -/
+theorem ParserState.feedToken_includeOpen_tokp
+    (s : ParserState) (i : Nat) (tk : ByteSlice) (resume : TokenParser)
+    (h_tokp : s.tokp = resume)
+    (h_outside : resume.OutsideComment)
+    (h_comment : tk.eqArray "$(".toAscii = false)
+    (h_include : tk.eqArray "$[".toAscii = true)
+    (h_gate : includeDirectiveViolation? s.db.config s.db.scopes.size
+      (match resume with | .start => false | _ => true) i = none) :
+    (s.feedToken i tk).tokp = .includePath resume (s.mkPos i) := by
+  cases resume <;>
+    simp only [TokenParser.OutsideComment] at h_outside
+  all_goals simp_all [ParserState.feedToken]
+
+/-- In token-splicing modes, an include opener encountered during `$d`
+accumulation therefore stores that entire accumulator as its continuation. -/
+theorem ParserState.feedToken_djvars_includeOpen_tokp
+    (s : ParserState) (i : Nat) (tk : ByteSlice) (vars : Array String)
+    (h_tokp : s.tokp = .djvars vars)
+    (h_comment : tk.eqArray "$(".toAscii = false)
+    (h_include : tk.eqArray "$[".toAscii = true)
+    (h_gate : includeDirectiveViolation? s.db.config s.db.scopes.size true i = none) :
+    (s.feedToken i tk).tokp = .includePath (.djvars vars) (s.mkPos i) := by
+  exact s.feedToken_includeOpen_tokp i tk (.djvars vars) h_tokp
+    (by trivial) h_comment h_include h_gate
+
+/-- Closing a parsed include directive raises the request with the stored
+continuation restored. -/
+theorem ParserState.feedToken_includeClose_eq_requestInclude
+    (s : ParserState) (i : Nat) (tk : ByteSlice)
+    (resume : TokenParser) (includePos : Pos) (includePath : String)
+    (h_tokp : s.tokp = .includeClose resume includePos includePath)
+    (h_comment : tk.eqArray "$(".toAscii = false)
+    (h_nested : tk.eqArray "$[".toAscii = false)
+    (h_close : tk.eqArray "$]".toAscii = true) :
+    s.feedToken i tk = s.requestInclude resume includePath := by
+  simp [ParserState.feedToken, h_tokp, h_comment, h_nested, h_close]
+
 theorem includeDirectiveViolation?_inInnerScope_iff
     (config : ModeConfig) (scopeDepth : Nat) (inStatement : Bool) (pos : Nat) :
     includeDirectiveViolation? config scopeDepth inStatement pos = some (.inInnerScope pos scopeDepth inStatement config.allowIncludeInnerScope) ↔
@@ -290,6 +370,17 @@ theorem DB.parseErrorCode?_includeDepthExceeded_guardFacts
     ∃ path, s.errorEvidence? = some (.includeErr (.depthExceeded path)) := by
   intro h_code
   have h_rule := DB.parseErrorCode?_ruleSemantic_sound s .includeDepthExceeded h_code
+  simp only [DB.RuleSemanticViolation, DB.IncludeViolation] at h_rule
+  obtain ⟨err, h_ev, h_code_eq⟩ := h_rule
+  cases err <;> simp_all [IncludeError.code]
+
+/-- Decoded `.includeBudgetExhausted` yields resolution-budget evidence with the file path. -/
+theorem DB.parseErrorCode?_includeBudgetExhausted_guardFacts
+    (s : DB) :
+    s.parseErrorCode? = some .includeBudgetExhausted →
+    ∃ path, s.errorEvidence? = some (.includeErr (.budgetExhausted path)) := by
+  intro h_code
+  have h_rule := DB.parseErrorCode?_ruleSemantic_sound s .includeBudgetExhausted h_code
   simp only [DB.RuleSemanticViolation, DB.IncludeViolation] at h_rule
   obtain ⟨err, h_ev, h_code_eq⟩ := h_rule
   cases err <;> simp_all [IncludeError.code]

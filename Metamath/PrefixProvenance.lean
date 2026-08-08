@@ -20,9 +20,12 @@ the theorem itself, and provability lifts from the prefix to the final database.
 - `toDatabase_insert_subset` (KernelClean): SpecDBSubset across insert
 - `verify_impl_sound` (KernelClean): proof checking → Spec.Provable
 
-**What remains (future work):**
-Parser-trace induction: connecting the parser's actual execution across
-multiple feedToken calls to the foldlM hypothesis of verify_impl_sound.
+**Scope of this module.** Conclusions here are stated in the *post*-insertion
+database, which is why the names carry `postInsert_`.  The parser-trace induction
+that connects real `feedToken` execution to the `foldlM` hypothesis is done, in
+`Metamath.PrefixWitnessCheckBytes`; that development also states its conclusions
+in the pre-insertion database, and is the one to cite for what acceptance
+guarantees.
 -/
 
 import Metamath.Verify
@@ -247,13 +250,13 @@ Composes: `verify_impl_sound` + `toDatabase_insert_subset` + `Provable.mono_db`
     If proof checking succeeds with `prefix_db`, the assertion is `Spec.Provable`
     in `toDatabase prefix_db`. By `Provable.mono_db`, this lifts to any
     `Γ_final` that is a superset of `toDatabase prefix_db`. -/
-theorem prefix_provable_lifts
+theorem postInsert_provable_lifts
     (prefix_db : DB) (label : String) (f : Formula) (proof : Array String)
     (h_prefix_success : prefix_db.error? = none)
     (h_prefix_wf : WellFormedDB prefix_db)
     (h_proof_ok : ∃ pr_final : ProofState,
       proof.foldlM (fun pr step => DB.stepNormal prefix_db pr step)
-        ⟨⟨0,0⟩, label, f, prefix_db.frame, #[], #[], ProofTokenParser.normal⟩ =
+        ⟨⟨0,0⟩, label, f, prefix_db.frame, #[], #[], ProofTokenParser.normal, false⟩ =
           Except.ok pr_final ∧
       pr_final.stack.size = 1 ∧
       pr_final.stack[0]? = some f)
@@ -284,11 +287,11 @@ prefix provenance property at the point where `finishProof` inserts a theorem.
 - `finishProof_success_insert`: on success, `s'.db = s.db.insert pos label (.assert fmla fr)`
 - Together: the proof was checked against `s.db`, then the theorem was inserted
 
-**Remaining gap (future work):**
-Connecting the parser's byte-stream feedProof execution to the `foldlM stepNormal`
-hypothesis of `verify_impl_sound`. This requires parser-trace induction: walking
-through the sequence of `feedToken` calls and showing that the accumulated proof
-tokens produce the same result as `foldlM stepNormal` over the proof array.
+**Where the byte-stream connection is made:** not here.  Walking the sequence of
+`feedToken` calls and showing the accumulated proof tokens agree with
+`foldlM stepNormal` is carried out in `Metamath.PrefixWitnessCheckBytes`, whose
+`AllFeedEventsProvable` mirrors the feed loop and yields provability in the
+database as it stood before each theorem was inserted.
 -/
 
 /-- At the finishProof boundary, the prefix DB is `s.db` (pre-insert),
@@ -302,7 +305,9 @@ theorem finishProof_prefix_characterization
     (h_success : (s.finishProof pr).db.error? = none)
     (h_s_ok : s.db.error? = none) :
     -- The post-insert DB is exactly s.db.insert ...
-    (s.finishProof pr).db = s.db.insert pr.pos pr.label (.assert pr.fmla pr.frame) ∧
+    (s.finishProof pr).db
+      = (s.db.insert pr.pos pr.label (.assert pr.fmla pr.frame)).recordIncomplete
+          pr.incomplete pr.label ∧
     -- The insert succeeded
     (s.db.insert pr.pos pr.label (.assert pr.fmla pr.frame)).error? = none ∧
     -- The theorem label was fresh in s.db
@@ -320,7 +325,7 @@ theorem finishProof_prefix_characterization
     label can't be among them.
 
     This converts from index-based freshness (`fresh_not_in_assert_frames_of_wf`)
-    to the `∀ hyp ∈ fr.hyps.toList` form needed by `prefix_provable_lifts_across_insert`. -/
+    to the `∀ hyp ∈ fr.hyps.toList` form needed by `postInsert_provable_lifts_across_insert`. -/
 theorem hyp_disjoint_of_fresh (db : DB) (label : String)
     (h_wf : WellFormedDB db) (h_fresh : db.find? label = none) :
     ∀ (l : String) (f : Verify.Formula) (fr : Frame) (n : String),
@@ -333,6 +338,12 @@ theorem hyp_disjoint_of_fresh (db : DB) (label : String)
   rw [← h_eq]
   exact h_idx i hi
 
+/-- `toDatabase` ignores the incomplete-proof ledger. -/
+theorem toDatabase_recordIncomplete (db : DB) (b : Bool) (l : String) :
+    toDatabase (db.recordIncomplete b l) = toDatabase db := by
+  unfold DB.recordIncomplete
+  split <;> rfl
+
 /-- **Prefix provability lifts across insert at finishProof.**
 
     Given:
@@ -343,12 +354,12 @@ theorem hyp_disjoint_of_fresh (db : DB) (label : String)
 
     Conclusion: the assertion is `Spec.Provable` in the post-insert database.
 
-    **Note:** The `h_proof_ok` hypothesis is the parser-trace gap.
-    In the actual parser execution, this holds because feedProof processes
-    the proof tokens one at a time using `s.db.stepNormal`, accumulating
-    the same result as `foldlM stepNormal` over the proof array. Connecting
-    these requires parser-trace induction (future work). -/
-theorem prefix_provable_lifts_across_insert
+    **Note:** `h_proof_ok` is supplied by the caller, not discharged here.  The
+    parser-trace induction that discharges it from real execution lives in
+    `Metamath.PrefixWitnessCheckBytes` (`AllFeedEventsProvable` mirrors the feed
+    loop token by token), and that development also states its conclusion in the
+    *pre*-insertion database rather than the post-insertion one below. -/
+theorem postInsert_provable_lifts_across_insert
     (s : ParserState) (pr : ProofState)
     (h_success : (s.finishProof pr).db.error? = none)
     (h_s_ok : s.db.error? = none)
@@ -356,7 +367,7 @@ theorem prefix_provable_lifts_across_insert
     (proof : Array String)
     (h_proof_ok : ∃ pr_final : ProofState,
       proof.foldlM (fun p step => DB.stepNormal s.db p step)
-        ⟨⟨0,0⟩, pr.label, pr.fmla, s.db.frame, #[], #[], ProofTokenParser.normal⟩ =
+        ⟨⟨0,0⟩, pr.label, pr.fmla, s.db.frame, #[], #[], ProofTokenParser.normal, false⟩ =
           Except.ok pr_final ∧
       pr_final.stack.size = 1 ∧
       pr_final.stack[0]? = some pr.fmla)
@@ -390,7 +401,9 @@ theorem prefix_provable_lifts_across_insert
     Spec.Provable.mono_db h_subset h_provable_prefix
   -- Step 6: Rewrite the post-insert DB
   rw [h_db_eq]
-  exact ⟨Γ_final, spec_fr, h_Γ_final, h_frame, h_provable_final⟩
+  refine ⟨Γ_final, spec_fr, ?_, h_frame, h_provable_final⟩
+  rw [toDatabase_recordIncomplete]
+  exact h_Γ_final
 
 /-! ## Part 7: Normal Proof Trace Bridge (Phase C3)
 
@@ -535,8 +548,8 @@ theorem stepAssert_transfer (db : DB) (pr₁ pr₂ r₁ : ProofState)
     (h_ok : db.stepAssert pr₁ f fr = .ok r₁) :
     ∃ r₂, db.stepAssert pr₂ f fr = .ok r₂ ∧ r₂.stack = r₁.stack := by
   -- Destructure ProofStates so stack becomes a free variable for subst
-  obtain ⟨pos₁, label₁, fmla₁, frame₁, heap₁, stack₁, ptp₁⟩ := pr₁
-  obtain ⟨pos₂, label₂, fmla₂, frame₂, heap₂, stack₂, ptp₂⟩ := pr₂
+  obtain ⟨pos₁, label₁, fmla₁, frame₁, heap₁, stack₁, ptp₁, inc₁⟩ := pr₁
+  obtain ⟨pos₂, label₂, fmla₂, frame₂, heap₂, stack₂, ptp₂, inc₂⟩ := pr₂
   simp only at h_stack
   subst h_stack
   -- Now both ProofStates share the same stack₁ and frame₁.
@@ -585,8 +598,8 @@ theorem stepNormal_transfer (db : DB) (pr₁ pr₂ r₁ : ProofState) (l : Strin
     (h_ok : db.stepNormal pr₁ l = .ok r₁) :
     ∃ r₂, db.stepNormal pr₂ l = .ok r₂ ∧ r₂.stack = r₁.stack := by
   -- Destructure to make stack substitutable
-  obtain ⟨pos₁, label₁, fmla₁, frame₁, heap₁, stack₁, ptp₁⟩ := pr₁
-  obtain ⟨pos₂, label₂, fmla₂, frame₂, heap₂, stack₂, ptp₂⟩ := pr₂
+  obtain ⟨pos₁, label₁, fmla₁, frame₁, heap₁, stack₁, ptp₁, inc₁⟩ := pr₁
+  obtain ⟨pos₂, label₂, fmla₂, frame₂, heap₂, stack₂, ptp₂, inc₂⟩ := pr₂
   simp only at h_stack
   subst h_stack
   -- Now both share the same stack₁ and frame₁
@@ -622,8 +635,8 @@ theorem stepNormal_transfer (db : DB) (pr₁ pr₂ r₁ : ProofState) (l : Strin
       · simp [h_mem] at h_ok
     | assert f' fr' _ =>
       exact stepAssert_transfer db
-        ⟨pos₁, label₁, fmla₁, frame₁, heap₁, stack₁, ptp₁⟩
-        ⟨pos₂, label₂, fmla₂, frame₂, heap₂, stack₁, ptp₂⟩
+        ⟨pos₁, label₁, fmla₁, frame₁, heap₁, stack₁, ptp₁, inc₁⟩
+        ⟨pos₂, label₂, fmla₂, frame₂, heap₂, stack₁, ptp₂, inc₂⟩
         r₁ f' fr' rfl h_ok
 
 /-! ### Part 7b: foldlM Frame Preservation and Transfer
@@ -699,13 +712,13 @@ def NormalProofReachable (db : DB) (label : String) (fmla : Formula)
     (stack : Array Formula) : Prop :=
   ∃ (labels : Array String) (pr_final : ProofState),
     labels.foldlM (fun pr step => db.stepNormal pr step)
-      ⟨⟨0,0⟩, label, fmla, db.frame, #[], #[], ProofTokenParser.normal⟩ = .ok pr_final ∧
+      ⟨⟨0,0⟩, label, fmla, db.frame, #[], #[], ProofTokenParser.normal, false⟩ = .ok pr_final ∧
     pr_final.stack = stack
 
 /-- Base case: empty stack is reachable with zero labels. -/
 theorem NormalProofReachable_init (db : DB) (label : String) (fmla : Formula) :
     NormalProofReachable db label fmla #[] :=
-  ⟨#[], ⟨⟨0,0⟩, label, fmla, db.frame, #[], #[], .normal⟩, rfl, rfl⟩
+  ⟨#[], ⟨⟨0,0⟩, label, fmla, db.frame, #[], #[], .normal, false⟩, rfl, rfl⟩
 
 /-- Helper: append one step to a successful foldlM. -/
 private theorem foldlM_append_step (db : DB) (labels : Array String)
@@ -747,7 +760,7 @@ theorem normal_proof_h_proof_ok_discharged
     (h_stack_fmla : stack[0]? = some fmla) :
     ∃ (proof : Array String) (pr_final : ProofState),
       proof.foldlM (fun p step => DB.stepNormal db p step)
-        ⟨⟨0,0⟩, label, fmla, db.frame, #[], #[], ProofTokenParser.normal⟩ =
+        ⟨⟨0,0⟩, label, fmla, db.frame, #[], #[], ProofTokenParser.normal, false⟩ =
           .ok pr_final ∧
       pr_final.stack.size = 1 ∧
       pr_final.stack[0]? = some fmla := by
@@ -762,10 +775,10 @@ theorem normal_proof_h_proof_ok_discharged
     or `h_hyp_disjoint`.
 
     Composes `NormalProofReachable` + `normal_proof_h_proof_ok_discharged` +
-    `hyp_disjoint_of_fresh` + `prefix_provable_lifts_across_insert`.
+    `hyp_disjoint_of_fresh` + `postInsert_provable_lifts_across_insert`.
     The only assumption about the proof execution is `NormalProofReachable`,
     which is maintained by each feedProof call in normal mode. -/
-theorem prefix_provable_normal_proof
+theorem postInsert_provable_normal_proof
     (s : ParserState) (pr : ProofState)
     (h_success : (s.finishProof pr).db.error? = none)
     (h_s_ok : s.db.error? = none)
@@ -785,7 +798,7 @@ theorem prefix_provable_normal_proof
   have ⟨_, _, h_fresh⟩ := finishProof_prefix_characterization s pr h_success h_s_ok
   have h_hyp_disjoint := hyp_disjoint_of_fresh s.db pr.label h_wf h_fresh
   -- Step 3: Apply the existing prefix theorem
-  exact prefix_provable_lifts_across_insert s pr h_success h_s_ok h_wf
+  exact postInsert_provable_lifts_across_insert s pr h_success h_s_ok h_wf
     proof ⟨pr_final, h_fold, h_size, h_stack⟩ h_hyp_disjoint
 
 /-! ## Part 8: feedProof Normal Bridge
@@ -1036,7 +1049,7 @@ with NO `h_reach` assumption. -/
 
     Starting from `.start` ptp with empty stack, the first non-"(" token
     establishes `NormalProofReachable`, subsequent tokens maintain it,
-    and `prefix_provable_normal_proof` gives prefix provability.
+    and `postInsert_provable_normal_proof` gives prefix provability.
 
     `h_hyp_disjoint` is derived from `WellFormedDB` + label freshness
     (via `hyp_disjoint_of_fresh` + `finishProof_prefix_characterization`). -/
@@ -1079,8 +1092,8 @@ theorem normal_proof_full_provenance
   obtain ⟨h_reach_final, h_label_final, h_fmla_final, h_frame_final, _h_ptp_final⟩ :=
     NormalTokensOK_preserves_invariant s tokens pr₁ pr_final h_tokens
       h_reach₁ h_ptp₁
-  -- Step 3: Apply prefix_provable_normal_proof (h_hyp_disjoint now derived internally)
-  exact prefix_provable_normal_proof s pr_final h_finish h_s_ok h_wf
+  -- Step 3: Apply postInsert_provable_normal_proof (h_hyp_disjoint now derived internally)
+  exact postInsert_provable_normal_proof s pr_final h_finish h_s_ok h_wf
     h_reach_final h_stack_one h_stack_fmla
 
 /-! ## Part 10: Compressed Proof Provenance
@@ -1094,13 +1107,12 @@ For compressed proofs, the parser flow is:
 
 **Architecture:** Rather than tracing through every compressed token, we define
 `CompressedProofReachable` (the save-free model from `compressed_proof_sound`)
-and show it implies `NormalProofReachable`. Then `prefix_provable_normal_proof`
+and show it implies `NormalProofReachable`. Then `postInsert_provable_normal_proof`
 gives prefix provability — the same path as normal proofs.
 
-This handles the save-free case. Save support (Z actions that extend the heap
-during execution) is documented as future work — saves are an optimization that
-can be "inlined" by repeating the original labels, but proving this formally
-requires a save-unrolling lemma. -/
+This handles the save-free case; the Z-aware case is `ZCompressedProofReachable`,
+combined in `postInsert_provable_any_proof_z`, which is what the `checkBytes`
+chain uses. -/
 
 /-! ### Part 10a: Preload Stack Preservation
 
@@ -1160,7 +1172,7 @@ def CompressedProofReachable (db : DB) (label : String) (fmla : Formula)
   ∃ (labels : List String) (steps : List Nat)
     (pr_preload pr_final : ProofState),
     labels.foldlM (DB.preload db)
-      ⟨⟨0,0⟩, label, fmla, db.frame, #[], #[], ProofTokenParser.normal⟩ = .ok pr_preload ∧
+      ⟨⟨0,0⟩, label, fmla, db.frame, #[], #[], ProofTokenParser.normal, false⟩ = .ok pr_preload ∧
     steps.foldlM (fun pr n => DB.stepProof db pr n) pr_preload = .ok pr_final ∧
     pr_final.stack = stack
 
@@ -1184,7 +1196,7 @@ theorem compressed_to_normal_reachable (db : DB) (label : String) (fmla : Formul
     NormalProofReachable db label fmla stack := by
   obtain ⟨labels, steps, pr_preload, pr_final, h_preload, h_steps, h_stack⟩ := h_reach
   -- Canonical init
-  let pr_init : ProofState := ⟨⟨0,0⟩, label, fmla, db.frame, #[], #[], .normal⟩
+  let pr_init : ProofState := ⟨⟨0,0⟩, label, fmla, db.frame, #[], #[], .normal, false⟩
   -- Extract Γ and fr (needed by compressed_proof_sound)
   have h_db : ∃ Γ, toDatabase db = some Γ := by unfold toDatabase; exact ⟨_, rfl⟩
   obtain ⟨Γ, h_db⟩ := h_db
@@ -1218,13 +1230,15 @@ theorem compressed_to_normal_reachable (db : DB) (label : String) (fmla : Formul
 /-- **MAIN THEOREM (compressed proofs)**: Prefix provability for save-free
     compressed proofs.
 
-    Composes `compressed_to_normal_reachable` + `prefix_provable_normal_proof`.
+    Composes `compressed_to_normal_reachable` + `postInsert_provable_normal_proof`.
     The only assumption about the proof execution is `CompressedProofReachable`,
     which captures the save-free compressed proof model.
 
-    **Coverage:** Handles compressed proofs without Z (save) actions.
-    Save support is future work (requires save-unrolling lemma). -/
-theorem prefix_provable_compressed_proof
+    **Coverage:** compressed proofs without Z (save) actions.  Z is not missing
+    from the verifier's guarantee — `postInsert_provable_any_proof_z` covers it,
+    and the `checkBytes`-level chain routes through `ProofReachableZ`, so saved
+    steps are handled on the path that matters. -/
+theorem postInsert_provable_compressed_proof
     (s : ParserState) (pr : ProofState)
     (h_success : (s.finishProof pr).db.error? = none)
     (h_s_ok : s.db.error? = none)
@@ -1236,7 +1250,7 @@ theorem prefix_provable_compressed_proof
       toDatabase (s.finishProof pr).db = some Γ_final ∧
       toFrame s.db s.db.frame = some spec_fr ∧
       Spec.Provable Γ_final spec_fr (toExpr pr.fmla) := by
-  exact prefix_provable_normal_proof s pr h_success h_s_ok h_wf
+  exact postInsert_provable_normal_proof s pr h_success h_s_ok h_wf
     (compressed_to_normal_reachable s.db pr.label pr.fmla pr.stack h_wf h_reach)
     h_stack_one h_stack_fmla
 
@@ -1259,7 +1273,7 @@ inductive ProofReachable (db : DB) (label : String) (fmla : Formula)
 
     This is the audit anchor: any theorem inserted by the Metamath verifier
     satisfies `Spec.Provable` against the database state BEFORE insertion. -/
-theorem prefix_provable_any_proof
+theorem postInsert_provable_any_proof
     (s : ParserState) (pr : ProofState)
     (h_success : (s.finishProof pr).db.error? = none)
     (h_s_ok : s.db.error? = none)
@@ -1273,9 +1287,9 @@ theorem prefix_provable_any_proof
       Spec.Provable Γ_final spec_fr (toExpr pr.fmla) := by
   cases h_reach with
   | normal h =>
-    exact prefix_provable_normal_proof s pr h_success h_s_ok h_wf h h_stack_one h_stack_fmla
+    exact postInsert_provable_normal_proof s pr h_success h_s_ok h_wf h h_stack_one h_stack_fmla
   | compressed h =>
-    exact prefix_provable_compressed_proof s pr h_success h_s_ok h_wf h h_stack_one h_stack_fmla
+    exact postInsert_provable_compressed_proof s pr h_success h_s_ok h_wf h h_stack_one h_stack_fmla
 
 /-! ## Part 12: Stack Extension for stepAssert / stepNormal
 
@@ -1622,7 +1636,7 @@ copy the *certificate* that `f` is derivable. No unrolling of compressed executi
 def DerivCert (db : DB) (f : Formula) : Prop :=
   ∃ (labels : List String) (pr_final : ProofState),
     labels.foldlM (fun p l => db.stepNormal p l)
-      ⟨⟨0,0⟩, "", #[], db.frame, #[], #[], .normal⟩ = .ok pr_final ∧
+      ⟨⟨0,0⟩, "", #[], db.frame, #[], #[], .normal, false⟩ = .ok pr_final ∧
     pr_final.stack = #[f]
 
 /-- Every stack element has a derivation certificate. -/
@@ -1906,7 +1920,7 @@ theorem compose_derivcert_step (db : DB)
       pr_final.frame = db.frame := by
   obtain ⟨cert_labels, cert_pr, h_cert_fold, h_cert_stack⟩ := h_cert
   -- By prepend: cert fold from {init with stack := acc_pr.stack} gives {cert_pr with stack := acc_pr.stack ++ cert_pr.stack}
-  let init₀ : ProofState := ⟨⟨0,0⟩, "", #[], db.frame, #[], #[], .normal⟩
+  let init₀ : ProofState := ⟨⟨0,0⟩, "", #[], db.frame, #[], #[], .normal, false⟩
   have h_cert_prepend :=
     foldlM_stepNormal_prepend db cert_labels init₀ cert_pr acc_pr.stack h_cert_fold
   -- {init₀ with stack := acc_pr.stack ++ init₀.stack} = {init₀ with stack := acc_pr.stack}
@@ -1934,7 +1948,7 @@ theorem compose_derivcert_step (db : DB)
     This is the key cert composition theorem used for building assertion hypothesis stacks. -/
 theorem compose_derivcerts (db : DB) (fs : List Formula)
     (h_certs : ∀ f ∈ fs, DerivCert db f) :
-    let init : ProofState := ⟨⟨0,0⟩, "", #[], db.frame, #[], #[], .normal⟩
+    let init : ProofState := ⟨⟨0,0⟩, "", #[], db.frame, #[], #[], .normal, false⟩
     ∃ (labels : List String) (pr_final : ProofState),
       labels.foldlM (fun p l => db.stepNormal p l) init = .ok pr_final ∧
       pr_final.stack = fs.toArray ∧
@@ -2206,7 +2220,7 @@ private theorem hyp_derivcert (db : DB) (l : String) (ess : Bool)
     DerivCert db f := by
   have h_obj_wf := h_wf.2 l _ h_find; simp at h_obj_wf
   have h_in_list : l ∈ db.frame.hyps.toList := Array.mem_toList_iff.mpr h_in_frame
-  let init : ProofState := ⟨⟨0,0⟩, "", #[], db.frame, #[], #[], .normal⟩
+  let init : ProofState := ⟨⟨0,0⟩, "", #[], db.frame, #[], #[], .normal, false⟩
   have h_step : db.stepNormal init l = .ok (init.push f) := by
     unfold DB.stepNormal; rw [h_find]; simp [h_in_list]
     cases ess with
@@ -2294,8 +2308,8 @@ theorem DerivCert_to_NormalProofReachable
     NormalProofReachable db label fmla #[f] := by
   obtain ⟨labels, pr_final, h_fold, h_stack⟩ := h_cert
   obtain ⟨r₂, h_r₂_fold, h_r₂_stack⟩ := foldlM_stepNormal_transfer db labels
-    (⟨⟨0,0⟩, "", #[], db.frame, #[], #[], .normal⟩)
-    (⟨⟨0,0⟩, label, fmla, db.frame, #[], #[], .normal⟩)
+    (⟨⟨0,0⟩, "", #[], db.frame, #[], #[], .normal, false⟩)
+    (⟨⟨0,0⟩, label, fmla, db.frame, #[], #[], .normal, false⟩)
     pr_final rfl h_fold
   rw [← h_stack, ← h_r₂_stack]
   refine ⟨labels.toArray, r₂, ?_, rfl⟩
@@ -2317,7 +2331,7 @@ def ZCompressedProofReachable (db : DB) (label : String) (fmla : Formula)
   ∃ (preloads : List String) (actions : List StepSaveAction)
     (pr_preload pr_final : ProofState),
     preloads.foldlM (DB.preload db)
-      ⟨⟨0,0⟩, label, fmla, db.frame, #[], #[], ProofTokenParser.normal⟩ = .ok pr_preload ∧
+      ⟨⟨0,0⟩, label, fmla, db.frame, #[], #[], ProofTokenParser.normal, false⟩ = .ok pr_preload ∧
     actions.foldlM (fun p a => execStepSave db p a) pr_preload = .ok pr_final ∧
     pr_final.stack = stack
 
@@ -2347,7 +2361,7 @@ theorem z_compressed_to_normal_reachable (db : DB) (label : String) (fmla : Form
   obtain ⟨preloads, actions, pr_preload, pr_final, h_preload, h_actions, h_stack⟩ := h_reach
   -- Canonical init
   let pr_init : ProofState :=
-    ⟨⟨0,0⟩, label, fmla, db.frame, #[], #[], .normal⟩
+    ⟨⟨0,0⟩, label, fmla, db.frame, #[], #[], .normal, false⟩
   -- 1. Establish initial certs
   have h_sc_init : StackCert db pr_preload.stack := by
     have h_stack_eq := preload_fold_preserves_stack db preloads pr_init pr_preload h_preload
@@ -2384,7 +2398,7 @@ inductive ProofReachableZ (db : DB) (label : String) (fmla : Formula)
     Covers normal, save-free compressed, and Z-compressed proofs.
     The Z-compressed case requires `WellFormedDB` (for preload HeapCert),
     `stack.size = 1`, and `stack[0]? = some fmla`. -/
-theorem prefix_provable_any_proof_z
+theorem postInsert_provable_any_proof_z
     (s : ParserState) (pr : ProofState)
     (h_success : (s.finishProof pr).db.error? = none)
     (h_s_ok : s.db.error? = none)
@@ -2398,11 +2412,11 @@ theorem prefix_provable_any_proof_z
       Spec.Provable Γ_final spec_fr (toExpr pr.fmla) := by
   cases h_reach with
   | normal h =>
-    exact prefix_provable_normal_proof s pr h_success h_s_ok h_wf h h_stack_one h_stack_fmla
+    exact postInsert_provable_normal_proof s pr h_success h_s_ok h_wf h h_stack_one h_stack_fmla
   | compressed h =>
-    exact prefix_provable_compressed_proof s pr h_success h_s_ok h_wf h h_stack_one h_stack_fmla
+    exact postInsert_provable_compressed_proof s pr h_success h_s_ok h_wf h h_stack_one h_stack_fmla
   | zcompressed h =>
-    exact prefix_provable_normal_proof s pr h_success h_s_ok h_wf
+    exact postInsert_provable_normal_proof s pr h_success h_s_ok h_wf
       (z_compressed_to_normal_reachable s.db pr.label pr.fmla pr.stack h_wf h
         h_stack_one h_stack_fmla)
       h_stack_one h_stack_fmla
@@ -2499,7 +2513,7 @@ theorem parser_compressed_to_z_reachable
     (cacts : List ParserState.CompressedAction)
     (pr_preload pr_final : ProofState)
     (h_preload : preloads.foldlM (DB.preload db)
-      ⟨⟨0,0⟩, label, fmla, db.frame, #[], #[], .normal⟩ = .ok pr_preload)
+      ⟨⟨0,0⟩, label, fmla, db.frame, #[], #[], .normal, false⟩ = .ok pr_preload)
     (h_actions : ParserState.applyCompressedActions db pr_preload cacts = .ok pr_final)
     (h_no_unk : ∀ a ∈ cacts, a ≠ ParserState.CompressedAction.unknown) :
     ZCompressedProofReachable db label fmla pr_final.stack := by
@@ -2643,7 +2657,7 @@ theorem compressed_full_bridge
     (user_preloads : List String)
     (all_cacts : List ParserState.CompressedAction)
     -- Initial state (from resumeThm)
-    (h_init : pr_init = ⟨⟨0,0⟩, label, fmla, db.frame, #[], #[], .start⟩)
+    (h_init : pr_init = ⟨⟨0,0⟩, label, fmla, db.frame, #[], #[], .start, false⟩)
     -- preloadMandatoryHyps succeeded
     (h_mand : db.preloadMandatoryHyps pr_init = .ok pr_mand)
     -- User preloads succeeded

@@ -5,14 +5,16 @@ Parses run-testsuite-all for unit/ and core/small/ tests, groups by spec
 reference, extracts spec text from SPEC_SECTION_4.txt, and includes .mm
 file content as LaTeX listings.
 
-Usage: python3 gen_appendix_tests.py
+Usage: METAMATH_TEST=/path/to/metamath-test python3 gen_appendix_tests.py
 """
 
 import re
 import os
 from collections import defaultdict
 
-TESTS_ROOT = "/home/zar/claude/hyperon/metamath/metamath-test"
+TESTS_ROOT = os.environ.get("METAMATH_TEST")
+if not TESTS_ROOT:
+    raise SystemExit("METAMATH_TEST must name the metamath-test checkout")
 MANIFEST = os.path.join(TESTS_ROOT, "run-testsuite-all")
 SPEC_FILE = os.path.join(TESTS_ROOT, "SPEC_SECTION_4.txt")
 OUTPUT = "appendix_tests.tex"

@@ -129,6 +129,8 @@ def validateDatabase (filename : String) (config : ModeConfig := {}) : IO Unit :
   | some _ => unreachable!
   | none =>
       IO.println s!"✓ Parsed successfully ({db.objects.size} objects)"
+      unless db.incompleteProofs.isEmpty do
+        IO.println s!"⚠ {db.incompleteProofs.size} incomplete proof(s) accepted (not verified): {String.intercalate " " db.incompleteProofs.toList}"
 
   -- Validate all frames
   match validateAllFrames db with

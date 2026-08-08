@@ -6,6 +6,8 @@ all_Lean_*.txt
 codex_archive/
 
 # Development artifacts
+__pycache__/
+*.py[cod]
 *.backup
 *.backup2
 *.session*

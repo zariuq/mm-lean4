@@ -108,12 +108,12 @@ theorem go_compressed_extracts
     (h_ok : ParserState.feedProof.go s tk pr = .ok pr')
     (h_comp : pr.ptp = .compressed chr) :
     ∃ acts chr' pr_mid,
-      ParserState.decodeCompressed tk chr = .ok (acts, chr') ∧
+      ParserState.decodeCompressed tk chr s.db.config.compressedInvalidBytes = .ok (acts, chr') ∧
       ParserState.applyCompressedActions s.db pr acts = .ok pr_mid ∧
       pr' = {pr_mid with ptp := .compressed chr'} := by
   unfold ParserState.feedProof.go at h_ok
   simp [h_comp] at h_ok
-  cases h_dec : ParserState.decodeCompressed tk chr with
+  cases h_dec : ParserState.decodeCompressed tk chr s.db.config.compressedInvalidBytes with
   | error e => simp [h_dec, bind, Except.bind] at h_ok
   | ok dec =>
     obtain ⟨acts, chr'⟩ := dec
@@ -153,7 +153,7 @@ theorem feedProof_compressed_extracts
     (h_comp : pr.ptp = .compressed chr) :
     ∃ pr' acts chr' pr_mid,
       (s.feedProof tk pr).tokp = .proof pr' ∧
-      ParserState.decodeCompressed tk chr = .ok (acts, chr') ∧
+      ParserState.decodeCompressed tk chr s.db.config.compressedInvalidBytes = .ok (acts, chr') ∧
       ParserState.applyCompressedActions s.db pr acts = .ok pr_mid ∧
       pr' = {pr_mid with ptp := .compressed chr'} := by
   obtain ⟨pr', h_go, h_tokp⟩ := feedProof_success_go_ok s tk pr h_success
@@ -202,7 +202,7 @@ def CompressedTokensOK (s : ParserState) :
       (s.feedProof tk pr).db.error? = none ∧
       (s.feedProof tk pr).tokp = .proof pr_mid ∧
       pr.ptp = .compressed chr ∧
-      ParserState.decodeCompressed tk chr = .ok (acts, chr') ∧
+      ParserState.decodeCompressed tk chr s.db.config.compressedInvalidBytes = .ok (acts, chr') ∧
       (∀ a ∈ acts, a ≠ ParserState.CompressedAction.unknown) ∧
       CompressedTokensOK s pr_mid rest pr_final acc_rest ∧
       acc = acts ++ acc_rest
@@ -376,7 +376,7 @@ private theorem stepAssert_ptp_ok (db : DB) (pr : ProofState) (f : Formula) (fr 
                       ({ pos := pr.pos, label := pr.label, fmla := pr.fmla, frame := pr.frame,
                          heap := pr.heap,
                          stack := (pr.stack.extract 0 (pr.stack.size - hyps.size)).push concl,
-                         ptp := pr.ptp } : ProofState) : Except ProofCheckFail ProofState)
+                         ptp := pr.ptp, incomplete := pr.incomplete } : ProofState) : Except ProofCheckFail ProofState)
                       = (Except.ok result : Except ProofCheckFail ProofState) := by
                   simpa [off, h_chk, h_dv, h_subst, Bind.bind, Except.bind, Pure.pure,
                     Functor.map, Except.map] using h_ok
@@ -518,7 +518,7 @@ theorem CompressedTokensOK_extracts_applyCA
 
 /-! ## Step 6: Label Preservation + Phase Bridges
 
-For the end-to-end theorem, we need `pr_final.label = label` and `pr_final.fmla = fmla`.
+For the composed theorem, we need `pr_final.label = label` and `pr_final.fmla = fmla`.
 The fmla chain uses existing `ok_preserves_core` infrastructure. For label, we prove
 preservation for `preloadMandatoryHyps`, `applyCompressedActions`, and the token predicates.
 We also prove preload fold ptp-reverse for composing with `compressed_full_bridge`. -/
@@ -596,7 +596,7 @@ private theorem stepAssert_preserves_label (db : DB) (pr : ProofState) (f : Form
                       ({ pos := pr.pos, label := pr.label, fmla := pr.fmla, frame := pr.frame,
                          heap := pr.heap,
                          stack := (pr.stack.extract 0 (pr.stack.size - hyps.size)).push concl,
-                         ptp := pr.ptp } : ProofState) : Except ProofCheckFail ProofState)
+                         ptp := pr.ptp, incomplete := pr.incomplete } : ProofState) : Except ProofCheckFail ProofState)
                       = (Except.ok result : Except ProofCheckFail ProofState) := by
                   simpa [off, h_chk, h_dv, h_subst, Bind.bind, Except.bind, Pure.pure,
                     Functor.map, Except.map] using h_ok
@@ -726,7 +726,7 @@ theorem compressed_proof_full_provenance
     (all_acts : List ParserState.CompressedAction)
     (pr₀ pr₁ pr₂ pr₃ pr_final : ProofState)
     -- Initial state (from resumeThm)
-    (h_init : pr₀ = ⟨⟨0,0⟩, label, fmla, s.db.frame, #[], #[], .start⟩)
+    (h_init : pr₀ = ⟨⟨0,0⟩, label, fmla, s.db.frame, #[], #[], .start, false⟩)
     -- Phase A: "(" opens compressed mode
     (h_open_ok : (s.feedProof tk_open pr₀).db.error? = none)
     (h_open : tk_open.eqArray "(".toAscii)
@@ -819,9 +819,9 @@ theorem compressed_proof_full_provenance
     rw [h_label₂, h_pr₁_eq]; simp
     exact (preloadMandatoryHyps_preserves_label s.db pr₀ pr_mand h_mand).trans
       (by subst h_init; rfl)
-  -- Apply prefix_provable_any_proof_z
+  -- Apply postInsert_provable_any_proof_z
   rw [← h_label_chain, ← h_fmla_chain] at h_reach
-  exact prefix_provable_any_proof_z s pr_final h_finish h_s_ok h_wf h_reach
+  exact postInsert_provable_any_proof_z s pr_final h_finish h_s_ok h_wf h_reach
     h_stack_one h_stack_fmla
 
 /-! ## Phase C7: Compressed Proof Soundness Integration
@@ -854,7 +854,7 @@ theorem NormalProofReachable_same_db_provable
   -- Apply fold_maintains_provable directly
   exact ⟨Γ, fr, h_db, h_fr,
     fold_maintains_provable db labels
-      ⟨⟨0,0⟩, label, fmla, db.frame, #[], #[], .normal⟩
+      ⟨⟨0,0⟩, label, fmla, db.frame, #[], #[], .normal, false⟩
       pr_final Γ fr fmla
       h_ok h_wf h_db h_fr h_wf.1 h_fold rfl h_pr_size h_pr_fmla⟩
 
@@ -887,7 +887,7 @@ theorem verify_compressed_impl_sound
     (pr_init pr_mand pr_preload pr_final : ProofState)
     (user_preloads : List String)
     (all_cacts : List ParserState.CompressedAction)
-    (h_init : pr_init = ⟨⟨0,0⟩, label, fmla, db.frame, #[], #[], .start⟩)
+    (h_init : pr_init = ⟨⟨0,0⟩, label, fmla, db.frame, #[], #[], .start, false⟩)
     (h_mand : db.preloadMandatoryHyps pr_init = .ok pr_mand)
     (h_user : user_preloads.foldlM (DB.preload db) pr_mand = .ok pr_preload)
     (h_actions : ParserState.applyCompressedActions db pr_preload all_cacts = .ok pr_final)
@@ -932,7 +932,7 @@ theorem verify_any_mode_sound
     -- Normal mode: stepNormal fold succeeds with singleton stack
     (∃ (proof : Array String) (pr_final : ProofState),
       proof.foldlM (fun pr step => db.stepNormal pr step)
-        ⟨⟨0,0⟩, label, fmla, db.frame, #[], #[], .normal⟩ = .ok pr_final ∧
+        ⟨⟨0,0⟩, label, fmla, db.frame, #[], #[], .normal, false⟩ = .ok pr_final ∧
       pr_final.stack.size = 1 ∧ pr_final.stack[0]? = some fmla)
     ∨
     -- Compressed mode: ProofReachableZ witnessed
@@ -956,14 +956,14 @@ theorem verify_any_mode_sound
 /-- **PREFIX PROVENANCE (compressed, pre-insert DB)**: Compressed trace execution on a
     well-formed DB produces `Spec.Provable` against the **same** (pre-insert) database.
     Follows `compressed_proof_full_provenance` exactly but applies
-    `ProofReachableZ_same_db_provable` instead of `prefix_provable_any_proof_z`. -/
+    `ProofReachableZ_same_db_provable` instead of `postInsert_provable_any_proof_z`. -/
 theorem compressed_proof_prefix_provenance
     (s : ParserState) (label : String) (fmla : Formula)
     (tk_open : ByteSlice) (preload_toks : List ByteSlice)
     (tk_close : ByteSlice) (comp_toks : List ByteSlice)
     (all_acts : List ParserState.CompressedAction)
     (pr₀ pr₁ pr₂ pr₃ pr_final : ProofState)
-    (h_init : pr₀ = ⟨⟨0,0⟩, label, fmla, s.db.frame, #[], #[], .start⟩)
+    (h_init : pr₀ = ⟨⟨0,0⟩, label, fmla, s.db.frame, #[], #[], .start, false⟩)
     (h_open_ok : (s.feedProof tk_open pr₀).db.error? = none)
     (h_open : tk_open.eqArray "(".toAscii)
     (h_open_tokp : (s.feedProof tk_open pr₀).tokp = .proof pr₁)
@@ -1041,7 +1041,7 @@ theorem compressed_proof_prefix_provenance
     rw [h_label₂, h_pr₁_eq]; simp
     exact (preloadMandatoryHyps_preserves_label s.db pr₀ pr_mand h_mand).trans
       (by subst h_init; rfl)
-  -- Apply ProofReachableZ_same_db_provable (PRE-INSERT, not prefix_provable_any_proof_z)
+  -- Apply ProofReachableZ_same_db_provable (PRE-INSERT, not postInsert_provable_any_proof_z)
   rw [← h_label_chain, ← h_fmla_chain] at h_reach
   exact ProofReachableZ_same_db_provable s.db pr_final.label pr_final.fmla pr_final.stack
     h_reach h_s_ok h_wf h_stack_one h_stack_fmla

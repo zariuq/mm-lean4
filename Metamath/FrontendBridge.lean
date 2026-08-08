@@ -1,5 +1,6 @@
 import Metamath.Verify
 import Metamath.VerifyIncludeThms
+import Metamath.VerifyDBPredicateThms
 import Metamath.VerifyScopeThms
 import Metamath.Spec.Frontend
 import Metamath.FrontendCertified
@@ -17,11 +18,13 @@ isolated in `Metamath/Legacy/FrontendBridge.lean`.
 
 /-- Bridge projection from verifier DB state to front-end `$d` spec state. -/
 def DB.toDjvarsState (db : DB) : DjvarsState where
-  isVar := db.isVar
+  isActiveVar := db.isActiveVar
 
 /-- Bridge projection from verifier DB state to front-end math-symbol spec state. -/
 def DB.toMathSymbolState (db : DB) : MathSymbolState where
-  isSym := db.isSym
+  isConst := db.isConst
+  isVar := db.isVar
+  isActiveVar := db.isActiveVar
 
 /-- Bridge projection from verifier mode config to front-end include-policy state. -/
 def ModeConfig.toIncludePolicy (config : ModeConfig) : IncludePolicy where
@@ -39,9 +42,8 @@ theorem DB.djvarsScopeViolation?_none_iff_frontendAdmissible
     db.djvarsScopeViolation? sym = none ↔
       DjvarsSymbolAdmissible (DB.toDjvarsState db) sym := by
   unfold DB.djvarsScopeViolation? DjvarsSymbolAdmissible DB.toDjvarsState
-  by_cases h_var : db.isVar sym
-  · simp [h_var]
-  · simp [h_var]
+  by_cases h_act : db.isActiveVar sym <;> by_cases h_decl : db.isVar sym <;>
+    simp [h_act, h_decl]
 
 /-- Any emitted `$d` gate error implies front-end inadmissibility. -/
 theorem DB.djvarsScopeViolation?_some_implies_frontendNotAdmissible
@@ -76,10 +78,8 @@ theorem DB.mathSymbolViolation?_none_iff_frontendAdmissible
     (db : DB) (sym : String) :
     db.mathSymbolViolation? sym = none ↔
       MathSymbolAdmissible (DB.toMathSymbolState db) sym := by
-  unfold DB.mathSymbolViolation? MathSymbolAdmissible DB.toMathSymbolState
-  by_cases h_sym : db.isSym sym
-  · simp [h_sym]
-  · simp [h_sym]
+  unfold MathSymbolAdmissible DB.toMathSymbolState
+  exact DB.mathSymbolViolation?_none_iff_active db sym
 
 /-- Any emitted math-symbol gate error implies front-end inadmissibility. -/
 theorem DB.mathSymbolViolation?_some_implies_frontendNotAdmissible
@@ -281,7 +281,11 @@ theorem checkBytes_tokenNotConstantOrVariable_implies_frontendNotAdmissible
   refine ⟨sym, ?_⟩
   intro h_adm
   unfold MathSymbolAdmissible DB.toMathSymbolState at h_adm
-  simp [h_isSym_false] at h_adm
+  have h_split :=
+    (DB.isSym_eq_false_iff (checkBytes arr config) sym).1 h_isSym_false
+  have h_inactive :=
+    DB.isActiveVar_eq_false_of_isVar_eq_false (checkBytes arr config) sym h_split.2
+  simp [h_split.1, h_inactive] at h_adm
 
 /-- `checkBytes` include-in-inner-scope code carries canonical include evidence + gate facts. -/
 theorem checkBytes_includeInInnerScope_implies_frontendGateFacts

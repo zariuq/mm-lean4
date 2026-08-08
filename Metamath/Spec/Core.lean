@@ -5,12 +5,12 @@ This file contains the foundational types used throughout the Metamath
 verification system. It has NO dependencies - pure type definitions only.
 
 Per Metamath Specification Chapter 4:
-- §4.2.1: Math symbols (constants and variables)
-- §4.2.2: Floating hypotheses
-- §4.2.3: Essential hypotheses and assertions
-- §4.2.4: Frames (mandatory hypotheses)
-- §4.2.5: Disjoint variable constraints
-- §4.2.6: Substitutions
+- §4.2.2: Math symbols (constants and variables)
+- §4.2.5: Floating hypotheses
+- §4.2.5–4.2.6: Essential hypotheses and assertions
+- §4.2.7: Frames (mandatory hypotheses)
+- §4.2.4: Disjoint variable constraints
+- §4.2.2, §4.1.4: Substitutions
 -/
 
 namespace Metamath.Spec
@@ -58,8 +58,8 @@ theorem Variable.ext (v w : Variable) : v.v = w.v → v = w := by
 /-! ## Expressions
 
 An expression is a typecode followed by a sequence of symbols.
-Per spec §4.2.2: "floating hypothesis has the form 'C v'"
-Per spec §4.2.3: "essential hypothesis or assertion has typecode first"
+Per spec §4.2.5: "floating hypothesis has the form 'C v'"
+Per spec §4.2.5–4.2.6: "essential hypothesis or assertion has typecode first"
 -/
 
 structure Expr where
@@ -69,7 +69,7 @@ structure Expr where
 
 /-! ## Hypotheses and Frames
 
-Per spec §4.2.4:
+Per spec §4.2.5 (hypotheses) and §4.2.7 (frames):
 - Floating hypotheses: $f C v (associates variable with typecode)
 - Essential hypotheses: $e C sym1 sym2... (logical assumptions)
 - Frame: all mandatory hypotheses for an assertion, in appearance order
@@ -82,15 +82,15 @@ inductive Hyp where
 
 structure Frame where
   /-- Hypotheses in appearance order.
-      When stored in Database: mandatory hypotheses (spec §4.2.4).
-      When converted from scope frame: all active hypotheses (spec §4.3). -/
+      When stored in Database: mandatory hypotheses (spec §4.2.7).
+      When converted from scope frame: all active hypotheses (spec §4.2.7–4.2.8). -/
   hyps : List Hyp
-  /-- Disjoint variable constraints (spec §4.2.5) -/
+  /-- Disjoint variable constraints (spec §4.2.4) -/
   dv : List (Variable × Variable)
   deriving Repr, DecidableEq
 
 /-- Extract the set of variables from a frame's floating hypotheses.
-    Per §4.2.2: floating hypotheses declare variables. -/
+    Per §4.2.5: floating hypotheses declare variables. -/
 def Frame.vars (fr : Frame) : List Variable :=
   fr.hyps.filterMap fun h => match h with
     | Hyp.floating _ v => some v
@@ -99,14 +99,14 @@ def Frame.vars (fr : Frame) : List Variable :=
 /-! ## Substitutions
 
 A substitution maps variables to expressions.
-Per spec §4.2.6: substitutions must respect disjoint variable constraints.
+Per spec §4.2.4 and §4.1.4: substitutions must respect disjoint variable constraints.
 -/
 
 abbrev Subst := Variable → Expr
 
 /-! ## Disjoint Variable Checking
 
-Per spec §4.2.5: "Two variables are disjoint if they appear in a $d statement
+Per spec §4.2.4: "Two variables are disjoint if they appear in a $d statement
 together in the same frame."
 
 For substitution σ to respect DV constraints:
@@ -156,7 +156,7 @@ def applySubst (vars : List Variable) (σ : Subst) (e : Expr) : Expr :=
 /-! ## Assertion Database
 
 The database Γ maps labels to (frame, assertion).
-Per spec §4.2.3:
+Per spec §4.2.6:
 - Axioms ($a): asserted without proof
 - Theorems ($p): proved from axioms and previous theorems
 -/
@@ -166,7 +166,7 @@ abbrev Database := Label → Option (Frame × Expr)
 /-! ## Database Well-Formedness
 
 A well-formed database satisfies key invariants:
-1. Variables in expressions must have floating hypotheses in scope (§4.2.2)
+1. Variables in expressions must have floating hypotheses in scope (§4.1.3)
 2. Constants and variables are disjoint (global declaration)
 
 These are enforced by the parser's insert function.
@@ -175,7 +175,7 @@ These are enforced by the parser's insert function.
 /-- Variables in an expression must have floating hypotheses in the frame,
     or be declared constants.
 
-    Per §4.2.2: "Each variable that occurs in the math symbol sequence of an
+    Per §4.1.3: "Each variable that occurs in the math symbol sequence of an
     assertion must have an active $f statement."
     Per §4.1.3: "$c declares constants, $v declares variables" (global sets). -/
 def ExprVarsInScope (consts : ConstSet) (fr : Frame) (e : Expr) : Prop :=

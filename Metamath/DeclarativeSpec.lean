@@ -11,17 +11,17 @@ in `Spec/Operational.lean`).
 | Section | Topic | Lean Type |
 |---------|-------|-----------|
 | §4.2.2 | Constants and Variables | `CN`, `VR`, `Sym` |
-| §4.2.3 | Expressions | `Expr`, `Expr.subst` |
+| §4.2.2 | Expressions and substitution | `Expr`, `Expr.subst` |
 | §4.2.4 | Disjoint variable restrictions | `DJ`, `DJ.subst` |
 | §4.2.5 | Floating ($f) and essential ($e) hypotheses | `Formula`, `VR.vhyp` |
 | §4.2.6 | Assertions ($a and $p statements) | `Statement`, `Statement.WellFormed` |
 | §4.2.7 | Frames (mandatory hypotheses + DV) | `Context` |
-| §4.3 | Proof verification algorithm | `Provable` |
+| §4.1.4, §4.3 | Proof verification algorithm | `Provable` |
 
 ## Key Results
 
-End-to-end theorem (bytes → spec):
-  `KernelClean.lean`: `verify_parser_acceptance_iff_spec_provable`
+Fixed-database proof-checker adequacy (an already-parsed database, not source):
+  `KernelClean.lean`: `proofChecker_normal_acceptance_iff_specProvable_in_parsedDB`
   Parser acceptance of raw bytes ↔ `Spec.Provable`. No extra assumptions.
 
 Spec-level components (`Spec/Equivalence.lean`):
@@ -103,7 +103,7 @@ def Expr.vars : Expr → List VR
   | const _ :: e => vars e
   | var v :: e => v :: vars e
 
-/-! ## Substitution (§4.2.2, §4.3)
+/-! ## Substitution (§4.2.2, §4.1.4)
 
 Per §4.2.2: "A variable can be substituted with any expression. This sequence
 may include other variables and may even include the variable being substituted."
@@ -421,7 +421,7 @@ theorem Statement.trimmed.trim_eq : {s : Statement} → s.trimmed → s.trim = s
 
 /-! ## Provable (Declarative/Big-Step Semantics)
 
-Per §4.3: "Each label in a proof must be either the label of a previous
+Per §4.1.4: "Each label in a proof must be either the label of a previous
 assertion ($a or $p statement) or the label of an active hypothesis
 ($e or $f statement)."
 
@@ -433,10 +433,11 @@ Constructors:
 - `var`: Reference a floating hypothesis (variable typing)
 - `ax`: Apply an axiom/theorem with substitution
 
-The key constraint (§4.2.4, §4.3): when applying an axiom, the substitution
+The key constraint (§4.2.4, §4.1.4): when applying an axiom, the substitution
 must respect all DV constraints. -/
 
-/-- Declarative provability (§4.3): the "big-step" semantics -/
+/-- Declarative provability (§4.1.4; cf. the proof anatomy in §4.3): the
+"big-step" semantics. -/
 inductive Provable (axs : Statement → Prop) (Γ : Context) : Formula → Prop
   /-- Use an essential hypothesis directly -/
   | hyp (h) : h ∈ Γ.hyps → Provable axs Γ h

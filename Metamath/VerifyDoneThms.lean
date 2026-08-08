@@ -66,8 +66,8 @@ theorem done_parseErrorCode?_ws
       | .start =>
           if s.db.scopes.size > 0 then some .unclosedBlock else none
       | .comment _ => some .unclosedComment
-      | .const => some .unclosedConst
-      | .var => some .unclosedVar
+      | .const _ => some .unclosedConst
+      | .var _ => some .unclosedVar
       | .djvars _ => some .unclosedDjvars
       | .math _ p =>
           match p.k with
@@ -76,8 +76,8 @@ theorem done_parseErrorCode?_ws
           | .ax => some .unclosedAx
           | .thm => some .unclosedThm
       | .label _ _ => some .notACommand
-      | .includePath _ => some .notACommand
-      | .includeClose _ _ => some .notACommand
+      | .includePath _ _ => some .notACommand
+      | .includeClose _ _ _ => some .notACommand
       | .proof _ => some .unclosedProof := by
   unfold ParserState.done
   simp [h_charp, h_no_err, DB.error, DB.parseErrorCode?, DB.mkParseError, DB.mkErrorFromEvidence,
@@ -93,9 +93,9 @@ theorem done_parseErrorCode?_ws
       simp
   case label pos lab =>
     simp [ErrorEvidence.code, TokenFormError.code]
-  case includePath pos =>
+  case includePath resume pos =>
     simp [ErrorEvidence.code, TokenFormError.code]
-  case includeClose pos path =>
+  case includeClose resume pos path =>
     simp [ErrorEvidence.code, TokenFormError.code]
 
 /-- EOF inversion (token case): `done` returns the code dictated by the parser mode after
@@ -110,8 +110,8 @@ theorem done_parseErrorCode?_token
       | TokenParser.start =>
           if (s.feedToken pos tk.toSlice).db.scopes.size > 0 then some .unclosedBlock else none
       | TokenParser.comment _ => some .unclosedComment
-      | TokenParser.const => some .unclosedConst
-      | TokenParser.var => some .unclosedVar
+      | TokenParser.const _ => some .unclosedConst
+      | TokenParser.var _ => some .unclosedVar
       | TokenParser.djvars _ => some .unclosedDjvars
       | TokenParser.math _ p =>
           match p.k with
@@ -120,8 +120,8 @@ theorem done_parseErrorCode?_token
           | .ax => some .unclosedAx
           | .thm => some .unclosedThm
       | TokenParser.label _ _ => some .notACommand
-      | TokenParser.includePath _ => some .notACommand
-      | TokenParser.includeClose _ _ => some .notACommand
+      | TokenParser.includePath _ _ => some .notACommand
+      | TokenParser.includeClose _ _ _ => some .notACommand
       | TokenParser.proof _ => some .unclosedProof := by
   unfold ParserState.done
   simp [h_charp, h_no_err, h_feed_no_err, DB.error, DB.parseErrorCode?, DB.mkParseError,
@@ -137,9 +137,9 @@ theorem done_parseErrorCode?_token
       simp
   case label pos lab =>
     simp [ErrorEvidence.code, TokenFormError.code]
-  case includePath pos =>
+  case includePath resume pos =>
     simp [ErrorEvidence.code, TokenFormError.code]
-  case includeClose pos path =>
+  case includeClose resume pos path =>
     simp [ErrorEvidence.code, TokenFormError.code]
 
 end Verify

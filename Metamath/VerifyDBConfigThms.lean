@@ -107,6 +107,48 @@ namespace DB
 
 @[simp] theorem withHyps_config (f : Array String → Array String) (s : DB) : (s.withHyps f).config = s.config := rfl
 
+/-! `recordIncomplete` transparency: it touches only `incompleteProofs`. -/
+
+@[simp] theorem recordIncomplete_config (db : DB) (b : Bool) (l : String) :
+    (db.recordIncomplete b l).config = db.config := by
+  unfold recordIncomplete; split <;> rfl
+
+@[simp] theorem recordIncomplete_objects (db : DB) (b : Bool) (l : String) :
+    (db.recordIncomplete b l).objects = db.objects := by
+  unfold recordIncomplete; split <;> rfl
+
+@[simp] theorem recordIncomplete_find? (db : DB) (b : Bool) (l n : String) :
+    (db.recordIncomplete b l).find? n = db.find? n := by
+  unfold recordIncomplete; split <;> rfl
+
+@[simp] theorem recordIncomplete_error? (db : DB) (b : Bool) (l : String) :
+    (db.recordIncomplete b l).error? = db.error? := by
+  unfold recordIncomplete; split <;> rfl
+
+@[simp] theorem recordIncomplete_error (db : DB) (b : Bool) (l : String) :
+    (db.recordIncomplete b l).error = db.error := by
+  unfold recordIncomplete; split <;> rfl
+
+@[simp] theorem recordIncomplete_frame (db : DB) (b : Bool) (l : String) :
+    (db.recordIncomplete b l).frame = db.frame := by
+  unfold recordIncomplete; split <;> rfl
+
+@[simp] theorem recordIncomplete_scopes (db : DB) (b : Bool) (l : String) :
+    (db.recordIncomplete b l).scopes = db.scopes := by
+  unfold recordIncomplete; split <;> rfl
+
+@[simp] theorem recordIncomplete_activeVars (db : DB) (b : Bool) (l : String) :
+    (db.recordIncomplete b l).activeVars = db.activeVars := by
+  unfold recordIncomplete; split <;> rfl
+
+@[simp] theorem recordIncomplete_interrupt (db : DB) (b : Bool) (l : String) :
+    (db.recordIncomplete b l).interrupt = db.interrupt := by
+  unfold recordIncomplete; split <;> rfl
+
+@[simp] theorem recordIncomplete_errorEvidence? (db : DB) (b : Bool) (l : String) :
+    (db.recordIncomplete b l).errorEvidence? = db.errorEvidence? := by
+  unfold recordIncomplete; split <;> rfl
+
 @[simp] theorem insert_config (db : DB) (pos : Pos) (l : String) (obj : String → Object) :
     (db.insert pos l obj).config = db.config := by
   unfold insert

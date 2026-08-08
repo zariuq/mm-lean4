@@ -175,8 +175,10 @@ theorem insert_success_updates_objects (db : DB) (pos : Pos) (label : String) (o
         simp_all
       · -- const check passes - db unchanged, continue with if-then-else
         simp_all
-    · -- non-const case - db unchanged, continue with if-then-else
-      simp_all
+    · -- non-const case: `$v` now consults the registry first, and `h_no_dup`
+      -- says the name is fresh, so the inserting branch is taken
+      repeat' split
+      all_goals simp_all
   exact DB.insert_no_dup_objects db pos label obj h_no_error h_no_dup h_no_err_after
 
 /-- When insert succeeds, find? label returns the inserted object -/
@@ -193,7 +195,8 @@ theorem insert_success_find? (db : DB) (pos : Pos) (label : String) (obj : Strin
       split
       · exfalso; apply h_not_const_inner; simp_all
       · simp_all
-    · simp_all
+    · repeat' split
+      all_goals simp_all
   exact DB.insert_find?_self db pos label obj h_no_error h_no_dup h_no_err_after
 
 /-- insert preserves error=false when no error conditions -/
@@ -212,7 +215,8 @@ theorem insert_preserves_no_error (db : DB) (pos : Pos) (label : String) (obj : 
       simp_all
     · -- const check passes
       simp_all
-  · -- non-const case
-    simp_all
+  · -- non-const case: `$v` consults the registry first
+    repeat' split
+    all_goals simp_all
 
 end Metamath.DBLemmas

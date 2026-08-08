@@ -84,7 +84,13 @@ theorem insert_preserves_find?_ne
               simp [Std.HashMap.getElem?_insert, h_eq]
             simpa [h_find, DB.find?] using h_other
         | some val =>
-            cases val <;> simp [DB.mkErrorFromEvidence, DB.mkErrorWithEvidence, DB.find?]
+            -- a known `$v` name now splits on activity: reactivation leaves
+            -- `objects` untouched, so other names are unaffected either way
+            cases val
+            all_goals
+              (repeat' split) <;>
+                simp [DB.mkErrorFromEvidence, DB.mkErrorWithEvidence,
+                  DB.find?, Std.HashMap.getElem?_insert, h_eq]
   | hyp ess f lbl =>
       by_cases h_err : db.error
       · simp [h_err, DB.find?]

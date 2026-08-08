@@ -2363,7 +2363,7 @@ theorem ProofStateInv_init (db : Verify.DB) (Γ : Spec.Database) (fr_spec : Spec
   toFrame db db.frame = some fr_spec →
   WellFormedFrame db db.frame →
   ProofStateInv db
-    ⟨⟨0, 0⟩, label, f, db.frame, #[], #[], Verify.ProofTokenParser.normal⟩
+    ⟨⟨0, 0⟩, label, f, db.frame, #[], #[], Verify.ProofTokenParser.normal, false⟩
     Γ fr_spec [] [] := by
   intro h_db h_fr h_wf
   constructor
@@ -2403,9 +2403,10 @@ This lemma eliminates eta-expansion issues between different lambda representati
 - `(fun cv => checkFloat σ cv.1 cv.2)` (projection form)
 
 These are definitionally equal but elaboration doesn't always recognize this.
-The @[simp] attribute enables automatic normalization during proof search.
+The lemma is invoked explicitly where this normalization is needed; making a
+lambda-headed equality globally simp-active causes overly broad matching.
 -/
-@[simp] theorem uncurry_checkFloat
+theorem uncurry_checkFloat
     (σ : Std.HashMap String Verify.Formula) :
   (fun (cv : Spec.Constant × Spec.Variable) => checkFloat σ cv.1 cv.2) =
   (fun (c, v) => checkFloat σ c v) := by
@@ -2524,7 +2525,7 @@ theorem toSubstTyped_of_allM_true
 
 section
 
-attribute [-simp] uncurry_checkFloat allM_pair_eta_checkFloat List.pair_eta₂
+attribute [-simp] allM_pair_eta_checkFloat
 
 theorem toSubstTyped_sigma_of_lookup
     (fr : Spec.Frame) (σ_impl : Std.HashMap String Verify.Formula)
@@ -3590,9 +3591,9 @@ the correspondence between stack values and substitution for all indices from i 
 Assumes a well-formed DB, unique float variables, and `σ_in` only contains bindings
 from floats at indices `< i`.
 
-**Key insight** (from Codex): We must generalize over the loop index `i` and the current
-substitution `σ_in` to make the induction work. The recursive calls produce `(i+1, σ')`,
-so without this generalization the IH never applies.
+**Key insight:** Generalize over the loop index `i` and the current substitution `σ_in`
+to make the induction work. The recursive calls produce `(i+1, σ')`, so without this
+generalization the IH never applies.
 
 **Proof strategy**: Induction on `hyps.size - i` (the fuel/remaining iterations).
 - When `i < hyps.size`: use checkHyp_step_hyp_false/true to expose the recursion
@@ -3784,7 +3785,7 @@ theorem checkHyp_loop_alignment
                     simp at h_ok
                   exact False.elim this
       · -- Case: k > i (use induction hypothesis)
-        -- Codex's advice: advance one iteration using step lemma, then apply IH
+        -- Advance one iteration using the step lemma, then apply the induction hypothesis.
         have hi_valid : i < hyps.size := by omega
         -- Split on what hyps[i] is to use the step lemma
         cases h_find_i : db.find? hyps[i] with
@@ -7685,9 +7686,9 @@ precondition. This makes the theorem modular: it proves that the VERIFIER is sou
 
 The parser correctness is handled separately: `parser_construction_wellformed`
 (ParserCorrectness.lean) establishes that successful parsing produces a well-formed
-database. The end-to-end soundness follows by composition:
+database. Adequacy against that fixed database follows by composition:
   successful parse → WellFormedDB → (this theorem) → provable
-See `verify_parser_acceptance_iff_spec_provable` for the composed biconditional.
+See `proofChecker_normal_acceptance_iff_specProvable_in_parsedDB` for the composed biconditional.
 -/
 theorem verify_impl_sound
     (db : Verify.DB)
@@ -7698,7 +7699,7 @@ theorem verify_impl_sound
     (h_db_wf : WellFormedDB db) :
   (∃ pr_final : Verify.ProofState,
     proof.foldlM (fun pr step => Verify.DB.stepNormal db pr step)
-      ⟨⟨0, 0⟩, label, f, db.frame, #[], #[], Verify.ProofTokenParser.normal⟩ = Except.ok pr_final ∧
+      ⟨⟨0, 0⟩, label, f, db.frame, #[], #[], Verify.ProofTokenParser.normal, false⟩ = Except.ok pr_final ∧
     pr_final.stack.size = 1 ∧
     pr_final.stack[0]? = some f) →
   ∃ (Γ : Spec.Database) (fr : Spec.Frame),
@@ -7725,7 +7726,7 @@ theorem verify_impl_sound
   -- Step 3: Use fold_maintains_provable to get Provable directly!
   have h_provable : Spec.Provable Γ fr (toExpr f) :=
     fold_maintains_provable db proof
-      ⟨⟨0, 0⟩, label, f, db.frame, #[], #[], Verify.ProofTokenParser.normal⟩
+      ⟨⟨0, 0⟩, label, f, db.frame, #[], #[], Verify.ProofTokenParser.normal, false⟩
       pr_final Γ fr f
       h_success h_db_wf h_db h_frame h_db_wf.1 h_fold rfl h_size h_stack
 
@@ -7747,7 +7748,7 @@ theorem verify_impl_sound_semantic
     (h_db_wf : WellFormedDB db)
     (h_fold :
       proof.foldlM (fun pr step => Verify.DB.stepNormal db pr step)
-        ⟨⟨0, 0⟩, label, f_init, db.frame, #[], #[], Verify.ProofTokenParser.normal⟩ =
+        ⟨⟨0, 0⟩, label, f_init, db.frame, #[], #[], Verify.ProofTokenParser.normal, false⟩ =
           Except.ok pr_final)
     (h_size : pr_final.stack.size = 1)
     (h_stack : pr_final.stack[0]? = some f_final) :
@@ -7767,7 +7768,7 @@ theorem verify_impl_sound_semantic
 
   have h_provable : Spec.Provable Γ fr (toExpr f_final) :=
     fold_maintains_provable db proof
-      ⟨⟨0, 0⟩, label, f_init, db.frame, #[], #[], Verify.ProofTokenParser.normal⟩
+      ⟨⟨0, 0⟩, label, f_init, db.frame, #[], #[], Verify.ProofTokenParser.normal, false⟩
       pr_final Γ fr f_final
       h_success h_db_wf h_db h_frame h_db_wf.1 h_fold rfl h_size h_stack
   exact ⟨Γ, fr, h_db, h_frame, h_provable⟩
@@ -8444,7 +8445,7 @@ theorem verify_compressed_sound
   -- When compressed proof verification succeeds
   (∃ pr_final : Verify.ProofState, ∃ proof : Array String,
     proof.foldlM (fun pr step => Verify.DB.stepNormal db pr step)
-      ⟨⟨0, 0⟩, label, f, db.frame, #[], #[], Verify.ProofTokenParser.normal⟩ = Except.ok pr_final ∧
+      ⟨⟨0, 0⟩, label, f, db.frame, #[], #[], Verify.ProofTokenParser.normal, false⟩ = Except.ok pr_final ∧
     pr_final.stack.size = 1 ∧
     pr_final.stack[0]? = some f) →
   -- Then the assertion is provable in the spec
@@ -8615,7 +8616,7 @@ theorem stepNormal_floating_success
 
     This theorem is unprovable if stepNormal is changed to check pr.frame.hyps
     instead of db.frame.hyps — providing structural regression protection for
-    the scope-vs-mandatory distinction (Metamath §4.3). -/
+    the scope-vs-mandatory distinction (Metamath §4.2.7–4.2.8). -/
 theorem stepNormal_uses_scope_not_mandatory
     (db : Verify.DB) (pr : Verify.ProofState) (label : String)
     (f : Verify.Formula) (lbl : String) (ess : Bool)
@@ -10729,7 +10730,7 @@ theorem verify_impl_complete
     (h_provable : Spec.Provable Γ fr (toExpr f)) :
   ∃ (proof : Array String) (pr_final : Verify.ProofState) (f' : Verify.Formula),
     proof.foldlM (fun pr step => Verify.DB.stepNormal db pr step)
-      ⟨⟨0, 0⟩, label, f, db.frame, #[], #[], Verify.ProofTokenParser.normal⟩ = Except.ok pr_final ∧
+      ⟨⟨0, 0⟩, label, f, db.frame, #[], #[], Verify.ProofTokenParser.normal, false⟩ = Except.ok pr_final ∧
     pr_final.stack.size = 1 ∧
     pr_final.stack[0]? = some f' ∧
     toExpr f' = toExpr f := by
@@ -10752,13 +10753,13 @@ theorem verify_impl_complete
   -- Use foldlM_proofSteps_complete with initial empty stack
   have h_complete : ∃ pr_final : Verify.ProofState,
       labels.foldlM (fun pr step => Verify.DB.stepNormal db pr step)
-        ⟨⟨0, 0⟩, label, f, db.frame, #[], #[], Verify.ProofTokenParser.normal⟩ = Except.ok pr_final ∧
+        ⟨⟨0, 0⟩, label, f, db.frame, #[], #[], Verify.ProofTokenParser.normal, false⟩ = Except.ok pr_final ∧
       viewStack pr_final.stack = [toExpr f] := by
     -- Apply the helper lemma with:
     -- - impl_stack = [] (initial stack is empty)
     -- - viewStack of empty stack = []
     have h_stack_init : viewStack #[] = [] := by unfold viewStack; simp
-    have h_frame_init : (⟨⟨0, 0⟩, label, f, db.frame, #[], #[], Verify.ProofTokenParser.normal⟩ : Verify.ProofState).frame = db.frame := rfl
+    have h_frame_init : (⟨⟨0, 0⟩, label, f, db.frame, #[], #[], Verify.ProofTokenParser.normal, false⟩ : Verify.ProofState).frame = db.frame := rfl
     -- Empty stack satisfies the invariants
     have h_head_init : StackHasConstHead (#[] : Array Verify.Formula) := stackHasConstHead_empty
     have h_respects_init : StackRespectsFrame db db.frame (#[] : Array Verify.Formula) :=
@@ -10767,7 +10768,7 @@ theorem verify_impl_complete
       foldlM_proofSteps_complete db Γ fr
         h_db h_frame h_db_wf h_scoped_facts h_dv_wf
         [toExpr f] steps h_valid
-        ⟨⟨0, 0⟩, label, f, db.frame, #[], #[], Verify.ProofTokenParser.normal⟩
+        ⟨⟨0, 0⟩, label, f, db.frame, #[], #[], Verify.ProofTokenParser.normal, false⟩
         [] h_stack_init h_frame_init h_head_init h_respects_init
     -- h_view : viewStack pr_final.stack = [] ++ [toExpr f].reverse
     -- Singleton reverse: [x].reverse = [x]
@@ -10846,7 +10847,7 @@ theorem verify_parser_accepts_of_spec_provable
         Spec.Provable Γ fr (toExpr f)) :
   ∃ (proof : Array String) (pr_final : Verify.ProofState) (f' : Verify.Formula),
     proof.foldlM (fun pr step => Verify.DB.stepNormal (Verify.checkBytes bytes) pr step)
-      ⟨⟨0, 0⟩, label, f, (Verify.checkBytes bytes).frame, #[], #[], Verify.ProofTokenParser.normal⟩ =
+      ⟨⟨0, 0⟩, label, f, (Verify.checkBytes bytes).frame, #[], #[], Verify.ProofTokenParser.normal, false⟩ =
         Except.ok pr_final ∧
     pr_final.stack.size = 1 ∧
     pr_final.stack[0]? = some f' ∧
@@ -10889,7 +10890,7 @@ theorem verify_impl_complete_of_checkBytes
     (h_provable : Spec.Provable Γ fr (toExpr f)) :
   ∃ (proof : Array String) (pr_final : Verify.ProofState) (f' : Verify.Formula),
     proof.foldlM (fun pr step => Verify.DB.stepNormal (Verify.checkBytes bytes) pr step)
-      ⟨⟨0, 0⟩, label, f, (Verify.checkBytes bytes).frame, #[], #[], Verify.ProofTokenParser.normal⟩ =
+      ⟨⟨0, 0⟩, label, f, (Verify.checkBytes bytes).frame, #[], #[], Verify.ProofTokenParser.normal, false⟩ =
         Except.ok pr_final ∧
     pr_final.stack.size = 1 ∧
     pr_final.stack[0]? = some f' ∧
@@ -10910,7 +10911,7 @@ theorem verify_parser_sound_of_impl_acceptance
     (h_accept :
       ∃ pr_final : Verify.ProofState,
         proof.foldlM (fun pr step => Verify.DB.stepNormal (Verify.checkBytes bytes) pr step)
-          ⟨⟨0, 0⟩, label, f, (Verify.checkBytes bytes).frame, #[], #[], Verify.ProofTokenParser.normal⟩ =
+          ⟨⟨0, 0⟩, label, f, (Verify.checkBytes bytes).frame, #[], #[], Verify.ProofTokenParser.normal, false⟩ =
             Except.ok pr_final ∧
         pr_final.stack.size = 1 ∧
         pr_final.stack[0]? = some f) :
@@ -10925,7 +10926,7 @@ theorem verify_parser_sound_of_impl_acceptance
   have h_accept' :
       ∃ pr_final : Verify.ProofState,
         proof.foldlM (fun pr step => Verify.DB.stepNormal db pr step)
-          ⟨⟨0, 0⟩, label, f, db.frame, #[], #[], Verify.ProofTokenParser.normal⟩ =
+          ⟨⟨0, 0⟩, label, f, db.frame, #[], #[], Verify.ProofTokenParser.normal, false⟩ =
             Except.ok pr_final ∧
         pr_final.stack.size = 1 ∧
         pr_final.stack[0]? = some f := by
@@ -10944,7 +10945,7 @@ theorem verify_parser_sound_of_impl_acceptance_equiv
     (h_accept :
       ∃ (proof : Array String) (pr_final : Verify.ProofState) (f' : Verify.Formula),
         proof.foldlM (fun pr step => Verify.DB.stepNormal (Verify.checkBytes bytes) pr step)
-          ⟨⟨0, 0⟩, label, f, (Verify.checkBytes bytes).frame, #[], #[], Verify.ProofTokenParser.normal⟩ =
+          ⟨⟨0, 0⟩, label, f, (Verify.checkBytes bytes).frame, #[], #[], Verify.ProofTokenParser.normal, false⟩ =
             Except.ok pr_final ∧
         pr_final.stack.size = 1 ∧
         pr_final.stack[0]? = some f' ∧
@@ -10973,14 +10974,14 @@ theorem verify_parser_sound_of_impl_acceptance_equiv
 
 Under parse success, implementation acceptance (up to final formula expression
 equivalence) is equivalent to spec provability. -/
-theorem verify_parser_acceptance_iff_spec_provable
+theorem proofChecker_normal_acceptance_iff_specProvable_in_parsedDB
     (bytes : ByteArray)
     (label : String)
     (f : Verify.Formula)
     (h_success : (Verify.checkBytes bytes).error? = none) :
     (∃ (proof : Array String) (pr_final : Verify.ProofState) (f' : Verify.Formula),
       proof.foldlM (fun pr step => Verify.DB.stepNormal (Verify.checkBytes bytes) pr step)
-        ⟨⟨0, 0⟩, label, f, (Verify.checkBytes bytes).frame, #[], #[], Verify.ProofTokenParser.normal⟩ =
+        ⟨⟨0, 0⟩, label, f, (Verify.checkBytes bytes).frame, #[], #[], Verify.ProofTokenParser.normal, false⟩ =
           Except.ok pr_final ∧
       pr_final.stack.size = 1 ∧
       pr_final.stack[0]? = some f' ∧
@@ -11006,8 +11007,10 @@ assertion itself with the identity substitution.
   final database `Γ` (including `l` itself).
 - For axioms ($a), self-use IS the correct semantics.
 - For proved theorems ($p), self-use is weaker than the parser's original validation.
-  The stronger prefix-witness theorem (each $p provable at insertion time using only
-  prior assertions) requires parser-trace induction and is future work.
+  The stronger prefix-witness result is `checkBytes_feedEvents_prefix_provable`
+  in `Metamath.PrefixWitnessCheckBytes`: every finish-proof event in the feed loop
+  is `Provable` in the database as it stood at that event, by parser-trace
+  induction.  Cite that, not this, for what acceptance guarantees.
 - `Object.assert` does not distinguish axioms from proved theorems.
 
 **Non-vacuity**: For any `.mm` file containing at least one `$a` or `$p` statement,
@@ -11224,17 +11227,25 @@ theorem assertion_self_provable
 
 /-! ### Parser-level theorem: all stored assertions are self-provable -/
 
-/-- **All assertions stored by `checkBytes` are self-provable.**
+/-- Closure of the stored database under citing its own entries.
 
-    For any successful parse, every entry `Γ l = some (fr, e)` in the spec-level
-    database satisfies `Spec.Provable Γ fr e`.
+    **This is not a soundness result and must not be read as one.**  For every
+    entry `Γ l = some (fr, e)` it produces `Spec.Provable Γ fr e` by citing `l`
+    itself under the identity substitution (`assertion_self_provable`) — the
+    stored proof of a `$p` is never consulted, and the witness would exist even
+    if that proof were nonsense.  For an axiom, self-citation *is* the semantics,
+    so the statement has content only there.
 
-    This is a DB-closure property: it uses the full database `Γ` (including `l`
-    itself). For axioms, self-use IS the semantics. For proved theorems, self-use
-    is weaker than the parser's validation but still honest.
+    What it does establish is that the spec-level projection is well-formed
+    enough for every entry to be cited: frames convert, `FloatUnique` and
+    `DVWellFormed` hold throughout.
 
-    See `assertion_self_provable` for the proof technique (identity substitution). -/
-theorem checkBytes_all_assertions_selfProvable
+    The result that actually validates proofs is
+    `checkBytes_feedEvents_prefix_provable`: every finish-proof event of the
+    feed loop is derived from the database as it stood *before* insertion.
+    Whether every stored `$p` entry arises from such an event is a separate,
+    still-open coverage statement. -/
+theorem checkBytes_assertions_selfCitable
     (bytes : ByteArray)
     (h_success : (Verify.checkBytes bytes).error? = none) :
     ∃ (Γ : Spec.Database),
@@ -11268,9 +11279,11 @@ parser's original validation but still honest.
 - `toDatabase_insert_subset`: spec DB subset after DB.insert
 - `provable_lifts_across_insert`: provability lifts across database extensions
 
-**What remains (future work):**
-Prefix-witness theorem: every `$p` theorem is `Provable` in the database at insertion time
-(requires parser-trace induction, separate effort).
+**Where the prefix-witness result lives:** `Metamath.PrefixWitnessCheckBytes`.
+Every finish-proof event in the feed loop is `Provable` in the database as it stood
+at that event, by parser-trace induction, lifted to `checkBytes`;
+`finishProofEvent_stores_provable_entry` links each event to the entry it
+creates.  Coverage of *all* stored `$p` entries by such events remains open.
 -/
 
 section PhaseC1_InsertMonotonicity
@@ -11322,7 +11335,7 @@ theorem toFrame_stable_under_insert
     - `h_hyp_disjoint`: no existing assertion's hypothesis labels clash with `new_label`
       (hypothesis labels are defined before the assertion, so they have different labels)
 
-    **Proof structure (per Codex):**
+    **Proof structure:**
     - `l = new_label`: `Γ l = some x` requires `db.find? new_label = some (.assert ...)`,
       contradicting `h_fresh`
     - `l ≠ new_label`: `find?` preserved by `insert_preserves_find?_ne`, `toFrame` preserved

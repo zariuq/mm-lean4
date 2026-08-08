@@ -54,12 +54,14 @@ Columns:
 | unknownStatementType | unknown statement type <type> | sec4_3_statementTermination | TokenFormViolation |
 | internalIllFormedDatabaseAfterParse | internal error: ill-formed database after parse | sec4_3_statementTermination | InternalConsistencyViolation |
 | includeCycleDetected | include cycle detected: '<path>' is already being processed | sec4_1_2_includes | IncludeViolation |
+| includeDepthExceeded | include depth limit exceeded (increase maxIncludeDepth in ModeConfig) | impl_resourceBound | IncludeViolation |
 | includeInInnerScope | include in inner scope (config requires outermost scope only, spec §4.1.2) | sec4_1_2_includes | IncludeViolation |
 | includeInsideStatement | include inside statement (config forbids token splicing, spec §4.1.2) | sec4_1_2_includes | IncludeViolation |
 | includeExtractedEmptyPath | extracted empty path from position <start> to <end> in <file> | sec4_1_2_includes | IncludeViolation |
 | includeEmptyPathBeforeNormalization | extracted empty include path before normalization in <file> | sec4_1_2_includes | IncludeViolation |
 | includePathEmptyAfterNormalization | include path became empty after normalizing './' prefix (original was '<path>') in <file> | sec4_1_2_includes | IncludeViolation |
 | includeReadFailure | failed to read include file '<name>' (resolved to '<path>'): <error> | sec4_1_2_includes | IncludeReadFailureViolation |
+| includeBudgetExhausted | include resolution budget exhausted (increase maxIncludeResolutions in ModeConfig) | impl_resourceBound | IncludeViolation |
 
 ## Numeric Stability and Payload Schema
 

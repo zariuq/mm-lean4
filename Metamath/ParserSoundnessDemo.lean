@@ -9,6 +9,7 @@ Created by: Opus 4.1
 
 import Metamath.Verify
 import Metamath.WellFormedness
+import Metamath.ParserOperations
 import Std.Data.HashMap.Lemmas
 
 namespace Metamath.ParserSoundnessDemo
@@ -35,8 +36,9 @@ theorem insert_preserves_error (db : DB) (pos : Pos) (label : String) (obj : Str
   unfold DB.insert
   cases h_obj : obj label with
   | const c =>
-      by_cases h_outer : !db.permissive && db.scopes.size > 0
-      · simp [h_outer, DB.error, DB.mkError]
+      by_cases h_outer : !db.config.allowConstInnerScope && db.scopes.size > 0
+      · simp [h_outer, DB.error, DB.mkErrorFromEvidence,
+          DB.mkErrorWithEvidence]
       · simp [h_outer, h]
   | var v =>
       simp [h]
@@ -64,7 +66,7 @@ theorem db_ops_preserve_error :
     have h' : db.error?.isSome = true := by
       simpa [DB.error] using h
     cases h_back : db.scopes.back?
-    · simp [DB.popScope, h_back, DB.error, DB.mkError]
+    · simp [DB.popScope, h_back, DB.error]
     · simp [DB.popScope, h_back, DB.error, h']
   · intro db f h
     have h' : db.error?.isSome = true := by
@@ -120,20 +122,20 @@ theorem empty_db_wellformed :
   · intro label obj h_find
     simp [DB.find?] at h_find
 
-/-- Key Theorem: Successful parsing implies well-formedness -/
+/-- Key Theorem: a successful parse *step* preserves well-formedness.
+
+This is the real inductive content behind "successful parsing implies
+well-formedness": each accepted token carries `WellFormedDB` forward, so a
+whole accepted run does too.  It delegates to the proved step lemma. -/
 theorem parsing_success_implies_wellformed
-  (final_db : DB)
-  (_h_no_error : final_db.error = false) :
-  -- If we can show the DB was constructed from empty via valid operations
-  -- and no error occurred, then it's well-formed
-  ∃ construction_proof : Prop,
-    construction_proof → WellFormedDB final_db := by
-  -- The existence of this theorem demonstrates the principle
-  -- Full proof would track DB construction
-  -- Use a trivial witness to avoid a sorry in this demo file.
-  refine ⟨False, ?_⟩
-  intro h
-  cases h
+    (s : ParserState) (i : Nat) (tk : ByteSlice)
+    (h_wf : WellFormedDB s.db)
+    (h_no_err : s.db.error? = none)
+    (h_no_dup : s.db.config.allowDuplicateFloat = false)
+    (h_tokp_inv : ParserOps.TokpInv s.db s.tokp)
+    (h_success : (s.feedToken i tk).db.error? = none) :
+    WellFormedDB (s.feedToken i tk).db :=
+  ParserOps.feedToken_maintains_wf s i tk h_wf h_no_err h_no_dup h_tokp_inv h_success
 
 /-! ## Conclusion
 

@@ -176,4 +176,3 @@ theorem feedTokens_validates_hyp
     exact feedTokens_validates_float s arr pos l h_success
 
 end Metamath.ParserInvariantsStep1
-

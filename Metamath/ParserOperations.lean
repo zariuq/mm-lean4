@@ -668,7 +668,11 @@ theorem isVar_true_preserved_by_insert_any
               | var w =>
                   by_cases h_err : db.error = true
                   · simp [h_err, DB.find?]
-                  · simp [h_err, h_find_obj, DB.find?]
+                  · -- reactivation touches `activeVars` only, so `find?` and
+                    -- the error flag are unchanged either way
+                    cases h_act : db.isActiveVar v <;>
+                      simp [h_err, h_find_obj, h_act, DB.find?, DB.mkError,
+                        DB.mkErrorFromEvidence, DB.mkErrorWithEvidence]
               | hyp ess f lbl' =>
                   by_cases h_err : db.error = true
                   · simp [h_err, DB.find?]
@@ -4750,6 +4754,10 @@ the claimed formula respects that frame.
 def TokpInv (db : DB) : TokenParser → Prop
   | .comment p =>
       TokpInv db p
+  | .includePath resume _ =>
+      TokpInv db resume
+  | .includeClose resume _ _ =>
+      TokpInv db resume
   | .djvars arr =>
       ∀ v ∈ arr.toList, db.isVar v = true
   | .math arr _ =>
@@ -4784,12 +4792,34 @@ def ScopesWithinFrame (db : DB) : Prop :=
   ∀ i (hi : i < db.scopes.size), ScopeLE (db.scopes[i]'hi) db.frame.size
 
 def ScopesOk (db : DB) : Prop :=
-  ScopesMonotone db.scopes ∧ ScopesWithinFrame db
+  ScopesMonotone db.scopes ∧ ScopesWithinFrame db ∧ db.ActiveVarsBounded ∧
+    db.ActiveVarsSound ∧ db.ActiveVarsNodup
 
 /-- Parser-state invariant: the working DB stays well-formed and well-scoped, and
 the current token-parser state satisfies `TokpInv`. -/
 def ParserStateInv (s : ParserState) : Prop :=
   WellFormedDB s.db ∧ WellScopedDBWithScopes s.db ∧ ScopesOk s.db ∧ TokpInv s.db s.tokp
+
+/-- Consuming an include request raised from an error-free state preserves the
+full parser invariant whenever the restored continuation satisfies its token
+mode component.  This is the invariant-level driver boundary used for token
+splicing. -/
+theorem clearIncludeRequest_requestInclude_maintains_stateInv
+    (s : ParserState) (resume : TokenParser) (includePath : String)
+    (h_inv : ParserStateInv s) (h_resume : TokpInv s.db resume)
+    (h_errorFree : s.db.error? = none) :
+    ParserStateInv
+      (clearIncludeRequest (s.requestInclude resume includePath)) := by
+  have h_state :
+      clearIncludeRequest (s.requestInclude resume includePath) =
+        { s with tokp := resume } := by
+    cases s with
+    | mk db tokp charp line linepos sourceFile =>
+        simp only [ParserState.requestInclude, clearIncludeRequest]
+        congr
+        exact h_errorFree.symm
+  rw [h_state]
+  exact ⟨h_inv.1, h_inv.2.1, h_inv.2.2.1, h_resume⟩
 
 theorem FormulaSymbolsDeclared.nil (db : DB) :
     FormulaSymbolsDeclared db (#[] : Formula) := by
@@ -4897,7 +4927,7 @@ theorem initDB_scopesOk (config : ModeConfig) :
     ScopesOk ({ (default : DB) with config := config } : DB) := by
   classical
   let db : DB := { (default : DB) with config := config }
-  refine ⟨?_, ?_⟩
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩
   · intro i j hi hj hij
     have : False := by
       -- No saved scopes in the initial DB.
@@ -4908,6 +4938,18 @@ theorem initDB_scopesOk (config : ModeConfig) :
       -- No saved scopes in the initial DB.
       simpa [db] using hi
     exact this.elim
+  · -- the initial DB has no declarations, so the bound is vacuous
+    intro e h_mem
+    have h_empty : (default : DB).activeVars = #[] := rfl
+    rw [h_empty] at h_mem
+    simp at h_mem
+  · -- the initial DB declares nothing
+    intro e h_mem
+    have h_empty : (default : DB).activeVars = #[] := rfl
+    rw [h_empty] at h_mem
+    simp at h_mem
+  · have h_empty : (default : DB).activeVars = #[] := rfl
+    simp [DB.ActiveVarsNodup, db, h_empty]
 
 theorem initState_inv (config : ModeConfig) :
     ParserStateInv ({ (default : ParserState) with db := { (default : DB) with config := config } } : ParserState) := by
@@ -4921,8 +4963,8 @@ theorem scopesOk_withHyps_push
     (db : DB) (l : String) :
     ScopesOk db → ScopesOk (db.withHyps (·.push l)) := by
   intro h
-  rcases h with ⟨h_mono, h_within⟩
-  refine ⟨?_, ?_⟩
+  rcases h with ⟨h_mono, h_within, h_bnd, h_snd, h_nd⟩
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩
   · intro i j hi hj hij
     have hi_old : i < db.scopes.size := by
       simpa [DB.withHyps, DB.withFrame] using hi
@@ -4944,14 +4986,18 @@ theorem scopesOk_withHyps_push
           exact Nat.le_trans hy' (by simp [Array.size_push])
         exact ⟨by simpa [h_fr, DB.withHyps, DB.withFrame, Frame.size] using hx',
           by simpa [h_fr, DB.withHyps, DB.withFrame, Frame.size] using hy''⟩
+  · -- `withHyps` touches only the frame; activity and depth are untouched
+    exact h_bnd
+  · exact h_snd
+  · exact h_nd
 
 /-- Mined from the former `ParserOpsInvariants`: extending DV slots keeps `ScopesOk`. -/
 theorem scopesOk_withDJ_push
     (db : DB) (p : DJ) :
     ScopesOk db → ScopesOk (db.withDJ (·.push p)) := by
   intro h
-  rcases h with ⟨h_mono, h_within⟩
-  refine ⟨?_, ?_⟩
+  rcases h with ⟨h_mono, h_within, h_bnd, h_snd, h_nd⟩
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩
   · intro i j hi hj hij
     have hi_old : i < db.scopes.size := by
       simpa [DB.withDJ, DB.withFrame] using hi
@@ -4973,6 +5019,10 @@ theorem scopesOk_withDJ_push
           exact Nat.le_trans hx' (by simp [Array.size_push])
         exact ⟨by simpa [h_fr, DB.withDJ, DB.withFrame, Frame.size] using hx'',
           by simpa [h_fr, DB.withDJ, DB.withFrame, Frame.size] using hy'⟩
+  · -- `withDJ` touches only the frame; activity and depth are untouched
+    exact h_bnd
+  · exact h_snd
+  · exact h_nd
 
 theorem wellFormedDB_preserved_by_withDJ
     (db : DB) (f : Array DJ → Array DJ) :
@@ -5060,8 +5110,8 @@ theorem scopesOk_pushScope (db : DB) :
     ScopesOk db → ScopesOk db.pushScope := by
   classical
   intro h
-  rcases h with ⟨h_mono, h_within⟩
-  refine ⟨?_, ?_⟩
+  rcases h with ⟨h_mono, h_within, h_bnd, h_snd, h_nd⟩
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩
   · intro i j hi hj hij
     -- New scopes are `db.scopes.push db.frame.size`.
     by_cases hj_last : j = db.scopes.size
@@ -5156,6 +5206,14 @@ theorem scopesOk_pushScope (db : DB) :
         exact congrArg Prod.snd h_i
       rw [h_ifst, h_isnd]
       exact h_le
+  · -- opening a block only deepens the nesting, weakening the bound
+    intro e h_mem
+    have h_le := h_bnd e (by simpa [DB.pushScope] using h_mem)
+    simp only [DB.pushScope, Array.size_push]
+    omega
+  · -- opening a block touches neither the registry nor the stack
+    exact h_snd
+  · exact h_nd
 
 /-- `popScope` preserves `WellFormedDB` when it succeeds. -/
 theorem wellFormedDB_popScope
@@ -5174,7 +5232,7 @@ theorem scopesOk_popScope
     (h_success : (db.popScope pos).error? = none) :
     ScopesOk (db.popScope pos) := by
   classical
-  rcases h_ok with ⟨h_mono, h_within⟩
+  rcases h_ok with ⟨h_mono, h_within, h_bnd, h_snd, h_nd⟩
   unfold DB.popScope at h_success ⊢
   cases h_back : db.scopes.back? with
   | none =>
@@ -5220,7 +5278,7 @@ theorem scopesOk_popScope
                   simpa [h_fr, h_sc, Frame.size] using h_hyps
                 simp [h_fr, h_sc, Frame.size, Frame.shrink, Array.size_shrink,
                   Nat.min_eq_left h_dj', Nat.min_eq_left h_hyps']
-      refine ⟨?_, ?_⟩
+      refine ⟨?_, ?_, ?_, ?_, ?_⟩
       · -- ScopesMonotone for the popped scopes
         intro i j hi hj hij
         have hi_old : i < db.scopes.size := by
@@ -5268,6 +5326,19 @@ theorem scopesOk_popScope
           -- combine the inequality with the frame-size computation
           simpa [h_i, h_sc_eq, h_frame_size] using h_le_last
         simpa using h_frame
+      · -- popping keeps exactly the declarations tagged at surviving depths
+        intro e h_mem
+        simp only [Array.toList_filter, List.mem_filter,
+          decide_eq_true_eq] at h_mem
+        simpa [Array.size_pop] using h_mem.2
+      · -- popping only removes entries; the registry is untouched
+        intro e h_mem
+        simp only [Array.toList_filter, List.mem_filter,
+          decide_eq_true_eq] at h_mem
+        simpa using h_snd e h_mem.1
+      · -- a sublist of a pairwise-distinct list is pairwise-distinct
+        simp only [DB.ActiveVarsNodup, Array.toList_filter]
+        exact h_nd.sublist List.filter_sublist
 
 namespace Array
 
@@ -5356,7 +5427,7 @@ theorem wellScopedDBWithScopes_withDJ_push
   have h_scoped_sc : WellScopedFrame db (db.frame.shrink sc) := h_scopes sc h_mem'
   have h_scoped_sc' : WellScopedFrame db' (db.frame.shrink sc) := by
     simpa [db'] using (wellScopedFrame_preserved_by_withDJ db (f := (·.push p)) (fr := db.frame.shrink sc) h_scoped_sc)
-  rcases h_ok with ⟨_, h_within⟩
+  rcases h_ok with ⟨_, h_within, _, _, _⟩
   rcases Array.toList_mem_implies_index db.scopes sc h_mem' with ⟨i, hi, h_eq⟩
   have h_eq' : db.scopes[i]'hi = sc := by
     have h_bang : db.scopes[i]! = db.scopes[i]'hi := by
@@ -5437,12 +5508,576 @@ end List
   -- All preserve `scopes`.
   repeat (first | split | simp [DB.mkError] | rfl)
 
+/-- `insert` touches the activity stack in exactly one way: it may append the
+declared name tagged with the current block depth, and does nothing else to it.
+Both variable branches (fresh name, reactivated name) produce the same append. -/
+theorem insert_activeVars_cases (db : DB) (pos : Pos) (l : String) (obj : String → Object) :
+    (db.insert pos l obj).activeVars = db.activeVars ∨
+      (db.insert pos l obj).activeVars = db.activeVars.push (l, db.scopes.size) := by
+  unfold DB.insert
+  -- fix the constructor first, so both matches reduce together
+  cases h_obj : obj l <;> simp only [h_obj] <;> repeat' split
+  all_goals first
+    | (left; rfl)
+    | (right; rfl)
+
+/-- The registry only ever gains entries: `insert` writes a key only where the
+lookup was empty, so anything already found is still found afterwards. -/
+theorem insert_find?_mono (db : DB) (pos : Pos) (l : String) (obj : String → Object)
+    (n : String) (o : Object) (h : db.find? n = some o) :
+    (db.insert pos l obj).find? n = some o := by
+  unfold DB.insert
+  cases h_obj : obj l <;> simp only [h_obj] <;> repeat' split
+  all_goals
+    first
+      | exact h
+      | -- the write lands at `l`, which the branch reached only when `l` was absent
+        (by_cases h_eq : l = n
+         · subst h_eq
+           simp_all [DB.find?]
+         · first
+             | simp only [h_eq, if_false]
+             | simp_all [DB.find?])
+
+
+/-- `insert` writes only at `l`: every other name keeps its entry exactly.
+
+With `insert_find?_mono` this pins the whole effect of an insert on the registry,
+which is what an origin-coverage argument needs — a new `.assert` at `n` can only
+come from an insert whose label *is* `n`. -/
+theorem insert_find?_of_ne (db : DB) (pos : Pos) (l : String) (obj : String → Object)
+    (n : String) (h : n ≠ l) :
+    (db.insert pos l obj).find? n = db.find? n := by
+  have h' : l ≠ n := Ne.symm h
+  unfold DB.insert
+  cases h_obj : obj l <;> simp only [h_obj] <;> repeat' split
+  all_goals
+    simp_all [DB.find?, DB.error, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence,
+      DB.mkError, Std.HashMap.getElem?_insert, h, h']
+
+/-- A registry entry that is newly an `.assert` came from an insert *of* that
+assert, at that very label.
+
+This is the local half of origin coverage: combined with the fact that only two
+token dispatches insert an `.assert`, it says nothing else can manufacture one. -/
+theorem insert_new_assert_origin (db : DB) (pos : Pos) (l : String)
+    (obj : String → Object) (n : String) (f : Formula) (fr : Frame) (lbl : String)
+    (h_old : db.find? n = none)
+    (h_new : (db.insert pos l obj).find? n = some (.assert f fr lbl)) :
+    n = l ∧ obj l = .assert f fr lbl := by
+  by_cases h_eq : n = l
+  · subst h_eq
+    refine ⟨rfl, ?_⟩
+    revert h_new
+    unfold DB.insert
+    cases h_obj : obj n <;> simp only [h_obj] <;> repeat' split
+    all_goals
+      simp_all [DB.find?, DB.error, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence,
+        DB.mkError, Std.HashMap.getElem?_insert]
+  · exfalso
+    rw [insert_find?_of_ne db pos l obj n h_eq, h_old] at h_new
+    cases h_new
+
+/-- Comment mode never touches the registry, so it cannot create an assertion. -/
+theorem feedToken_comment_no_new_assert
+    (s : ParserState) (i : Nat) (tk : ByteSlice) (q : TokenParser)
+    (n : String) (f : Formula) (fr : Frame) (lbl : String)
+    (h_tokp : s.tokp = .comment q)
+    (h_old : s.db.find? n = none) :
+    (s.feedToken i tk).db.find? n ≠ some (.assert f fr lbl) := by
+  have h_find : (s.feedToken i tk).db.find? n = s.db.find? n := by
+    unfold ParserState.feedToken
+    rw [h_tokp]
+    repeat' split
+    all_goals
+      simp [DB.find?, ParserState.mkErrorFromEvidence, ParserState.mkErrorWithEvidence,
+        ParserState.mkError, ParserState.withDB, DB.mkErrorWithEvidence, DB.mkError]
+  rw [h_find, h_old]
+  simp
+
+/-- An insert whose payload is not an assertion cannot create one. -/
+theorem insert_nonassert_no_new_assert (db : DB) (pos : Pos) (l : String)
+    (obj : String → Object)
+    (h_shape : ∀ f fr lbl, obj l ≠ .assert f fr lbl)
+    (n : String) (f : Formula) (fr : Frame) (lbl : String)
+    (h_old : db.find? n = none) :
+    (db.insert pos l obj).find? n ≠ some (.assert f fr lbl) := by
+  intro h_new
+  obtain ⟨_, h_obj⟩ := insert_new_assert_origin db pos l obj n f fr lbl h_old h_new
+  exact h_shape f fr lbl h_obj
+
+/-- `withAt` never touches the registry: it either passes the state through or
+rewrites an error message. -/
+theorem withAt_objects (l : String) (f : Unit → ParserState) :
+    (ParserState.withAt l f).db.objects = (f ()).db.objects := by
+  unfold ParserState.withAt
+  cases h_err : (f ()).db.error? with
+  | none => simp [h_err]
+  | some it =>
+      cases it with
+      | mk e idx => cases e <;> simp [h_err, ParserState.withDB]
+
+/-- The check phase of `insertHyp` only raises errors; the registry is untouched. -/
+theorem insertHypChecks_objects (db : DB) (pos : Pos) (ess : Bool) (f : Formula) :
+    (db.insertHypChecks pos ess f).objects = db.objects := by
+  unfold DB.insertHypChecks
+  repeat' split
+  all_goals
+    try simp_all [DB.error, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence, DB.mkError]
+  all_goals repeat' split
+  all_goals
+    simp_all [DB.error, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence, DB.mkError]
+
+/-- `insertHyp` inserts a hypothesis, never an assertion. -/
+theorem insertHyp_no_new_assert (db : DB) (pos : Pos) (l : String) (ess : Bool)
+    (fm : Formula) (n : String) (f : Formula) (fr : Frame) (lbl : String)
+    (h_old : db.find? n = none) :
+    (db.insertHyp pos l ess fm).find? n ≠ some (.assert f fr lbl) := by
+  have h_old1 : (db.insertHypChecks pos ess fm).find? n = none := by
+    show (db.insertHypChecks pos ess fm).objects[n]? = none
+    rw [insertHypChecks_objects]
+    exact h_old
+  have h_shape : ∀ f' fr' lbl',
+      (Object.hyp ess fm : String → Object) l ≠ .assert f' fr' lbl' := by
+    intro _ _ _ h
+    cases h
+  intro h_new
+  simp only [DB.insertHyp] at h_new
+  split at h_new
+  · -- checks errored: registry untouched, contradicting the new entry
+    rw [h_old1] at h_new
+    cases h_new
+  · split at h_new
+    · -- insert errored: result is the insert state itself
+      exact insert_nonassert_no_new_assert _ _ _ _ h_shape n f fr lbl h_old1 h_new
+    · -- success: `withHyps` touches only the frame
+      exact insert_nonassert_no_new_assert _ _ _ _ h_shape n f fr lbl h_old1
+        (by simpa [DB.find?, DB.withHyps, DB.withFrame] using h_new)
+
+/-- `insertAxiom` extends the registry monotonically: existing entries survive. -/
+theorem insertAxiom_find?_mono (db : DB) (pos : Pos) (l : String) (fmla : Formula)
+    (n : String) (o : Object) (h : db.find? n = some o) :
+    (db.insertAxiom pos l fmla).find? n = some o := by
+  unfold DB.insertAxiom
+  by_cases h_head : fmla.hasConstHead = true
+  · rw [if_pos h_head]
+    by_cases h_e : db.error = true
+    · rw [if_pos h_e]
+      exact h
+    · rw [if_neg h_e]
+      cases h_tf : db.trimFrame' fmla with
+      | ok fr =>
+          by_cases h_int : db.interrupt = true
+          · simp only [h_tf, if_pos h_int]
+            exact h
+          · simp only [h_tf, if_neg h_int]
+            exact insert_find?_mono _ _ _ _ n o h
+      | error err =>
+          simp only [h_tf]
+          exact h
+  · rw [if_neg h_head]
+    have h' : (db.mkErrorFromEvidence pos
+        (.scopeDecl .firstSymbolNotConstant)).find? n = some o := h
+    by_cases h_e : (db.mkErrorFromEvidence pos
+        (.scopeDecl .firstSymbolNotConstant)).error = true
+    · rw [if_pos h_e]
+      exact h'
+    · rw [if_neg h_e]
+      cases h_tf : (db.mkErrorFromEvidence pos
+          (.scopeDecl .firstSymbolNotConstant)).trimFrame' fmla with
+      | ok fr =>
+          by_cases h_int : (db.mkErrorFromEvidence pos
+              (.scopeDecl .firstSymbolNotConstant)).interrupt = true
+          · simp only [h_tf, if_pos h_int]
+            exact h'
+          · simp only [h_tf, if_neg h_int]
+            exact insert_find?_mono _ _ _ _ n o h'
+      | error err =>
+          simp only [h_tf]
+          exact h'
+
+/-- `insertHyp` extends the registry monotonically. -/
+theorem insertHyp_find?_mono (db : DB) (pos : Pos) (l : String) (ess : Bool)
+    (fm : Formula) (n : String) (o : Object) (h : db.find? n = some o) :
+    (db.insertHyp pos l ess fm).find? n = some o := by
+  have h1 : (db.insertHypChecks pos ess fm).find? n = some o := by
+    show (db.insertHypChecks pos ess fm).objects[n]? = some o
+    rw [insertHypChecks_objects]
+    exact h
+  have h_mono := insert_find?_mono (db.insertHypChecks pos ess fm) pos l
+    (.hyp ess fm) n o h1
+  simp only [DB.insertHyp]
+  split
+  · exact h1
+  · split
+    · exact h_mono
+    · simpa [DB.find?, DB.withHyps, DB.withFrame] using h_mono
+
+/-- If `insert` created an entry, the insert took its success branch, so the
+error field is exactly the input's. -/
+theorem insert_new_entry_error_eq (db : DB) (pos : Pos) (l : String)
+    (obj : String → Object) (n : String) (o : Object)
+    (h_old : db.find? n = none)
+    (h_new : (db.insert pos l obj).find? n = some o) :
+    (db.insert pos l obj).error? = db.error? := by
+  revert h_new
+  unfold DB.insert
+  cases h_obj : obj l <;> simp only [h_obj] <;> repeat' split
+  all_goals
+    intro h_new
+    first
+      | rfl
+      | (exfalso
+         simp_all [DB.find?, DB.error, DB.mkErrorFromEvidence,
+           DB.mkErrorWithEvidence, DB.mkError])
+
+/-- If `insertAxiom` created an entry, the result carries no error beyond the
+input's: creation forces the success path. -/
+theorem insertAxiom_new_entry_error_eq (db : DB) (pos : Pos) (l : String)
+    (fmla : Formula) (n : String) (o : Object)
+    (h_old : db.find? n = none)
+    (h_new : (db.insertAxiom pos l fmla).find? n = some o) :
+    (db.insertAxiom pos l fmla).error? = db.error? := by
+  revert h_new
+  unfold DB.insertAxiom
+  by_cases h_head : fmla.hasConstHead = true
+  · rw [if_pos h_head]
+    by_cases h_e : db.error = true
+    · rw [if_pos h_e]
+      intro _
+      rfl
+    · rw [if_neg h_e]
+      cases h_tf : db.trimFrame' fmla with
+      | ok fr =>
+          by_cases h_int : db.interrupt = true
+          · simp only [h_tf, if_pos h_int]
+            intro h_new
+            exfalso
+            rw [show ({ db with error? := some ⟨.ax pos l fmla fr, default⟩ } :
+              DB).find? n = db.find? n from rfl, h_old] at h_new
+            cases h_new
+          · simp only [h_tf, if_neg h_int]
+            exact insert_new_entry_error_eq db pos l _ n o h_old
+      | error err =>
+          simp only [h_tf]
+          intro h_new
+          exfalso
+          have h_new' : db.find? n = some o := h_new
+          rw [h_old] at h_new'
+          cases h_new'
+  · rw [if_neg h_head]
+    intro h_new
+    have h_old' : (db.mkErrorFromEvidence pos
+        (.scopeDecl .firstSymbolNotConstant)).find? n = none := h_old
+    by_cases h_e : (db.mkErrorFromEvidence pos
+        (.scopeDecl .firstSymbolNotConstant)).error = true
+    · rw [if_pos h_e] at h_new
+      exact absurd h_new (by rw [h_old']; simp)
+    · exfalso
+      have : (db.mkErrorFromEvidence pos
+          (.scopeDecl .firstSymbolNotConstant)).error = true := by
+        simp [DB.error, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence, DB.mkError]
+      exact h_e this
+
+/-- If `insertHyp` created an entry, the operation succeeded. -/
+theorem insertHyp_new_entry_error_eq (db : DB) (pos : Pos) (l : String)
+    (ess : Bool) (fm : Formula) (n : String) (o : Object)
+    (h_err0 : db.error? = none)
+    (h_old : db.find? n = none)
+    (h_new : (db.insertHyp pos l ess fm).find? n = some o) :
+    (db.insertHyp pos l ess fm).error? = none := by
+  have h_old1 : (db.insertHypChecks pos ess fm).find? n = none := by
+    show (db.insertHypChecks pos ess fm).objects[n]? = none
+    rw [insertHypChecks_objects]
+    exact h_old
+  revert h_new
+  simp only [DB.insertHyp]
+  split
+  · intro h_new
+    exfalso
+    rw [h_old1] at h_new
+    cases h_new
+  · rename_i h_chk_ok
+    have h_chk_err : (db.insertHypChecks pos ess fm).error? = none := by
+      cases h_e : (db.insertHypChecks pos ess fm).error? with
+      | none => rfl
+      | some it =>
+          exfalso
+          exact h_chk_ok (by simp [DB.error, h_e])
+    split
+    · rename_i h_ins_err
+      intro h_new
+      exfalso
+      have h_eq := insert_new_entry_error_eq (db.insertHypChecks pos ess fm)
+        pos l (.hyp ess fm) n o h_old1 h_new
+      have h_none : ((db.insertHypChecks pos ess fm).insert pos l
+          (.hyp ess fm)).error? = none := by rw [h_eq, h_chk_err]
+      have h_false : ((db.insertHypChecks pos ess fm).insert pos l
+          (.hyp ess fm)).error = false := by
+        simp [DB.error, h_none]
+      rw [h_ins_err] at h_false
+      cases h_false
+    · intro h_new
+      have h_new' : ((db.insertHypChecks pos ess fm).insert pos l
+          (.hyp ess fm)).find? n = some o := by
+        simpa [DB.find?, DB.withHyps, DB.withFrame] using h_new
+      have h_eq := insert_new_entry_error_eq (db.insertHypChecks pos ess fm)
+        pos l (.hyp ess fm) n o h_old1 h_new'
+      show (((db.insertHypChecks pos ess fm).insert pos l
+        (.hyp ess fm)).withHyps (fun hyps => hyps.push l)).error? = none
+      simp only [DB.withHyps, DB.withFrame]
+      rw [h_eq, h_chk_err]
+
+/-- An error slot that does not carry an include request.  `none` qualifies. -/
+def ErrorNotRequest (o : Option Interrupt) : Prop :=
+  ∀ sf pf idx, o ≠ some ⟨.includeRequest sf pf, idx⟩
+
+theorem errorNotRequest_none : ErrorNotRequest none := by
+  intro _ _ _ h
+  cases h
+
+theorem errorNotRequest_mkError (db : DB) (pos : Pos) (ev : ErrorEvidence) :
+    ErrorNotRequest (db.mkErrorFromEvidence pos ev).error? := by
+  intro sf pf idx h
+  simp [DB.mkErrorFromEvidence, DB.mkErrorWithEvidence, DB.mkError] at h
+
+theorem errorNotRequest_mkParseError (db : DB) (pos : Pos) (e : DoneModeError) :
+    ErrorNotRequest (db.mkParseError pos e).error? := by
+  intro sf pf idx h
+  simp [DB.mkParseError, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence,
+    DB.mkError] at h
+
+/-- `insert` either passes the input's error slot through or raises a
+message-carrying `.error`. -/
+theorem insert_errorNotRequest (db : DB) (pos : Pos) (l : String)
+    (obj : String → Object) (h : ErrorNotRequest db.error?) :
+    ErrorNotRequest (db.insert pos l obj).error? := by
+  unfold DB.insert
+  cases h_obj : obj l <;> simp only [h_obj] <;> repeat' split
+  all_goals
+    first
+      | exact h
+      | exact errorNotRequest_mkError _ _ _
+      | (intro sf pf idx hx
+         simp [DB.mkErrorFromEvidence, DB.mkErrorWithEvidence, DB.mkError] at hx)
+
+/-- `insertAxiom`: pass-through, `.error`, or an `.ax` interrupt — never a
+request. -/
+theorem insertAxiom_errorNotRequest (db : DB) (pos : Pos) (l : String)
+    (fmla : Formula) (h : ErrorNotRequest db.error?) :
+    ErrorNotRequest (db.insertAxiom pos l fmla).error? := by
+  unfold DB.insertAxiom
+  by_cases h_head : fmla.hasConstHead = true
+  · rw [if_pos h_head]
+    by_cases h_e : db.error = true
+    · rw [if_pos h_e]
+      exact h
+    · rw [if_neg h_e]
+      cases h_tf : db.trimFrame' fmla with
+      | ok fr =>
+          by_cases h_int : db.interrupt = true
+          · simp only [h_tf, if_pos h_int]
+            intro sf pf idx hx
+            simp at hx
+          · simp only [h_tf, if_neg h_int]
+            exact insert_errorNotRequest _ _ _ _ h
+      | error err =>
+          simp only [h_tf]
+          intro sf pf idx hx
+          injection hx with hh
+          injection hh with he hi
+          cases he
+  · rw [if_neg h_head]
+    by_cases h_e : (db.mkErrorFromEvidence pos
+        (.scopeDecl .firstSymbolNotConstant)).error = true
+    · rw [if_pos h_e]
+      exact errorNotRequest_mkError _ _ _
+    · rw [if_neg h_e]
+      cases h_tf : (db.mkErrorFromEvidence pos
+          (.scopeDecl .firstSymbolNotConstant)).trimFrame' fmla with
+      | ok fr =>
+          by_cases h_int : (db.mkErrorFromEvidence pos
+              (.scopeDecl .firstSymbolNotConstant)).interrupt = true
+          · simp only [h_tf, if_pos h_int]
+            intro sf pf idx hx
+            simp at hx
+          · simp only [h_tf, if_neg h_int]
+            exact insert_errorNotRequest _ _ _ _ (errorNotRequest_mkError _ _ _)
+      | error err =>
+          simp only [h_tf]
+          intro sf pf idx hx
+          injection hx with hh
+          injection hh with he hi
+          cases he
+
+/-- `insertHypChecks` only raises `.error`s. -/
+theorem insertHypChecks_errorNotRequest (db : DB) (pos : Pos) (ess : Bool)
+    (f : Formula) (h : ErrorNotRequest db.error?) :
+    ErrorNotRequest (db.insertHypChecks pos ess f).error? := by
+  intro sf pf idx
+  have h' := h sf pf idx
+  unfold DB.insertHypChecks
+  repeat' split
+  all_goals
+    try simp_all [DB.error, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence,
+      DB.mkError]
+  all_goals repeat' split
+  all_goals
+    simp_all [DB.error, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence,
+      DB.mkError]
+
+theorem insertHyp_errorNotRequest (db : DB) (pos : Pos) (l : String)
+    (ess : Bool) (fm : Formula) (h : ErrorNotRequest db.error?) :
+    ErrorNotRequest (db.insertHyp pos l ess fm).error? := by
+  have h1 := insertHypChecks_errorNotRequest db pos ess fm h
+  intro sf pf idx
+  revert sf pf idx
+  show ErrorNotRequest _
+  simp only [DB.insertHyp]
+  split
+  · exact h1
+  · split
+    · exact insert_errorNotRequest _ _ _ _ h1
+    · intro sf pf idx hx
+      exact insert_errorNotRequest _ _ _ _ h1 sf pf idx
+        (by simpa [DB.withHyps, DB.withFrame] using hx)
+
+/-- If `insertAxiom` created an entry, everything about it is pinned: the label
+is the statement's own, the formula is the accumulated one, the frame is the
+successful trim, and the constant-head gate must have passed — derived from
+creation, not assumed. -/
+theorem insertAxiom_new_assert_origin (db : DB) (pos : Pos) (l : String)
+    (fmla : Formula) (n : String) (f : Formula) (fr : Frame) (lbl : String)
+    (h_err0 : db.error? = none)
+    (h_old : db.find? n = none)
+    (h_new : (db.insertAxiom pos l fmla).find? n = some (.assert f fr lbl)) :
+    n = l ∧ f = fmla ∧ lbl = n ∧ fmla.hasConstHead = true
+      ∧ db.trimFrame' fmla = .ok fr := by
+  have h_e : db.error = false := by simp [DB.error, h_err0]
+  revert h_new
+  unfold DB.insertAxiom
+  by_cases h_head : fmla.hasConstHead = true
+  · rw [if_pos h_head, if_neg (by simp [h_e])]
+    cases h_tf : db.trimFrame' fmla with
+    | ok fr' =>
+        by_cases h_int : db.interrupt = true
+        · simp only [h_tf, if_pos h_int]
+          intro h_new
+          exfalso
+          have h_new' : db.find? n = some (.assert f fr lbl) := h_new
+          rw [h_old] at h_new'
+          cases h_new'
+        · simp only [h_tf, if_neg h_int]
+          intro h_new
+          obtain ⟨h_n, h_obj⟩ :=
+            insert_new_assert_origin db pos l (.assert fmla fr') n f fr lbl
+              h_old h_new
+          have h_f : fmla = f := by injection h_obj with a b c
+          have h_fr : fr' = fr := by injection h_obj with a b c
+          have h_lbl : l = lbl := by injection h_obj with a b c
+          exact ⟨h_n, h_f.symm, by rw [← h_lbl, h_n], h_head, congrArg Except.ok h_fr⟩
+    | error err =>
+        simp only [h_tf]
+        intro h_new
+        exfalso
+        have h_new' : db.find? n = some (.assert f fr lbl) := h_new
+        rw [h_old] at h_new'
+        cases h_new'
+  · rw [if_neg h_head]
+    rw [if_pos (by
+      simp [DB.error, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence, DB.mkError])]
+    intro h_new
+    exfalso
+    have h_new' : db.find? n = some (.assert f fr lbl) := h_new
+    rw [h_old] at h_new'
+    cases h_new'
+
+/-- Declaration keeps every name that was already a variable a variable. -/
+theorem insert_isVar_mono (db : DB) (pos : Pos) (l : String) (obj : String → Object)
+    (n : String) (h : db.isVar n = true) : (db.insert pos l obj).isVar n = true := by
+  unfold DB.isVar at h ⊢
+  cases h_find : db.find? n with
+  | none => rw [h_find] at h; simp at h
+  | some o =>
+      cases o with
+      | var v => simp [insert_find?_mono db pos l obj n (.var v) h_find]
+      | const _ => rw [h_find] at h; simp at h
+      | hyp _ _ _ => rw [h_find] at h; simp at h
+      | assert _ _ _ => rw [h_find] at h; simp at h
+
+/-- The sharp form of `insert_activeVars_cases`: when the activity stack does
+grow, the pushed name is a registered variable afterwards and was not already on
+the stack.  Registry soundness is what rules out a stale entry for a name the
+registry has never seen. -/
+theorem insert_activeVars_push_props (db : DB) (pos : Pos) (l : String)
+    (obj : String → Object) (h_snd : db.ActiveVarsSound) :
+    (db.insert pos l obj).activeVars = db.activeVars ∨
+      ((db.insert pos l obj).activeVars = db.activeVars.push (l, db.scopes.size)
+        ∧ (db.insert pos l obj).isVar l = true
+        ∧ ∀ a ∈ db.activeVars.toList, a.1 ≠ l) := by
+  unfold DB.insert
+  cases h_obj : obj l with
+  | const c =>
+      left
+      simp only [h_obj]
+      repeat' split
+      all_goals rfl
+  | hyp e f lbl =>
+      left
+      simp only [h_obj]
+      repeat' split
+      all_goals rfl
+  | assert f fr lbl =>
+      left
+      simp only [h_obj]
+      repeat' split
+      all_goals rfl
+  | var v =>
+      simp only [h_obj]
+      by_cases h_err : db.error = true
+      · left; simp [h_err]
+      · cases h_find : db.find? l with
+        | none =>
+            right
+            refine ⟨by simp [h_err, h_find], ?_, ?_⟩
+            · simp [DB.isVar, DB.find?, h_err, h_find, h_obj]
+            · intro a h_a h_eq
+              have h_var := h_snd a h_a
+              rw [h_eq] at h_var
+              simp [DB.isVar, h_find] at h_var
+        | some o =>
+            cases o with
+            | var v' =>
+                by_cases h_act : db.isActiveVar l = true
+                · left; simp [h_err, h_find, h_act, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence, DB.mkError]
+                · right
+                  refine ⟨by simp [h_err, h_find, h_act],
+                    by simp [DB.isVar, h_err, h_find, h_act], ?_⟩
+                  intro a h_a h_eq
+                  have h_var : db.isVar l = true := by simp [DB.isVar, h_find]
+                  have h_any : (db.activeVars.any fun e => e.1 == l) = false := by
+                    unfold DB.isActiveVar at h_act
+                    simp only [Bool.and_eq_true, h_var, true_and,
+                      Bool.not_eq_true] at h_act
+                    simpa using h_act
+                  rw [Array.any_eq_false] at h_any
+                  obtain ⟨i, h_i, h_get⟩ : ∃ i, ∃ _ : i < db.activeVars.size,
+                      db.activeVars[i] = a := by
+                    simpa [Array.mem_iff_getElem] using
+                      (by simpa using h_a : a ∈ db.activeVars)
+                  have h_ne := h_any i h_i
+                  rw [h_get] at h_ne
+                  simpa [h_eq] using h_ne
+            | const _ => left; simp [h_err, h_find, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence, DB.mkError]
+            | hyp _ _ _ => left; simp [h_err, h_find, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence, DB.mkError]
+            | assert _ _ _ => left; simp [h_err, h_find, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence, DB.mkError]
+
 theorem scopesOk_insert
     (db : DB) (pos : Pos) (l : String) (obj : String → Object) :
     ScopesOk db → ScopesOk (db.insert pos l obj) := by
   intro h
-  rcases h with ⟨h_mono, h_within⟩
-  refine ⟨?_, ?_⟩
+  rcases h with ⟨h_mono, h_within, h_bnd, h_snd, h_nd⟩
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩
   · intro i j hi hj hij
     have hi_old : i < db.scopes.size := by
       simpa [insert_scopes] using hi
@@ -5453,6 +6088,39 @@ theorem scopesOk_insert
     have hi_old : i < db.scopes.size := by
       simpa [insert_scopes] using hi
     simpa [insert_scopes, insert_frame_unchanged] using h_within i hi_old
+  · -- `insert` may append the declared name at the current depth
+    intro e h_mem
+    rcases insert_activeVars_cases db pos l obj with h_same | h_push
+    · exact insert_scopes db pos l obj ▸ h_bnd e (by rwa [h_same] at h_mem)
+    · rw [h_push] at h_mem
+      simp only [Array.toList_push, List.mem_append, List.mem_singleton] at h_mem
+      rcases h_mem with h_old | h_new
+      · exact insert_scopes db pos l obj ▸ h_bnd e h_old
+      · subst h_new
+        simp [insert_scopes]
+  · -- registry entries survive, and a pushed name is registered by this very insert
+    intro e h_mem
+    rcases insert_activeVars_push_props db pos l obj h_snd with
+      h_same | ⟨h_push, h_isvar, _⟩
+    · rw [h_same] at h_mem
+      exact insert_isVar_mono db pos l obj e.1 (h_snd e h_mem)
+    · rw [h_push] at h_mem
+      simp only [Array.toList_push, List.mem_append, List.mem_singleton] at h_mem
+      rcases h_mem with h_old | h_new
+      · exact insert_isVar_mono db pos l obj e.1 (h_snd e h_old)
+      · subst h_new
+        exact h_isvar
+  · -- a push happens only for a name that is not already on the stack
+    rcases insert_activeVars_push_props db pos l obj h_snd with
+      h_same | ⟨h_push, _, h_fresh⟩
+    · simp only [DB.ActiveVarsNodup, h_same]
+      exact h_nd
+    · simp only [DB.ActiveVarsNodup, h_push, Array.toList_push]
+      refine List.pairwise_append.mpr ⟨h_nd, by simp, ?_⟩
+      intro a h_a b h_b
+      simp only [List.mem_singleton] at h_b
+      subst h_b
+      exact h_fresh a h_a
 
 theorem scopesOk_insertHypChecks
     (db : DB) (pos : Pos) (ess : Bool) (f : Formula) :
@@ -5543,7 +6211,7 @@ theorem insertHyp_full_maintains_scopedWithScopes
     WellScopedDBWithScopes (db.insertHyp pos l ess arr) := by
   classical
   rcases h_scoped with ⟨h_scoped_db, h_scopes_db⟩
-  rcases h_ok with ⟨_, h_within⟩
+  rcases h_ok with ⟨_, h_within, _, _, _⟩
 
   have h_scoped_new : WellScopedDB (db.insertHyp pos l ess arr) :=
     insertHyp_full_maintains_scoped db pos l ess arr
@@ -6335,12 +7003,23 @@ theorem feedToken_math_nonthm_maintains_wf
                     simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
                       h_math_ok, tk', h_find, Bind.bind]
                 | var _ =>
-                    simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
-                      h_math_ok, tk', h_find, Bind.bind]
+                    -- the `.var` arm gates on activity; an inactive variable errors,
+                    -- which `h_success` rules out
+                    cases h_act : s.db.isActiveVar tk' with
+                    | true =>
+                        simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
+                      h_math_ok, tk', h_find, h_act, Bind.bind]
+                    | false =>
+                        have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                          simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
+                      h_math_ok, tk', h_find, h_act, ParserState.mkErrorFromEvidence,
+                            ParserState.mkErrorWithEvidence, ParserState.mkError,
+                            ParserState.withDB, DB.mkErrorWithEvidence, DB.mkError]
+                        exact (h_bad h_success).elim
                 | hyp _ _ _ =>
                     have h_gate :
                         s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk') := by
-                      unfold DB.mathSymbolViolation? DB.isSym
+                      unfold DB.mathSymbolViolation?
                       simp [h_find]
                     have h_bad : (s.feedToken i tk).db.error? ≠ none := by
                       simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
@@ -6349,7 +7028,7 @@ theorem feedToken_math_nonthm_maintains_wf
                 | assert _ _ _ =>
                     have h_gate :
                         s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk') := by
-                      unfold DB.mathSymbolViolation? DB.isSym
+                      unfold DB.mathSymbolViolation?
                       simp [h_find]
                     have h_bad : (s.feedToken i tk).db.error? ≠ none := by
                       simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
@@ -6458,12 +7137,23 @@ theorem feedToken_math_nonthm_maintains_scopesOk
                     simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
                       h_math_ok, tk', h_find, Bind.bind]
                 | var _ =>
-                    simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
-                      h_math_ok, tk', h_find, Bind.bind]
+                    -- the `.var` arm gates on activity; an inactive variable errors,
+                    -- which `h_success` rules out
+                    cases h_act : s.db.isActiveVar tk' with
+                    | true =>
+                        simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
+                      h_math_ok, tk', h_find, h_act, Bind.bind]
+                    | false =>
+                        have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                          simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
+                      h_math_ok, tk', h_find, h_act, ParserState.mkErrorFromEvidence,
+                            ParserState.mkErrorWithEvidence, ParserState.mkError,
+                            ParserState.withDB, DB.mkErrorWithEvidence, DB.mkError]
+                        exact (h_bad h_success).elim
                 | hyp _ _ _ =>
                     have h_gate :
                         s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk') := by
-                      unfold DB.mathSymbolViolation? DB.isSym
+                      unfold DB.mathSymbolViolation?
                       simp [h_find]
                     have h_bad : (s.feedToken i tk).db.error? ≠ none := by
                       simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
@@ -6472,7 +7162,7 @@ theorem feedToken_math_nonthm_maintains_scopesOk
                 | assert _ _ _ =>
                     have h_gate :
                         s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk') := by
-                      unfold DB.mathSymbolViolation? DB.isSym
+                      unfold DB.mathSymbolViolation?
                       simp [h_find]
                     have h_bad : (s.feedToken i tk).db.error? ≠ none := by
                       simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
@@ -6545,12 +7235,21 @@ theorem feedToken_math_nonthm_maintains_scopedWithScopes
                     simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
                       h_math_ok, tk', h_find, Bind.bind]
                 | var _ =>
-                    simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
-                      h_math_ok, tk', h_find, Bind.bind]
+                    cases h_act : s.db.isActiveVar tk' with
+                    | true =>
+                        simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
+                      h_math_ok, tk', h_find, h_act, Bind.bind]
+                    | false =>
+                        have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                          simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
+                      h_math_ok, tk', h_find, h_act, ParserState.mkErrorFromEvidence,
+                            ParserState.mkErrorWithEvidence, ParserState.mkError,
+                            ParserState.withDB, DB.mkErrorWithEvidence, DB.mkError]
+                        exact (h_bad h_success).elim
                 | hyp _ _ _ =>
                     have h_gate :
                         s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk') := by
-                      unfold DB.mathSymbolViolation? DB.isSym
+                      unfold DB.mathSymbolViolation?
                       simp [h_find]
                     have h_bad : (s.feedToken i tk).db.error? ≠ none := by
                       simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
@@ -6559,7 +7258,7 @@ theorem feedToken_math_nonthm_maintains_scopedWithScopes
                 | assert _ _ _ =>
                     have h_gate :
                         s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk') := by
-                      unfold DB.mathSymbolViolation? DB.isSym
+                      unfold DB.mathSymbolViolation?
                       simp [h_find]
                     have h_bad : (s.feedToken i tk).db.error? ≠ none := by
                       simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
@@ -6581,7 +7280,7 @@ theorem wellScopedDBWithScopes_popScope
     WellScopedDBWithScopes (db.popScope pos) := by
   classical
   rcases h_scoped with ⟨h_scoped_db, h_scopes⟩
-  rcases h_ok with ⟨h_mono, h_within⟩
+  rcases h_ok with ⟨h_mono, h_within, h_bnd, h_snd, h_nd⟩
   unfold DB.popScope at h_success ⊢
   cases h_back : db.scopes.back? with
   | none =>
@@ -6738,9 +7437,15 @@ theorem wellScopedDBWithScopes_popScope
         have h_shrink : (db.frame.shrink sc).shrink sc' = db.frame.shrink sc' := by
           simpa using Frame.shrink_shrink_of_le (fr := db.frame) (a := sc) (b := sc') h_le'
         -- Transfer and rewrite.
+        -- `popScope` now also filters `activeVars`; well-scopedness reads
+        -- only `objects`, which the filter leaves untouched.
         have h_scoped_sc'' : WellScopedFrame db' (db.frame.shrink sc') := by
-          exact h_scoped_sc'
-        simpa [db', h_shrink] using h_scoped_sc''
+          obtain ⟨h1, h2⟩ := h_scoped_sc'
+          exact ⟨by simpa [db', DB.find?_with_activeVars] using h1,
+                 by simpa [db', DB.find?_with_activeVars] using h2⟩
+        obtain ⟨g1, g2⟩ := h_scoped_sc''
+        exact ⟨by simpa [db', h_shrink, DB.find?_with_activeVars] using g1,
+               by simpa [db', h_shrink, DB.find?_with_activeVars] using g2⟩
 
 /-- In `.start` mode, successful `feedToken` preserves `WellFormedDB`. -/
 theorem feedToken_start_maintains_wf
@@ -6827,7 +7532,7 @@ theorem feedToken_start_maintains_wf
 /-- In `.const` mode, successful `feedToken` preserves `WellFormedDB`. -/
 theorem feedToken_const_maintains_wf
     (s : ParserState) (i : Nat) (tk : ByteSlice)
-    (h_tokp : s.tokp = .const)
+    (seen : Bool) (h_tokp : s.tokp = .const seen)
     (h_wf : WellFormedDB s.db)
     (h_no_err : s.db.error? = none)
     (h_success : (s.feedToken i tk).db.error? = none) :
@@ -6852,7 +7557,11 @@ theorem feedToken_const_maintains_wf
       simpa [h_db_eq] using h_wf
     · by_cases h_end : tk.eqArray "$.".toAscii
       · have h_db_eq : (s.feedToken i tk).db = s.db := by
-          simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end, ParserState.sym]
+          cases seen <;>
+            simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end,
+              ParserState.sym, ParserState.mkErrorFromEvidence,
+              ParserState.mkErrorWithEvidence, ParserState.mkError,
+              ParserState.withDB, DB.mkErrorWithEvidence, DB.mkError] at h_success ⊢
         simpa [h_db_eq] using h_wf
       · by_cases h_math_ok : (toMath tk).fst = true
         · let tk' := (toMath tk).snd
@@ -6890,7 +7599,7 @@ theorem feedToken_const_maintains_wf
 /-- In `.var` mode, successful `feedToken` preserves `WellFormedDB`. -/
 theorem feedToken_var_maintains_wf
     (s : ParserState) (i : Nat) (tk : ByteSlice)
-    (h_tokp : s.tokp = .var)
+    (seen : Bool) (h_tokp : s.tokp = .var seen)
     (h_wf : WellFormedDB s.db)
     (h_no_err : s.db.error? = none)
     (h_success : (s.feedToken i tk).db.error? = none) :
@@ -6917,7 +7626,11 @@ theorem feedToken_var_maintains_wf
       simpa [h_db_eq] using h_wf
     · by_cases h_end : tk.eqArray "$.".toAscii
       · have h_db_eq : (s.feedToken i tk).db = s.db := by
-          simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end, ParserState.sym]
+          cases seen <;>
+            simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end,
+              ParserState.sym, ParserState.mkErrorFromEvidence,
+              ParserState.mkErrorWithEvidence, ParserState.mkError,
+              ParserState.withDB, DB.mkErrorWithEvidence, DB.mkError] at h_success ⊢
         simpa [h_db_eq] using h_wf
       · by_cases h_math_ok : (toMath tk).fst = true
         · let tk' := (toMath tk).snd
@@ -6947,10 +7660,30 @@ theorem feedToken_var_maintains_wf
           | some obj =>
               cases obj with
               | var _ =>
-                  have h_db_eq : (s.feedToken i tk).db = s.db := by
-                    simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end, ParserState.sym,
-                      ParserState.withMath, h_math_ok, tk', ParserState.withDB, h_find, DB.insert, h_no_err]
-                  simpa [h_db_eq] using h_wf
+                  -- a `$v` hit now either reactivates (activeVars only) or
+                  -- errors; well-formedness reads neither field
+                  cases h_act : s.db.isActiveVar tk' with
+                  | false =>
+                      have h_db_eq : (s.feedToken i tk).db =
+                          { s.db with activeVars :=
+                            s.db.activeVars.push (tk', s.db.scopes.size) } := by
+                        simp [ParserState.feedToken, h_tokp, h_open, h_include,
+                          h_end, ParserState.sym, ParserState.withMath,
+                          h_math_ok, tk', ParserState.withDB, h_find,
+                          DB.insert, h_no_err, h_act, h_db_err_false]
+                      rw [h_db_eq]
+                      exact h_wf
+                  | true =>
+                      -- an active redeclaration raises, contradicting success
+                      exfalso
+                      have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                        simp [ParserState.feedToken, h_tokp, h_open, h_include,
+                          h_end, ParserState.sym, ParserState.withMath,
+                          h_math_ok, tk', ParserState.withDB, h_find,
+                          DB.insert, h_act, h_db_err_false,
+                          DB.mkErrorFromEvidence, DB.mkErrorWithEvidence,
+                          DB.mkError]
+                      exact h_bad h_success
               | const _ =>
                   have h_bad : (s.feedToken i tk).db.error? ≠ none := by
                     simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end, ParserState.sym,
@@ -7066,7 +7799,7 @@ theorem feedToken_start_maintains_scopedWithScopes
 /-- In `.const` mode, successful `feedToken` preserves `WellScopedDBWithScopes`. -/
 theorem feedToken_const_maintains_scopedWithScopes
     (s : ParserState) (i : Nat) (tk : ByteSlice)
-    (h_tokp : s.tokp = .const)
+    (seen : Bool) (h_tokp : s.tokp = .const seen)
     (h_wf : WellFormedDB s.db)
     (h_scoped : WellScopedDBWithScopes s.db)
     (h_no_err : s.db.error? = none)
@@ -7092,7 +7825,11 @@ theorem feedToken_const_maintains_scopedWithScopes
       simpa [h_db_eq] using h_scoped
     · by_cases h_end : tk.eqArray "$.".toAscii
       · have h_db_eq : (s.feedToken i tk).db = s.db := by
-          simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end, ParserState.sym]
+          cases seen <;>
+            simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end,
+              ParserState.sym, ParserState.mkErrorFromEvidence,
+              ParserState.mkErrorWithEvidence, ParserState.mkError,
+              ParserState.withDB, DB.mkErrorWithEvidence, DB.mkError] at h_success ⊢
         simpa [h_db_eq] using h_scoped
       · by_cases h_math_ok : (toMath tk).fst = true
         · let tk' := (toMath tk).snd
@@ -7124,7 +7861,7 @@ theorem feedToken_const_maintains_scopedWithScopes
 /-- In `.var` mode, successful `feedToken` preserves `WellScopedDBWithScopes`. -/
 theorem feedToken_var_maintains_scopedWithScopes
     (s : ParserState) (i : Nat) (tk : ByteSlice)
-    (h_tokp : s.tokp = .var)
+    (seen : Bool) (h_tokp : s.tokp = .var seen)
     (h_wf : WellFormedDB s.db)
     (h_scoped : WellScopedDBWithScopes s.db)
     (h_no_err : s.db.error? = none)
@@ -7152,7 +7889,11 @@ theorem feedToken_var_maintains_scopedWithScopes
       simpa [h_db_eq] using h_scoped
     · by_cases h_end : tk.eqArray "$.".toAscii
       · have h_db_eq : (s.feedToken i tk).db = s.db := by
-          simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end, ParserState.sym]
+          cases seen <;>
+            simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end,
+              ParserState.sym, ParserState.mkErrorFromEvidence,
+              ParserState.mkErrorWithEvidence, ParserState.mkError,
+              ParserState.withDB, DB.mkErrorWithEvidence, DB.mkError] at h_success ⊢
         simpa [h_db_eq] using h_scoped
       · by_cases h_math_ok : (toMath tk).fst = true
         · let tk' := (toMath tk).snd
@@ -7176,10 +7917,27 @@ theorem feedToken_var_maintains_scopedWithScopes
           | some obj =>
               cases obj with
               | var _ =>
-                  have h_db_eq : (s.feedToken i tk).db = s.db := by
-                    simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end, ParserState.sym,
-                      ParserState.withMath, h_math_ok, tk', ParserState.withDB, h_find, DB.insert, h_no_err]
-                  simpa [h_db_eq] using h_scoped
+                  cases h_act : s.db.isActiveVar tk' with
+                  | false =>
+                      have h_db_eq : (s.feedToken i tk).db =
+                          { s.db with activeVars :=
+                            s.db.activeVars.push (tk', s.db.scopes.size) } := by
+                        simp [ParserState.feedToken, h_tokp, h_open, h_include,
+                          h_end, ParserState.sym, ParserState.withMath,
+                          h_math_ok, tk', ParserState.withDB, h_find,
+                          DB.insert, h_no_err, h_act, h_db_err_false]
+                      rw [h_db_eq]
+                      exact h_scoped
+                  | true =>
+                      exfalso
+                      have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                        simp [ParserState.feedToken, h_tokp, h_open, h_include,
+                          h_end, ParserState.sym, ParserState.withMath,
+                          h_math_ok, tk', ParserState.withDB, h_find,
+                          DB.insert, h_act, h_db_err_false,
+                          DB.mkErrorFromEvidence, DB.mkErrorWithEvidence,
+                          DB.mkError]
+                      exact h_bad h_success
               | const _ =>
                   have h_bad : (s.feedToken i tk).db.error? ≠ none := by
                     simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end, ParserState.sym,
@@ -7288,7 +8046,7 @@ theorem feedToken_start_maintains_scopesOk
 /-- In `.const` mode, successful `feedToken` preserves `ScopesOk`. -/
 theorem feedToken_const_maintains_scopesOk
     (s : ParserState) (i : Nat) (tk : ByteSlice)
-    (h_tokp : s.tokp = .const)
+    (seen : Bool) (h_tokp : s.tokp = .const seen)
     (h_ok : ScopesOk s.db)
     (h_success : (s.feedToken i tk).db.error? = none) :
     ScopesOk (s.feedToken i tk).db := by
@@ -7312,7 +8070,11 @@ theorem feedToken_const_maintains_scopesOk
       simpa [h_db_eq] using h_ok
     · by_cases h_end : tk.eqArray "$.".toAscii
       · have h_db_eq : (s.feedToken i tk).db = s.db := by
-          simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end, ParserState.sym]
+          cases seen <;>
+            simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end,
+              ParserState.sym, ParserState.mkErrorFromEvidence,
+              ParserState.mkErrorWithEvidence, ParserState.mkError,
+              ParserState.withDB, DB.mkErrorWithEvidence, DB.mkError] at h_success ⊢
         simpa [h_db_eq] using h_ok
       · by_cases h_math_ok : (toMath tk).fst = true
         · let tk' := (toMath tk).snd
@@ -7333,7 +8095,7 @@ theorem feedToken_const_maintains_scopesOk
 /-- In `.var` mode, successful `feedToken` preserves `ScopesOk`. -/
 theorem feedToken_var_maintains_scopesOk
     (s : ParserState) (i : Nat) (tk : ByteSlice)
-    (h_tokp : s.tokp = .var)
+    (seen : Bool) (h_tokp : s.tokp = .var seen)
     (h_ok : ScopesOk s.db)
     (h_success : (s.feedToken i tk).db.error? = none) :
     ScopesOk (s.feedToken i tk).db := by
@@ -7357,7 +8119,11 @@ theorem feedToken_var_maintains_scopesOk
       simpa [h_db_eq] using h_ok
     · by_cases h_end : tk.eqArray "$.".toAscii
       · have h_db_eq : (s.feedToken i tk).db = s.db := by
-          simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end, ParserState.sym]
+          cases seen <;>
+            simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end,
+              ParserState.sym, ParserState.mkErrorFromEvidence,
+              ParserState.mkErrorWithEvidence, ParserState.mkError,
+              ParserState.withDB, DB.mkErrorWithEvidence, DB.mkError] at h_success ⊢
         simpa [h_db_eq] using h_ok
       · by_cases h_math_ok : (toMath tk).fst = true
         · let tk' := (toMath tk).snd
@@ -7382,7 +8148,7 @@ theorem djvars_loop_aux_maintains_scopedWithScopes
     (h_scoped : WellScopedDBWithScopes s.db)
     (h_ok : ScopesOk s.db)
     (h_tokp : TokpInv s.db (.djvars arr))
-    (h_var : s.db.isVar tk = true)
+    (h_var : s.db.isActiveVar tk = true)
     (h_success : (ParserState.djvars_loop_aux arr s pos tk i).db.error? = none) :
     WellScopedDBWithScopes (ParserState.djvars_loop_aux arr s pos tk i).db := by
   -- Induction on the remainder `arr.size - i`.
@@ -7392,7 +8158,7 @@ theorem djvars_loop_aux_maintains_scopedWithScopes
       WellScopedDBWithScopes s.db →
       ScopesOk s.db →
       TokpInv s.db (.djvars arr) →
-      s.db.isVar tk = true →
+      s.db.isActiveVar tk = true →
       (ParserState.djvars_loop_aux arr s pos tk i).db.error? = none →
       WellScopedDBWithScopes (ParserState.djvars_loop_aux arr s pos tk i).db)
     ?base ?step (arr.size - i) i s rfl h_wf h_scoped h_ok h_tokp h_var h_success
@@ -7457,18 +8223,19 @@ theorem djvars_loop_aux_maintains_scopedWithScopes
           simpa [h_lt] using h_gt
       let p : DJ := if tk1 < tk then (tk1, tk) else (tk, tk1)
       have h_p : p = if tk1 < tk then (tk1, tk) else (tk, tk1) := rfl
+      have h_var' : s.db.isVar tk = true := DB.isActiveVar_isVar h_var
       have h_p' : p.1 < p.2 ∧
           s.db.isVar p.1 = true ∧
           s.db.isVar p.2 = true := by
         by_cases h_lt : tk1 < tk
-        · simp [h_p, h_lt, h_lt_pair, h_var_tk1, h_var]
+        · simp [h_p, h_lt, h_lt_pair, h_var_tk1, h_var']
         · -- In this branch p = (tk, tk1)
           have h_gt : tk < tk1 := by
             by_cases h_gt' : tk < tk1
             · exact h_gt'
             · have h_eq' : tk1 = tk := String.lt_antisymm h_lt h_gt'
               exact (h_ne h_eq').elim
-          simp [h_p, h_lt, h_gt, h_var_tk1, h_var]
+          simp [h_p, h_lt, h_gt, h_var_tk1, h_var']
       -- Update invariants for the recursive call.
       have h_wf' : WellFormedDB (s.db.withDJ (·.push p)) := by
         exact wellFormedDB_preserved_by_withDJ s.db (·.push p) h_wf
@@ -7481,8 +8248,10 @@ theorem djvars_loop_aux_maintains_scopedWithScopes
         intro v h_mem
         have h_old := h_tokp v h_mem
         simpa [DB.isVar, DB.withDJ, DB.withFrame, DB.find?] using h_old
-      have h_var' : (s.db.withDJ (·.push p)).isVar tk = true := by
-        simpa [DB.isVar, DB.withDJ, DB.withFrame, DB.find?] using h_var
+      -- `withDJ` touches only `frame.dj`, so both halves of activity survive
+      have h_var'' : (s.db.withDJ (·.push p)).isActiveVar tk = true := by
+        simpa [DB.isActiveVar, DB.isVar, DB.withDJ, DB.withFrame,
+          DB.find?] using h_var
       have h_success_rec :
           (ParserState.djvars_loop_aux arr (s.withDB fun db => db.withDJ (·.push p)) pos tk (i + 1)).db.error? = none := by
         simp only [tk1, h_p] at h_success' ⊢
@@ -7490,7 +8259,7 @@ theorem djvars_loop_aux_maintains_scopedWithScopes
       -- Apply IH
       have h_rec :=
         ih (i + 1) (s.withDB fun db => db.withDJ (·.push p)) hs'
-          h_wf' h_scoped' h_ok' h_tokp' h_var' h_success_rec
+          h_wf' h_scoped' h_ok' h_tokp' h_var'' h_success_rec
       -- finish by rewriting the outer call (avoid recursive simp loops)
       simpa [ParserState.djvars_loop_aux, hi, tk1, h_eq, ParserState.withDB, h_p,
         -ParserState.djvars_loop_aux.eq_1] using h_rec
@@ -7575,14 +8344,14 @@ theorem djvars_loop_maintains_scopesOk
 theorem djvars_loop_aux_maintains_tokpInv
     (arr : Array String) (s : ParserState) (pos : Pos) (tk : String) (i : Nat)
     (h_tokp : TokpInv s.db (.djvars arr))
-    (h_var : s.db.isVar tk = true)
+    (h_var : s.db.isActiveVar tk = true)
     (h_success : (ParserState.djvars_loop_aux arr s pos tk i).db.error? = none) :
     TokpInv (ParserState.djvars_loop_aux arr s pos tk i).db
       (ParserState.djvars_loop_aux arr s pos tk i).tokp := by
   refine Nat.rec (motive := fun m => ∀ i (s : ParserState),
       arr.size - i = m →
       TokpInv s.db (.djvars arr) →
-      s.db.isVar tk = true →
+      s.db.isActiveVar tk = true →
       (ParserState.djvars_loop_aux arr s pos tk i).db.error? = none →
       TokpInv (ParserState.djvars_loop_aux arr s pos tk i).db
         (ParserState.djvars_loop_aux arr s pos tk i).tokp)
@@ -7602,7 +8371,7 @@ theorem djvars_loop_aux_maintains_tokpInv
         exact h_tokp v h_old
     | inr h_eq =>
         subst h_eq
-        exact h_var
+        exact DB.isActiveVar_isVar h_var
   · intro m ih i s hs h_tokp h_var h_success
     have hi : i < arr.size := by
       by_cases hi' : i < arr.size
@@ -7637,8 +8406,9 @@ theorem djvars_loop_aux_maintains_tokpInv
         intro v h_mem
         have h_old := h_tokp v h_mem
         simpa [DB.isVar, DB.withDJ, DB.withFrame, DB.find?] using h_old
-      have h_var' : (s.db.withDJ (·.push p)).isVar tk = true := by
-        simpa [DB.isVar, DB.withDJ, DB.withFrame, DB.find?] using h_var
+      have h_var' : (s.db.withDJ (·.push p)).isActiveVar tk = true := by
+        simpa [DB.isActiveVar, DB.isVar, DB.withDJ, DB.withFrame,
+          DB.find?] using h_var
       have h_success_rec :
           (ParserState.djvars_loop_aux arr (s.withDB fun db => db.withDJ (·.push p)) pos tk (i + 1)).db.error? = none := by
         simpa [tk1, p] using h_success'
@@ -7731,6 +8501,64 @@ theorem djvars_loop_maintains_wf
         simpa [h_gate] using h_success
       exact (h_bad h_success').elim
 
+/-- An error-free `$d` terminator has accumulated at least two variables.
+This is the parser-side inversion of the Metamath book Section 4.2.4 arity
+requirement. -/
+theorem feedToken_djvars_terminator_size_ge_two
+    (s : ParserState) (i : Nat) (tk : ByteSlice) (arr : Array String)
+    (h_tokp : s.tokp = .djvars arr)
+    (h_open : tk.eqArray "$(".toAscii ≠ true)
+    (h_include : tk.eqArray "$[".toAscii ≠ true)
+    (h_end : tk.eqArray "$.".toAscii = true)
+    (h_success : (s.feedToken i tk).db.error? = none) :
+    2 ≤ arr.size := by
+  apply Nat.le_of_not_gt
+  intro h_short
+  have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+    simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end,
+      h_short, ParserState.mkErrorFromEvidence,
+      ParserState.mkErrorWithEvidence, ParserState.mkError,
+      ParserState.withDB, DB.mkErrorWithEvidence, DB.mkError]
+  exact h_bad h_success
+
+/-- Gate-origin: at a `$d` terminator with fewer than two accumulated
+variables, `feedToken` emits exactly the structured too-short evidence,
+carrying the observed count.  Together with
+`feedToken_djvars_terminator_size_ge_two` this pins both directions at the
+branch: success iff at least two variables, this error iff fewer. -/
+theorem feedToken_djvars_short_terminator_evidence
+    (s : ParserState) (i : Nat) (tk : ByteSlice) (arr : Array String)
+    (h_tokp : s.tokp = .djvars arr)
+    (h_open : tk.eqArray "$(".toAscii ≠ true)
+    (h_include : tk.eqArray "$[".toAscii ≠ true)
+    (h_end : tk.eqArray "$.".toAscii = true)
+    (h_short : arr.size < 2) :
+    (s.feedToken i tk).db.errorEvidence? =
+      some (.scopeDecl (.disjointStatementTooShort arr.size)) := by
+  simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end,
+    h_short, ParserState.mkErrorFromEvidence,
+    ParserState.mkErrorWithEvidence, ParserState.withDB,
+    DB.mkErrorFromEvidence, DB.mkErrorWithEvidence]
+
+/-- Exact `$d` terminator gate: from an error-free input state, the parser
+accepts the terminator precisely when at least two distinct active variables
+have been accumulated. -/
+theorem feedToken_djvars_terminator_errorFree_iff_size_ge_two
+    (s : ParserState) (i : Nat) (tk : ByteSlice) (arr : Array String)
+    (h_tokp : s.tokp = .djvars arr)
+    (h_open : tk.eqArray "$(".toAscii ≠ true)
+    (h_include : tk.eqArray "$[".toAscii ≠ true)
+    (h_end : tk.eqArray "$.".toAscii = true)
+    (h_errorFree : s.db.error? = none) :
+    (s.feedToken i tk).db.error? = none ↔ 2 ≤ arr.size := by
+  constructor
+  · exact feedToken_djvars_terminator_size_ge_two s i tk arr
+      h_tokp h_open h_include h_end
+  · intro h_size
+    have h_notShort : ¬ arr.size < 2 := Nat.not_lt.mpr h_size
+    simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end,
+      h_notShort, h_errorFree]
+
 /-- In `.djvars` mode, successful `feedToken` preserves `WellFormedDB`. -/
 theorem feedToken_djvars_maintains_wf
     (s : ParserState) (i : Nat) (tk : ByteSlice) (arr : Array String)
@@ -7757,8 +8585,12 @@ theorem feedToken_djvars_maintains_wf
         simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate_none]
       simpa [h_db_eq] using h_wf
     · by_cases h_end : tk.eqArray "$.".toAscii
-      · have h_db_eq : (s.feedToken i tk).db = s.db := by
-          simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end]
+      · have h_size := feedToken_djvars_terminator_size_ge_two
+          s i tk arr h_tokp h_open h_include h_end h_success
+        have h_not_short : ¬ arr.size < 2 := Nat.not_lt.mpr h_size
+        have h_db_eq : (s.feedToken i tk).db = s.db := by
+          simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end,
+            h_not_short]
         simpa [h_db_eq] using h_wf
       · by_cases h_math_ok : (toMath tk).fst = true
         · let tk' := (toMath tk).snd
@@ -7784,7 +8616,7 @@ theorem djvars_loop_maintains_scopedWithScopes
     (h_scoped : WellScopedDBWithScopes s.db)
     (h_ok : ScopesOk s.db)
     (h_tokp : TokpInv s.db (.djvars arr))
-    (h_var : s.db.isVar tk = true)
+    (h_var : s.db.isActiveVar tk = true)
     (h_success : (ParserState.djvars_loop arr s pos tk).db.error? = none) :
     WellScopedDBWithScopes (ParserState.djvars_loop arr s pos tk).db := by
   unfold ParserState.djvars_loop at h_success ⊢
@@ -7807,7 +8639,7 @@ theorem djvars_loop_maintains_scopedWithScopes
 theorem djvars_loop_maintains_tokpInv
     (arr : Array String) (s : ParserState) (pos : Pos) (tk : String)
     (h_tokp : TokpInv s.db (.djvars arr))
-    (h_var : s.db.isVar tk = true)
+    (h_var : s.db.isActiveVar tk = true)
     (h_success : (ParserState.djvars_loop arr s pos tk).db.error? = none) :
     TokpInv (ParserState.djvars_loop arr s pos tk).db
       (ParserState.djvars_loop arr s pos tk).tokp := by
@@ -7856,8 +8688,12 @@ theorem feedToken_djvars_maintains_scopedWithScopes
         simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate_none]
       simpa [h_db_eq] using h_scoped
     · by_cases h_end : tk.eqArray "$.".toAscii
-      · have h_db_eq : (s.feedToken i tk).db = s.db := by
-          simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end]
+      · have h_size := feedToken_djvars_terminator_size_ge_two
+          s i tk arr h_tokp h_open h_include h_end h_success
+        have h_not_short : ¬ arr.size < 2 := Nat.not_lt.mpr h_size
+        have h_db_eq : (s.feedToken i tk).db = s.db := by
+          simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end,
+            h_not_short]
         simpa [h_db_eq] using h_scoped
       · by_cases h_math_ok : (toMath tk).fst = true
         · let tk' := (toMath tk).snd
@@ -7865,21 +8701,25 @@ theorem feedToken_djvars_maintains_scopedWithScopes
               (ParserState.djvars_loop arr s (s.mkPos i) tk').db.error? = none := by
             simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_end, ParserState.withMath,
               h_math_ok, tk'] using h_success
-          have h_var : s.db.isVar tk' = true := by
-            by_cases h_var : s.db.isVar tk' = true
+          have h_var : s.db.isActiveVar tk' = true := by
+            by_cases h_var : s.db.isActiveVar tk' = true
             · exact h_var
-            · have h_var_false : s.db.isVar tk' = false := by
-                cases h_isVar : s.db.isVar tk' with
+            · have h_var_false : s.db.isActiveVar tk' = false := by
+                cases h_isVar : s.db.isActiveVar tk' with
                 | false => simpa using h_isVar
                 | true => exact False.elim (h_var h_isVar)
-              have h_gate :
-                  s.db.djvarsScopeViolation? tk' = some (.tokenNotVariable tk') := by
-                exact (DB.djvarsScopeViolation?_tokenNotVariable_iff s.db tk').2 h_var_false
+              -- the gate fires on any inactive symbol; which of the two errors it
+              -- reports (never-declared vs. block-popped) does not matter here
               have h_bad :
                   (ParserState.djvars_loop arr s (s.mkPos i) tk').db.error? ≠ none := by
-                simp [ParserState.djvars_loop, h_gate, ParserState.mkErrorFromEvidence,
-                  ParserState.mkErrorWithEvidence, ParserState.mkError, ParserState.withDB,
-                  DB.mkErrorWithEvidence, DB.mkError]
+                cases h_gate : s.db.djvarsScopeViolation? tk' with
+                | none =>
+                    have h_act := (DB.djvarsScopeViolation?_none_iff s.db tk').1 h_gate
+                    simp [h_act] at h_var_false
+                | some err =>
+                    simp [ParserState.djvars_loop, h_gate, ParserState.mkErrorFromEvidence,
+                      ParserState.mkErrorWithEvidence, ParserState.mkError, ParserState.withDB,
+                      DB.mkErrorWithEvidence, DB.mkError]
               exact (h_bad h_success_loop).elim
           have h_tokp' : TokpInv s.db (.djvars arr) := by
             simpa [h_tokp] using h_tokp_inv
@@ -7921,8 +8761,12 @@ theorem feedToken_djvars_maintains_scopesOk
         simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate_none]
       simpa [h_db_eq] using h_ok
     · by_cases h_end : tk.eqArray "$.".toAscii
-      · have h_db_eq : (s.feedToken i tk).db = s.db := by
-          simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end]
+      · have h_size := feedToken_djvars_terminator_size_ge_two
+          s i tk arr h_tokp h_open h_include h_end h_success
+        have h_not_short : ¬ arr.size < 2 := Nat.not_lt.mpr h_size
+        have h_db_eq : (s.feedToken i tk).db = s.db := by
+          simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end,
+            h_not_short]
         simpa [h_db_eq] using h_ok
       · by_cases h_math_ok : (toMath tk).fst = true
         · let tk' := (toMath tk).snd
@@ -7969,28 +8813,36 @@ theorem feedToken_djvars_maintains_tokpInv
         simpa [h_tokp] using h_tokp_inv
       simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_gate_none, TokpInv] using h_tokp'
     · by_cases h_end : tk.eqArray "$.".toAscii
-      · simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end, TokpInv]
+      · have h_size := feedToken_djvars_terminator_size_ge_two
+          s i tk arr h_tokp h_open h_include h_end h_success
+        have h_not_short : ¬ arr.size < 2 := Nat.not_lt.mpr h_size
+        simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end,
+          h_not_short, TokpInv]
       · by_cases h_math_ok : (toMath tk).fst = true
         · let tk' := (toMath tk).snd
           have h_success_loop :
               (ParserState.djvars_loop arr s (s.mkPos i) tk').db.error? = none := by
             simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_end, ParserState.withMath,
               h_math_ok, tk'] using h_success
-          have h_var : s.db.isVar tk' = true := by
-            by_cases h_var : s.db.isVar tk' = true
+          have h_var : s.db.isActiveVar tk' = true := by
+            by_cases h_var : s.db.isActiveVar tk' = true
             · exact h_var
-            · have h_var_false : s.db.isVar tk' = false := by
-                cases h_isVar : s.db.isVar tk' with
+            · have h_var_false : s.db.isActiveVar tk' = false := by
+                cases h_isVar : s.db.isActiveVar tk' with
                 | false => simpa using h_isVar
                 | true => exact False.elim (h_var h_isVar)
-              have h_gate :
-                  s.db.djvarsScopeViolation? tk' = some (.tokenNotVariable tk') := by
-                exact (DB.djvarsScopeViolation?_tokenNotVariable_iff s.db tk').2 h_var_false
+              -- the gate fires on any inactive symbol; which of the two errors it
+              -- reports (never-declared vs. block-popped) does not matter here
               have h_bad :
                   (ParserState.djvars_loop arr s (s.mkPos i) tk').db.error? ≠ none := by
-                simp [ParserState.djvars_loop, h_gate, ParserState.mkErrorFromEvidence,
-                  ParserState.mkErrorWithEvidence, ParserState.mkError, ParserState.withDB,
-                  DB.mkErrorWithEvidence, DB.mkError]
+                cases h_gate : s.db.djvarsScopeViolation? tk' with
+                | none =>
+                    have h_act := (DB.djvarsScopeViolation?_none_iff s.db tk').1 h_gate
+                    simp [h_act] at h_var_false
+                | some err =>
+                    simp [ParserState.djvars_loop, h_gate, ParserState.mkErrorFromEvidence,
+                      ParserState.mkErrorWithEvidence, ParserState.mkError, ParserState.withDB,
+                      DB.mkErrorWithEvidence, DB.mkError]
               exact (h_bad h_success_loop).elim
           have h_tokp' : TokpInv s.db (.djvars arr) := by
             simpa [h_tokp] using h_tokp_inv
@@ -8084,7 +8936,7 @@ theorem stepAssert_ok_preserves_core
                               ({ pos := pr.pos, label := pr.label, fmla := pr.fmla, frame := pr.frame,
                                  heap := pr.heap,
                                  stack := (pr.stack.extract 0 (pr.stack.size - hyps.size)).push concl,
-                                 ptp := pr.ptp } : ProofState) : Except ProofCheckFail ProofState)
+                                 ptp := pr.ptp, incomplete := pr.incomplete } : ProofState) : Except ProofCheckFail ProofState)
                               = (Except.ok pr' : Except ProofCheckFail ProofState) := by
                           simpa [off, h_chk, h_dv, h_subst, Bind.bind, Except.bind, Pure.pure,
                             Functor.map, Except.map] using h_ok
@@ -8264,7 +9116,7 @@ theorem applyCompressedActions_ok_preserves_core
                           if db.config.rejectUnknownSteps then
                             throw (ProofCheckFail.proofCheck ProofCheckError.unknownStepQuestionRejected)
                           else
-                            pure (pr.push pr.fmla))
+                            pure { pr.push pr.fmla with incomplete := true })
                     pr_mid = .ok pr' := by
                 simp only [h_step, bind, Except.bind, pure, Except.pure] at h_ok ⊢
                 exact h_ok
@@ -8291,7 +9143,7 @@ theorem applyCompressedActions_ok_preserves_core
                           if db.config.rejectUnknownSteps then
                             throw (ProofCheckFail.proofCheck ProofCheckError.unknownStepQuestionRejected)
                           else
-                            pure (pr.push pr.fmla))
+                            pure { pr.push pr.fmla with incomplete := true })
                     pr_mid = .ok pr' := by
                 simp only [h_save, bind, Except.bind, pure, Except.pure] at h_ok ⊢
                 exact h_ok
@@ -8327,11 +9179,11 @@ theorem applyCompressedActions_ok_preserves_core
                       if db.config.rejectUnknownSteps then
                         throw (ProofCheckFail.proofCheck ProofCheckError.unknownStepQuestionRejected)
                       else
-                          pure (pr.push pr.fmla))
-                  (pr.push pr.fmla) = .ok pr' := by
+                          pure { pr.push pr.fmla with incomplete := true })
+                  { pr.push pr.fmla with incomplete := true } = .ok pr' := by
               simp only [h_reject, bind, Except.bind, pure, Except.pure] at h_ok ⊢
               exact h_ok
-            have h_tail := ih (pr.push pr.fmla) h_rest
+            have h_tail := ih { pr.push pr.fmla with incomplete := true } h_rest
             exact ⟨by simpa [ProofState.push] using h_tail.1, by simpa [ProofState.push] using h_tail.2⟩
 
 theorem feedProof_goNormal_ok_preserves_core
@@ -8367,7 +9219,8 @@ theorem feedProof_go_ok_preserves_core
             have h_map_err :
                 ((fun a =>
                     { pos := a.pos, label := a.label, fmla := a.fmla, frame := a.frame, heap := a.heap,
-                      stack := a.stack, ptp := ProofTokenParser.preload }) <$>
+                      stack := a.stack, ptp := ProofTokenParser.preload,
+                      incomplete := a.incomplete }) <$>
                   (Except.error msg : Except ProofCheckFail ProofState))
                   = (Except.error msg : Except ProofCheckFail ProofState) := by
               rfl
@@ -8401,7 +9254,7 @@ theorem feedProof_go_ok_preserves_core
         simpa [h_ptp] using h_ok
       exact feedProof_goNormal_ok_preserves_core s tk pr pr' h_norm
   | compressed chr =>
-      cases h_dec : ParserState.decodeCompressed tk chr with
+      cases h_dec : ParserState.decodeCompressed tk chr s.db.config.compressedInvalidBytes with
       | error msg =>
           simp [h_ptp, h_dec, Bind.bind, Except.bind] at h_ok
       | ok dec =>
@@ -8413,12 +9266,14 @@ theorem feedProof_go_ok_preserves_core
               have h_eq :
                   { pos := pr_mid.pos, label := pr_mid.label, fmla := pr_mid.fmla, frame := pr_mid.frame,
                     heap := pr_mid.heap, stack := pr_mid.stack,
-                    ptp := ProofTokenParser.compressed chr' } = pr' := by
+                    ptp := ProofTokenParser.compressed chr',
+                    incomplete := pr_mid.incomplete } = pr' := by
                 have h_ok' :
                     (Except.pure
                       ({ pos := pr_mid.pos, label := pr_mid.label, fmla := pr_mid.fmla, frame := pr_mid.frame,
                          heap := pr_mid.heap, stack := pr_mid.stack,
-                         ptp := ProofTokenParser.compressed chr' } : ProofState)
+                         ptp := ProofTokenParser.compressed chr',
+                         incomplete := pr_mid.incomplete } : ProofState)
                       : Except ProofCheckFail ProofState) = Except.ok pr' := by
                   simp only [h_ptp, h_dec, h_apply, Bind.bind, Except.bind, Functor.map,
                     Except.map, pure, Except.pure] at h_ok ⊢
@@ -8454,7 +9309,7 @@ theorem finishProof_tokp_start
     (s : ParserState) (pr : ProofState) :
     (s.finishProof pr).tokp = .start := by
   cases pr with
-  | mk pos l fmla fr heap stack ptp =>
+  | mk pos l fmla fr heap stack ptp inc =>
       cases ptp with
       | start =>
           simp [ParserState.finishProof, ParserState.withAt_tokp, ParserState.withDB, ParserState.mkErrorFromEvidence, ParserState.mkError]
@@ -8495,9 +9350,12 @@ theorem feedToken_proof_maintains_tokpInv
                 ParserState.mkErrorFromEvidence, ParserState.mkErrorWithEvidence, ParserState.mkError,
                 ParserState.withDB, DB.mkErrorWithEvidence, DB.mkError]
             exact (h_bad h_success).elim
-      have h_tokp_out : (s.feedToken i tk).tokp = .includePath (s.mkPos i) := by
+      have h_tokp_out :
+          (s.feedToken i tk).tokp = .includePath (.proof pr) (s.mkPos i) := by
         simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate_none]
-      simpa [h_tokp_out, TokpInv]
+      have h_db_out : (s.feedToken i tk).db = s.db := by
+        simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate_none]
+      simpa [h_tokp_out, h_db_out, h_tokp, TokpInv] using h_tokp_inv
     · let s0 : ParserState := { s with tokp := default }
       by_cases h_end : tk.eqArray "$.".toAscii
       · have h_tokp_start : (s0.finishProof pr).tokp = .start := finishProof_tokp_start s0 pr
@@ -8552,9 +9410,13 @@ theorem feedToken_math_thm_delim_maintains_tokpInv
               ParserState.mkErrorFromEvidence, ParserState.mkErrorWithEvidence, ParserState.mkError,
               ParserState.withDB, DB.mkErrorWithEvidence, DB.mkError]
           exact (h_bad h_success).elim
-    have h_tokp_eq : (s.feedToken i tk).tokp = .includePath (s.mkPos i) := by
+    have h_tokp_eq :
+        (s.feedToken i tk).tokp =
+          .includePath (.math arr ⟨.thm, pos, label⟩) (s.mkPos i) := by
       simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate_none]
-    simpa [h_tokp_eq, TokpInv]
+    have h_db_eq : (s.feedToken i tk).db = s.db := by
+      simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate_none]
+    simpa [h_tokp_eq, h_db_eq, TokpInv] using h_decl
   · have h_success_feedTokens :
       (s.feedTokens arr ⟨.thm, pos, label⟩).db.error? = none := by
       simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_delim] using h_success
@@ -8656,7 +9518,8 @@ theorem feedToken_math_continue_maintains_tokpInv
           exact (h_bad h_success).elim
     have h_db_eq : (s.feedToken i tk).db = s.db := by
       simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate_none]
-    have h_tokp_eq : (s.feedToken i tk).tokp = .includePath (s.mkPos i) := by
+    have h_tokp_eq :
+        (s.feedToken i tk).tokp = .includePath (.math arr p) (s.mkPos i) := by
       simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate_none]
     simpa [h_db_eq, h_tokp_eq, TokpInv]
   · by_cases h_math_ok : (toMath tk).fst = true
@@ -8682,21 +9545,31 @@ theorem feedToken_math_continue_maintains_tokpInv
                   h_math_ok, tk', h_find, Bind.bind, Pure.pure]
               simpa [h_db_eq, h_tokp_eq, TokpInv] using h_decl'
           | var _ =>
-              have h_sym : s.db.isVar tk' = true := by
-                simp [DB.isVar, h_find]
+              -- an inactive variable errors out, so `h_success` forces the active branch
+              have h_act : s.db.isActiveVar tk' = true := by
+                cases h_act' : s.db.isActiveVar tk' with
+                | true => rfl
+                | false =>
+                    have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                      simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
+                  h_math_ok, tk', h_find, Bind.bind, Pure.pure, h_act', ParserState.mkErrorFromEvidence,
+                        ParserState.mkErrorWithEvidence, ParserState.mkError,
+                        ParserState.withDB, DB.mkErrorWithEvidence, DB.mkError]
+                    exact (h_bad h_success).elim
+              have h_sym : s.db.isVar tk' = true := DB.isActiveVar_isVar h_act
               have h_decl' : FormulaSymbolsDeclared s.db (arr.push (.var tk')) :=
                 FormulaSymbolsDeclared.push s.db arr (.var tk') h_decl (by simpa using h_sym)
               have h_db_eq : (s.feedToken i tk).db = s.db := by
                 simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
-                  h_math_ok, tk', h_find, Bind.bind, Pure.pure]
+                  h_math_ok, tk', h_find, Bind.bind, Pure.pure, h_act]
               have h_tokp_eq : (s.feedToken i tk).tokp = .math (arr.push (.var tk')) p := by
                 simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
-                  h_math_ok, tk', h_find, Bind.bind, Pure.pure]
+                  h_math_ok, tk', h_find, Bind.bind, Pure.pure, h_act]
               simpa [h_db_eq, h_tokp_eq, TokpInv] using h_decl'
           | hyp _ _ _ =>
               have h_gate :
                   s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk') := by
-                unfold DB.mathSymbolViolation? DB.isSym
+                unfold DB.mathSymbolViolation?
                 simp [h_find]
               have h_bad : (s.feedToken i tk).db.error? ≠ none := by
                 simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
@@ -8705,7 +9578,7 @@ theorem feedToken_math_continue_maintains_tokpInv
           | assert _ _ _ =>
               have h_gate :
                   s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk') := by
-                unfold DB.mathSymbolViolation? DB.isSym
+                unfold DB.mathSymbolViolation?
                 simp [h_find]
               have h_bad : (s.feedToken i tk).db.error? ≠ none := by
                 simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
@@ -8719,10 +9592,12 @@ theorem feedToken_math_continue_maintains_tokpInv
 theorem finishProof_success_insert
     (s : ParserState) (pr : ProofState)
     (h_success : (s.finishProof pr).db.error? = none) :
-    (s.finishProof pr).db = s.db.insert pr.pos pr.label (.assert pr.fmla pr.frame) ∧
+    (s.finishProof pr).db
+      = (s.db.insert pr.pos pr.label (.assert pr.fmla pr.frame)).recordIncomplete
+          pr.incomplete pr.label ∧
     (s.db.insert pr.pos pr.label (.assert pr.fmla pr.frame)).error? = none := by
   cases pr with
-  | mk pos l fmla fr heap stack ptp =>
+  | mk pos l fmla fr heap stack ptp inc =>
       cases ptp with
       | start =>
           have h_bad_inner :
@@ -8730,7 +9605,7 @@ theorem finishProof_success_insert
                 (ErrorEvidence.proofCheck ProofCheckError.proofParseError))).db.error? ≠ none := by
             exact withAt_mkErrorFromEvidence_error_ne_none l { s with tokp := .start } pos
               (ErrorEvidence.proofCheck ProofCheckError.proofParseError)
-          have h_bad : (s.finishProof ⟨pos, l, fmla, fr, heap, stack, .start⟩).db.error? ≠ none := by
+          have h_bad : (s.finishProof ⟨pos, l, fmla, fr, heap, stack, .start, inc⟩).db.error? ≠ none := by
             simpa [ParserState.finishProof] using h_bad_inner
           exact (h_bad h_success).elim
       | preload =>
@@ -8739,7 +9614,7 @@ theorem finishProof_success_insert
                 (ErrorEvidence.proofCheck ProofCheckError.proofParseError))).db.error? ≠ none := by
             exact withAt_mkErrorFromEvidence_error_ne_none l { s with tokp := .start } pos
               (ErrorEvidence.proofCheck ProofCheckError.proofParseError)
-          have h_bad : (s.finishProof ⟨pos, l, fmla, fr, heap, stack, .preload⟩).db.error? ≠ none := by
+          have h_bad : (s.finishProof ⟨pos, l, fmla, fr, heap, stack, .preload, inc⟩).db.error? ≠ none := by
             simpa [ParserState.finishProof] using h_bad_inner
           exact (h_bad h_success).elim
       | normal =>
@@ -8749,25 +9624,27 @@ theorem finishProof_success_insert
               return s.mkErrorFromEvidence pos (.theoremFinality (.theoremMoreThanOneStackElement stack.size))
             unless stack[0]! == fmla do
               return s.mkErrorFromEvidence pos (.theoremFinality (.theoremClaimMismatch fmla stack[0]!))
-            s.withDB fun db => db.insert pos l (.assert fmla fr)
+            s.withDB fun db => (db.insert pos l (.assert fmla fr)).recordIncomplete inc l
           have h_success_at : (ParserState.withAt l inner).db.error? = none := by
             simpa [ParserState.finishProof, inner] using h_success
           have h_inner := withAt_success_eq l inner h_success_at
           rcases h_inner with ⟨h_inner_ok, h_inner_eq⟩
           by_cases h_size : stack.size == 1
           · by_cases h_eq' : stack[0]! == fmla
-            · have h_inner_db : (inner ()).db = s.db.insert pos l (.assert fmla fr) := by
+            · have h_inner_db : (inner ()).db = ((s.db.insert pos l (.assert fmla fr)).recordIncomplete inc l) := by
                 simp [inner, Id.run, h_size, h_eq', ParserState.withDB]
-              have h_db_eq : (s.finishProof ⟨pos, l, fmla, fr, heap, stack, .normal⟩).db =
-                  s.db.insert pos l (.assert fmla fr) := by
+              have h_db_eq : (s.finishProof ⟨pos, l, fmla, fr, heap, stack, .normal, inc⟩).db =
+                  ((s.db.insert pos l (.assert fmla fr)).recordIncomplete inc l) := by
                 calc
-                  (s.finishProof ⟨pos, l, fmla, fr, heap, stack, .normal⟩).db
+                  (s.finishProof ⟨pos, l, fmla, fr, heap, stack, .normal, inc⟩).db
                       = (ParserState.withAt l inner).db := by
                           simpa [ParserState.finishProof, inner]
                   _ = (inner ()).db := h_inner_eq
-                  _ = s.db.insert pos l (.assert fmla fr) := h_inner_db
+                  _ = ((s.db.insert pos l (.assert fmla fr)).recordIncomplete inc l) := h_inner_db
               have h_ok : (s.db.insert pos l (.assert fmla fr)).error? = none := by
-                simpa [h_inner_db] using h_inner_ok
+                have h_m := h_inner_ok
+                rw [h_inner_db] at h_m
+                simpa using h_m
               exact ⟨h_db_eq, h_ok⟩
             · have h_bad : (inner ()).db.error? ≠ none := by
                 simp [inner, h_size, h_eq', ParserState.mkErrorFromEvidence, ParserState.mkErrorWithEvidence, ParserState.mkError, ParserState.withDB, DB.mkErrorWithEvidence, DB.mkError]
@@ -8784,25 +9661,27 @@ theorem finishProof_success_insert
                 return s.mkErrorFromEvidence pos (.theoremFinality (.theoremMoreThanOneStackElement stack.size))
               unless stack[0]! == fmla do
                 return s.mkErrorFromEvidence pos (.theoremFinality (.theoremClaimMismatch fmla stack[0]!))
-              s.withDB fun db => db.insert pos l (.assert fmla fr)
+              s.withDB fun db => (db.insert pos l (.assert fmla fr)).recordIncomplete inc l
             have h_success_at : (ParserState.withAt l inner).db.error? = none := by
               simpa [ParserState.finishProof, inner] using h_success
             have h_inner := withAt_success_eq l inner h_success_at
             rcases h_inner with ⟨h_inner_ok, h_inner_eq⟩
             by_cases h_size : stack.size == 1
             · by_cases h_eq' : stack[0]! == fmla
-              · have h_inner_db : (inner ()).db = s.db.insert pos l (.assert fmla fr) := by
+              · have h_inner_db : (inner ()).db = ((s.db.insert pos l (.assert fmla fr)).recordIncomplete inc l) := by
                   simp [inner, Id.run, h_size, h_eq', ParserState.withDB]
-                have h_db_eq : (s.finishProof ⟨pos, l, fmla, fr, heap, stack, .compressed 0⟩).db =
-                    s.db.insert pos l (.assert fmla fr) := by
+                have h_db_eq : (s.finishProof ⟨pos, l, fmla, fr, heap, stack, .compressed 0, inc⟩).db =
+                    ((s.db.insert pos l (.assert fmla fr)).recordIncomplete inc l) := by
                   calc
-                    (s.finishProof ⟨pos, l, fmla, fr, heap, stack, .compressed 0⟩).db
+                    (s.finishProof ⟨pos, l, fmla, fr, heap, stack, .compressed 0, inc⟩).db
                         = (ParserState.withAt l inner).db := by
                             simpa [ParserState.finishProof, inner]
                     _ = (inner ()).db := h_inner_eq
-                    _ = s.db.insert pos l (.assert fmla fr) := h_inner_db
+                    _ = ((s.db.insert pos l (.assert fmla fr)).recordIncomplete inc l) := h_inner_db
                 have h_ok : (s.db.insert pos l (.assert fmla fr)).error? = none := by
-                  simpa [h_inner_db] using h_inner_ok
+                  have h_m := h_inner_ok
+                  rw [h_inner_db] at h_m
+                  simpa using h_m
                 exact ⟨h_db_eq, h_ok⟩
               · have h_bad : (inner ()).db.error? ≠ none := by
                   simp [inner, h_size, h_eq', ParserState.mkErrorFromEvidence, ParserState.mkErrorWithEvidence,
@@ -8818,9 +9697,27 @@ theorem finishProof_success_insert
                   (ErrorEvidence.proofCheck ProofCheckError.proofParseError))).db.error? ≠ none := by
               exact withAt_mkErrorFromEvidence_error_ne_none l { s with tokp := .start } pos
                 (ErrorEvidence.proofCheck ProofCheckError.proofParseError)
-            have h_bad : (s.finishProof ⟨pos, l, fmla, fr, heap, stack, .compressed chr⟩).db.error? ≠ none := by
+            have h_bad : (s.finishProof ⟨pos, l, fmla, fr, heap, stack, .compressed chr, inc⟩).db.error? ≠ none := by
               simpa [ParserState.finishProof, h_chr] using h_bad_inner
             exact (h_bad h_success).elim
+
+/-! `recordIncomplete` transports the structural invariants: it touches only
+`incompleteProofs`, which none of them read. -/
+
+theorem recordIncomplete_wellFormed (db : DB) (b : Bool) (l : String) :
+    WellFormedDB (db.recordIncomplete b l) ↔ WellFormedDB db := by
+  unfold DB.recordIncomplete
+  split <;> exact Iff.rfl
+
+theorem recordIncomplete_wellScopedWithScopes (db : DB) (b : Bool) (l : String) :
+    WellScopedDBWithScopes (db.recordIncomplete b l) ↔ WellScopedDBWithScopes db := by
+  unfold DB.recordIncomplete
+  split <;> exact Iff.rfl
+
+theorem recordIncomplete_scopesOk (db : DB) (b : Bool) (l : String) :
+    ScopesOk (db.recordIncomplete b l) ↔ ScopesOk db := by
+  unfold DB.recordIncomplete
+  split <;> exact Iff.rfl
 
 /-- In `.proof` mode, successful `feedToken` preserves `WellFormedDB`. -/
 theorem feedToken_proof_maintains_wf
@@ -8853,20 +9750,20 @@ theorem feedToken_proof_maintains_wf
         simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate_none]
       simpa [h_db_eq] using h_wf
     · cases pr with
-      | mk pos l fmla fr heap stack ptp =>
+      | mk pos l fmla fr heap stack ptp inc =>
           by_cases h_end : tk.eqArray "$.".toAscii
           · let s0 : ParserState := { s with tokp := default }
             have h_success_finish :
-                (s0.finishProof ⟨pos, l, fmla, fr, heap, stack, ptp⟩).db.error? = none := by
+                (s0.finishProof ⟨pos, l, fmla, fr, heap, stack, ptp, inc⟩).db.error? = none := by
               simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_end, s0] using h_success
-            have h_tokp' : TokpInv s.db (.proof ⟨pos, l, fmla, fr, heap, stack, ptp⟩) := by
+            have h_tokp' : TokpInv s.db (.proof ⟨pos, l, fmla, fr, heap, stack, ptp, inc⟩) := by
               simpa [h_tokp] using h_tokp_inv
             rcases h_tokp' with ⟨h_fmla_wf, h_frame_wf, _h_frame_scoped, _h_syms, _h_decl⟩
-            have h_finish := finishProof_success_insert s0 ⟨pos, l, fmla, fr, heap, stack, ptp⟩ h_success_finish
+            have h_finish := finishProof_success_insert s0 ⟨pos, l, fmla, fr, heap, stack, ptp, inc⟩ h_success_finish
             rcases h_finish with ⟨h_db_eq_finish, h_insert_ok⟩
             have h_db_eq_finish' :
-                (s0.finishProof ⟨pos, l, fmla, fr, heap, stack, ptp⟩).db =
-                  s.db.insert pos l (.assert fmla fr) := by
+                (s0.finishProof ⟨pos, l, fmla, fr, heap, stack, ptp, inc⟩).db =
+                  (s.db.insert pos l (.assert fmla fr)).recordIncomplete inc l := by
               simpa [s0] using h_db_eq_finish
             have h_insert_ok' : (s.db.insert pos l (.assert fmla fr)).error? = none := by
               simpa [s0] using h_insert_ok
@@ -8894,15 +9791,16 @@ theorem feedToken_proof_maintains_wf
                 h_wf h_no_err h_first h_frame_wf h_fresh_in_frame
                 h_fresh_db h_fresh_label h_fresh_in_asserts h_insert_ok'
             have h_db_eq :
-                (s.feedToken i tk).db = s.db.insert pos l (.assert fmla fr) := by
+                (s.feedToken i tk).db = (s.db.insert pos l (.assert fmla fr)).recordIncomplete inc l := by
               simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_end, s0] using h_db_eq_finish'
-            simpa [h_db_eq] using h_wf_insert
+            rw [h_db_eq]
+            exact (recordIncomplete_wellFormed _ _ _).2 h_wf_insert
           · let s0 : ParserState := { s with tokp := default }
             have h_success_feed :
-                (s0.feedProof tk ⟨pos, l, fmla, fr, heap, stack, ptp⟩).db.error? = none := by
+                (s0.feedProof tk ⟨pos, l, fmla, fr, heap, stack, ptp, inc⟩).db.error? = none := by
               simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_end, s0] using h_success
-            have h_db_eq' : (s0.feedProof tk ⟨pos, l, fmla, fr, heap, stack, ptp⟩).db = s.db := by
-              have h_db_eq := feedProof_success_db s0 tk ⟨pos, l, fmla, fr, heap, stack, ptp⟩ h_success_feed
+            have h_db_eq' : (s0.feedProof tk ⟨pos, l, fmla, fr, heap, stack, ptp, inc⟩).db = s.db := by
+              have h_db_eq := feedProof_success_db s0 tk ⟨pos, l, fmla, fr, heap, stack, ptp, inc⟩ h_success_feed
               simpa [s0] using h_db_eq
             have h_db_eq : (s.feedToken i tk).db = s.db := by
               simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_end, s0] using h_db_eq'
@@ -8941,22 +9839,22 @@ theorem feedToken_proof_maintains_scopedWithScopes
         simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate_none]
       simpa [h_db_eq] using h_scoped
     · cases pr with
-      | mk pos l fmla fr heap stack ptp =>
+      | mk pos l fmla fr heap stack ptp inc =>
           by_cases h_end : tk.eqArray "$.".toAscii
           · -- finishProof branch
             let s0 : ParserState := { s with tokp := default }
             have h_success_finish :
-                (s0.finishProof ⟨pos, l, fmla, fr, heap, stack, ptp⟩).db.error? = none := by
+                (s0.finishProof ⟨pos, l, fmla, fr, heap, stack, ptp, inc⟩).db.error? = none := by
               simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_end, s0] using h_success
             -- Extract the proof invariants.
-            have h_tokp' : TokpInv s.db (.proof ⟨pos, l, fmla, fr, heap, stack, ptp⟩) := by
+            have h_tokp' : TokpInv s.db (.proof ⟨pos, l, fmla, fr, heap, stack, ptp, inc⟩) := by
               simpa [h_tokp] using h_tokp_inv
             rcases h_tokp' with ⟨_h_fmla_wf, h_frame_wf, h_frame_scoped, h_syms, h_decl⟩
-            have h_finish := finishProof_success_insert s0 ⟨pos, l, fmla, fr, heap, stack, ptp⟩ h_success_finish
+            have h_finish := finishProof_success_insert s0 ⟨pos, l, fmla, fr, heap, stack, ptp, inc⟩ h_success_finish
             rcases h_finish with ⟨h_db_eq_finish, h_insert_ok⟩
             have h_db_eq_finish' :
-                (s0.finishProof ⟨pos, l, fmla, fr, heap, stack, ptp⟩).db =
-                  s.db.insert pos l (.assert fmla fr) := by
+                (s0.finishProof ⟨pos, l, fmla, fr, heap, stack, ptp, inc⟩).db =
+                  (s.db.insert pos l (.assert fmla fr)).recordIncomplete inc l := by
               simpa [s0] using h_db_eq_finish
             have h_insert_ok' : (s.db.insert pos l (.assert fmla fr)).error? = none := by
               simpa [s0] using h_insert_ok
@@ -8968,17 +9866,18 @@ theorem feedToken_proof_maintains_scopedWithScopes
               exact insertAssert_full_maintains_scopedWithScopes s.db pos l fmla fr
                 h_wf h_scoped h_no_err h_fresh_db h_frame_wf h_frame_scoped h_syms h_decl h_insert_ok'
             have h_db_eq :
-                (s.feedToken i tk).db = s.db.insert pos l (.assert fmla fr) := by
+                (s.feedToken i tk).db = (s.db.insert pos l (.assert fmla fr)).recordIncomplete inc l := by
               simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_end, s0] using h_db_eq_finish'
-            simpa [h_db_eq] using h_scoped_insert
+            rw [h_db_eq]
+            exact (recordIncomplete_wellScopedWithScopes _ _ _).2 h_scoped_insert
           · -- feedProof branch: on success, DB is unchanged.
             let s0 : ParserState := { s with tokp := default }
             have h_success_feed :
-                (s0.feedProof tk ⟨pos, l, fmla, fr, heap, stack, ptp⟩).db.error? = none := by
+                (s0.feedProof tk ⟨pos, l, fmla, fr, heap, stack, ptp, inc⟩).db.error? = none := by
               simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_end, s0] using h_success
-            have h_db_eq' : (s0.feedProof tk ⟨pos, l, fmla, fr, heap, stack, ptp⟩).db = s.db := by
+            have h_db_eq' : (s0.feedProof tk ⟨pos, l, fmla, fr, heap, stack, ptp, inc⟩).db = s.db := by
               -- feedProof doesn't touch DB on success
-              have h_db_eq := feedProof_success_db s0 tk ⟨pos, l, fmla, fr, heap, stack, ptp⟩ h_success_feed
+              have h_db_eq := feedProof_success_db s0 tk ⟨pos, l, fmla, fr, heap, stack, ptp, inc⟩ h_success_feed
               simpa [s0] using h_db_eq
             have h_db_eq : (s.feedToken i tk).db = s.db := by
               simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_end, s0] using h_db_eq'
@@ -9013,30 +9912,31 @@ theorem feedToken_proof_maintains_scopesOk
         simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate_none]
       simpa [h_db_eq] using h_ok
     · cases pr with
-      | mk pos l fmla fr heap stack ptp =>
+      | mk pos l fmla fr heap stack ptp inc =>
           by_cases h_end : tk.eqArray "$.".toAscii
           · let s0 : ParserState := { s with tokp := default }
             have h_success_finish :
-                (s0.finishProof ⟨pos, l, fmla, fr, heap, stack, ptp⟩).db.error? = none := by
+                (s0.finishProof ⟨pos, l, fmla, fr, heap, stack, ptp, inc⟩).db.error? = none := by
               simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_end, s0] using h_success
-            have h_finish := finishProof_success_insert s0 ⟨pos, l, fmla, fr, heap, stack, ptp⟩ h_success_finish
+            have h_finish := finishProof_success_insert s0 ⟨pos, l, fmla, fr, heap, stack, ptp, inc⟩ h_success_finish
             rcases h_finish with ⟨h_db_eq_finish, _h_insert_ok⟩
             have h_db_eq_finish' :
-                (s0.finishProof ⟨pos, l, fmla, fr, heap, stack, ptp⟩).db =
-                  s.db.insert pos l (.assert fmla fr) := by
+                (s0.finishProof ⟨pos, l, fmla, fr, heap, stack, ptp, inc⟩).db =
+                  (s.db.insert pos l (.assert fmla fr)).recordIncomplete inc l := by
               simpa [s0] using h_db_eq_finish
             have h_ok_insert : ScopesOk (s.db.insert pos l (.assert fmla fr)) :=
               scopesOk_insert s.db pos l (.assert fmla fr) h_ok
             have h_db_eq :
-                (s.feedToken i tk).db = s.db.insert pos l (.assert fmla fr) := by
+                (s.feedToken i tk).db = (s.db.insert pos l (.assert fmla fr)).recordIncomplete inc l := by
               simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_end, s0] using h_db_eq_finish'
-            simpa [h_db_eq] using h_ok_insert
+            rw [h_db_eq]
+            exact (recordIncomplete_scopesOk _ _ _).2 h_ok_insert
           · let s0 : ParserState := { s with tokp := default }
             have h_success_feed :
-                (s0.feedProof tk ⟨pos, l, fmla, fr, heap, stack, ptp⟩).db.error? = none := by
+                (s0.feedProof tk ⟨pos, l, fmla, fr, heap, stack, ptp, inc⟩).db.error? = none := by
               simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_end, s0] using h_success
-            have h_db_eq' : (s0.feedProof tk ⟨pos, l, fmla, fr, heap, stack, ptp⟩).db = s.db := by
-              have h_db_eq := feedProof_success_db s0 tk ⟨pos, l, fmla, fr, heap, stack, ptp⟩ h_success_feed
+            have h_db_eq' : (s0.feedProof tk ⟨pos, l, fmla, fr, heap, stack, ptp, inc⟩).db = s.db := by
+              have h_db_eq := feedProof_success_db s0 tk ⟨pos, l, fmla, fr, heap, stack, ptp, inc⟩ h_success_feed
               simpa [s0] using h_db_eq
             have h_db_eq : (s.feedToken i tk).db = s.db := by
               simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_end, s0] using h_db_eq'
@@ -9111,14 +10011,14 @@ theorem feedToken_maintains_tokpInv
                   cases h_lbl : (toLabel tk).fst <;>
                     simp [ParserState.label, TokpInv, ParserState.mkErrorFromEvidence, ParserState.mkError, ParserState.withDB, h_tokp, h_lbl]
                 simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd] using h_inv_label
-  | const =>
+  | const seen =>
       cases h_open : tk.eqArray "$(".toAscii with
       | true =>
-          have h_inv : TokpInv s.db (.comment .const) := by
+          have h_inv : TokpInv s.db (.comment (.const seen)) := by
             simp [TokpInv]
           have h_db_eq : (s.feedToken i tk).db = s.db := by
             simp [ParserState.feedToken, h_tokp, h_open]
-          have h_tokp_eq : (s.feedToken i tk).tokp = .comment .const := by
+          have h_tokp_eq : (s.feedToken i tk).tokp = .comment (.const seen) := by
             simp [ParserState.feedToken, h_tokp, h_open]
           simpa [h_db_eq, h_tokp_eq] using h_inv
       | false =>
@@ -9132,22 +10032,30 @@ theorem feedToken_maintains_tokpInv
                 exact (h_bad h_success).elim
             | none =>
                 simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_gate, TokpInv]
-          · have h_inv_sym :
-                TokpInv (s.sym (s.mkPos i) tk Object.const).db
-                  (s.sym (s.mkPos i) tk Object.const).tokp := by
-              cases h_end : tk.eqArray "$.".toAscii <;>
+          · -- the terminator branch now also splits on the arity flag
+            by_cases h_end : tk.eqArray "$.".toAscii = true
+            · cases seen <;>
+                simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end,
+                  TokpInv, ParserState.mkErrorFromEvidence,
+                  ParserState.mkErrorWithEvidence, ParserState.mkError,
+                  ParserState.withDB, DB.mkErrorWithEvidence, DB.mkError]
+            · have h_inv_sym :
+                  TokpInv (s.sym (s.mkPos i) tk Object.const).db
+                    (TokenParser.const true) := by
                 cases h_math : (toMath tk).fst <;>
-                  simp [ParserState.sym, ParserState.withMath, TokpInv, ParserState.mkErrorFromEvidence, ParserState.mkError,
+                  simp [ParserState.sym, ParserState.withMath, TokpInv,
+                    ParserState.mkErrorFromEvidence, ParserState.mkError,
                     ParserState.withDB, h_tokp, h_end, h_math]
-            simpa [ParserState.feedToken, h_tokp, h_open, h_include] using h_inv_sym
-  | var =>
+              simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_end]
+                using h_inv_sym
+  | var seen =>
       cases h_open : tk.eqArray "$(".toAscii with
       | true =>
-          have h_inv : TokpInv s.db (.comment .var) := by
+          have h_inv : TokpInv s.db (.comment (.var seen)) := by
             simp [TokpInv]
           have h_db_eq : (s.feedToken i tk).db = s.db := by
             simp [ParserState.feedToken, h_tokp, h_open]
-          have h_tokp_eq : (s.feedToken i tk).tokp = .comment .var := by
+          have h_tokp_eq : (s.feedToken i tk).tokp = .comment (.var seen) := by
             simp [ParserState.feedToken, h_tokp, h_open]
           simpa [h_db_eq, h_tokp_eq] using h_inv
       | false =>
@@ -9161,14 +10069,22 @@ theorem feedToken_maintains_tokpInv
                 exact (h_bad h_success).elim
             | none =>
                 simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_gate, TokpInv]
-          · have h_inv_sym :
-                TokpInv (s.sym (s.mkPos i) tk Object.var).db
-                  (s.sym (s.mkPos i) tk Object.var).tokp := by
-              cases h_end : tk.eqArray "$.".toAscii <;>
+          · -- the terminator branch now also splits on the arity flag
+            by_cases h_end : tk.eqArray "$.".toAscii = true
+            · cases seen <;>
+                simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end,
+                  TokpInv, ParserState.mkErrorFromEvidence,
+                  ParserState.mkErrorWithEvidence, ParserState.mkError,
+                  ParserState.withDB, DB.mkErrorWithEvidence, DB.mkError]
+            · have h_inv_sym :
+                  TokpInv (s.sym (s.mkPos i) tk Object.var).db
+                    (TokenParser.var true) := by
                 cases h_math : (toMath tk).fst <;>
-                  simp [ParserState.sym, ParserState.withMath, TokpInv, ParserState.mkErrorFromEvidence, ParserState.mkError,
+                  simp [ParserState.sym, ParserState.withMath, TokpInv,
+                    ParserState.mkErrorFromEvidence, ParserState.mkError,
                     ParserState.withDB, h_tokp, h_end, h_math]
-            simpa [ParserState.feedToken, h_tokp, h_open, h_include] using h_inv_sym
+              simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_end]
+                using h_inv_sym
   | djvars arr =>
       exact feedToken_djvars_maintains_tokpInv s i tk arr
         h_tokp h_wf h_scoped h_tokp_inv h_success
@@ -9240,7 +10156,9 @@ theorem feedToken_maintains_tokpInv
                       (s.mkErrorFromEvidence pos (.tokenForm (.unknownStatementType (toLabel tk).snd))).tokp := by
                   simp [ParserState.mkErrorFromEvidence, ParserState.withDB, TokpInv, h_tokp]
                 simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd] using h_inv_err
-  | includePath includePos =>
+  | includePath resume includePos =>
+      have h_resume_inv : TokpInv s.db resume := by
+        simpa [h_tokp, TokpInv] using h_tokp_inv
       by_cases h_open : tk.eqArray "$(".toAscii
       · simpa [ParserState.feedToken, h_tokp, h_open, TokpInv]
       · by_cases h_include : tk.eqArray "$[".toAscii
@@ -9261,7 +10179,7 @@ theorem feedToken_maintains_tokpInv
             exact (h_bad h_success).elim
           · let rawPath := (ParserState.includePathFromToken tk).1
             let closesInline := (ParserState.includePathFromToken tk).2
-            cases h_norm : ParserState.normalizeIncludePath s.sourceFile rawPath with
+            cases h_norm : ParserState.normalizeIncludePath s.db.config.literalIncludePaths s.sourceFile rawPath with
             | error err =>
                 have h_bad : (s.feedToken i tk).db.error? ≠ none := by
                   simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end, rawPath, closesInline, h_norm,
@@ -9270,13 +10188,16 @@ theorem feedToken_maintains_tokpInv
                 exact (h_bad h_success).elim
             | ok includePath =>
                 by_cases h_inline : closesInline
-                · have h_req : (s.requestInclude includePath).db.error? ≠ none :=
-                    Metamath.ParserLoopInduction.ParserState_requestInclude_sets_error s includePath
-                  have h_eq : s.feedToken i tk = s.requestInclude includePath := by
+                · have h_req : (s.requestInclude resume includePath).db.error? ≠ none :=
+                    Metamath.ParserLoopInduction.ParserState_requestInclude_sets_error
+                      s resume includePath
+                  have h_eq : s.feedToken i tk = s.requestInclude resume includePath := by
                     simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end, rawPath, closesInline, h_norm, h_inline]
                   exact (h_req (by simpa [h_eq] using h_success)).elim
                 · simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_end, rawPath, closesInline, h_norm, h_inline, TokpInv]
-  | includeClose includePos includePath =>
+  | includeClose resume includePos includePath =>
+      have h_resume_inv : TokpInv s.db resume := by
+        simpa [h_tokp, TokpInv] using h_tokp_inv
       by_cases h_open : tk.eqArray "$(".toAscii
       · simpa [ParserState.feedToken, h_tokp, h_open, TokpInv]
       · by_cases h_include : tk.eqArray "$[".toAscii
@@ -9290,9 +10211,10 @@ theorem feedToken_maintains_tokpInv
           | none =>
               simpa [ParserState.feedToken, h_tokp, h_open, h_include, h_gate, TokpInv]
         · by_cases h_close : tk.eqArray "$]".toAscii
-          · have h_req : (s.requestInclude includePath).db.error? ≠ none :=
-              Metamath.ParserLoopInduction.ParserState_requestInclude_sets_error s includePath
-            have h_eq : s.feedToken i tk = s.requestInclude includePath := by
+          · have h_req : (s.requestInclude resume includePath).db.error? ≠ none :=
+              Metamath.ParserLoopInduction.ParserState_requestInclude_sets_error
+                s resume includePath
+            have h_eq : s.feedToken i tk = s.requestInclude resume includePath := by
               simp [ParserState.feedToken, h_tokp, h_open, h_include, h_close]
             exact (h_req (by simpa [h_eq] using h_success)).elim
           · have h_bad : (s.feedToken i tk).db.error? ≠ none := by
@@ -9421,11 +10343,11 @@ theorem feedToken_maintains_wf
   | start =>
       exact feedToken_start_maintains_wf s i tk
         h_tokp h_wf h_no_err h_success
-  | const =>
-      exact feedToken_const_maintains_wf s i tk
+  | const seen =>
+      exact feedToken_const_maintains_wf s i tk seen
         h_tokp h_wf h_no_err h_success
-  | var =>
-      exact feedToken_var_maintains_wf s i tk
+  | var seen =>
+      exact feedToken_var_maintains_wf s i tk seen
         h_tokp h_wf h_no_err h_success
   | djvars arr =>
       exact feedToken_djvars_maintains_wf s i tk arr
@@ -9490,7 +10412,7 @@ theorem feedToken_maintains_wf
               simp [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd,
                 ParserState.mkErrorFromEvidence, ParserState.mkErrorWithEvidence, ParserState.mkError, ParserState.withDB, DB.mkErrorWithEvidence, DB.mkError]
             exact (h_bad h_success).elim
-  | includePath includePos =>
+  | includePath resume includePos =>
       by_cases h_open : tk.eqArray "$(".toAscii
       · have h_db_eq : (s.feedToken i tk).db = s.db := by
           simp [ParserState.feedToken, h_tokp, h_open]
@@ -9517,7 +10439,7 @@ theorem feedToken_maintains_wf
             exact (h_bad h_success).elim
           · let rawPath := (ParserState.includePathFromToken tk).1
             let closesInline := (ParserState.includePathFromToken tk).2
-            cases h_norm : ParserState.normalizeIncludePath s.sourceFile rawPath with
+            cases h_norm : ParserState.normalizeIncludePath s.db.config.literalIncludePaths s.sourceFile rawPath with
             | error err =>
                 have h_bad : (s.feedToken i tk).db.error? ≠ none := by
                   simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end, rawPath, closesInline, h_norm,
@@ -9526,15 +10448,16 @@ theorem feedToken_maintains_wf
                 exact (h_bad h_success).elim
             | ok includePath =>
                 by_cases h_inline : closesInline
-                · have h_req : (s.requestInclude includePath).db.error? ≠ none :=
-                    Metamath.ParserLoopInduction.ParserState_requestInclude_sets_error s includePath
-                  have h_eq : s.feedToken i tk = s.requestInclude includePath := by
+                · have h_req : (s.requestInclude resume includePath).db.error? ≠ none :=
+                    Metamath.ParserLoopInduction.ParserState_requestInclude_sets_error
+                      s resume includePath
+                  have h_eq : s.feedToken i tk = s.requestInclude resume includePath := by
                     simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end, rawPath, closesInline, h_norm, h_inline]
                   exact (h_req (by simpa [h_eq] using h_success)).elim
                 · have h_db_eq : (s.feedToken i tk).db = s.db := by
                     simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end, rawPath, closesInline, h_norm, h_inline]
                   simpa [h_db_eq] using h_wf
-  | includeClose includePos includePath =>
+  | includeClose resume includePos includePath =>
       by_cases h_open : tk.eqArray "$(".toAscii
       · have h_db_eq : (s.feedToken i tk).db = s.db := by
           simp [ParserState.feedToken, h_tokp, h_open]
@@ -9554,9 +10477,10 @@ theorem feedToken_maintains_wf
             simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate_none]
           simpa [h_db_eq] using h_wf
         · by_cases h_close : tk.eqArray "$]".toAscii
-          · have h_req : (s.requestInclude includePath).db.error? ≠ none :=
-              Metamath.ParserLoopInduction.ParserState_requestInclude_sets_error s includePath
-            have h_eq : s.feedToken i tk = s.requestInclude includePath := by
+          · have h_req : (s.requestInclude resume includePath).db.error? ≠ none :=
+              Metamath.ParserLoopInduction.ParserState_requestInclude_sets_error
+                s resume includePath
+            have h_eq : s.feedToken i tk = s.requestInclude resume includePath := by
               simp [ParserState.feedToken, h_tokp, h_open, h_include, h_close]
             exact (h_req (by simpa [h_eq] using h_success)).elim
           · have h_bad : (s.feedToken i tk).db.error? ≠ none := by
@@ -9676,12 +10600,23 @@ theorem feedToken_maintains_wf
                                 simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
                                   h_math_ok, tk', h_find, Bind.bind, Pure.pure]
                             | var _ =>
-                                simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
-                                  h_math_ok, tk', h_find, Bind.bind, Pure.pure]
+                                -- `.var` now gates on activity; the inactive branch errors,
+                                -- which `h_success` excludes
+                                cases h_act : s.db.isActiveVar tk' with
+                                | true =>
+                                    simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
+                                      h_math_ok, tk', h_find, Bind.bind, Pure.pure, h_act]
+                                | false =>
+                                    have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                                      simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
+                                        h_math_ok, tk', h_find, Bind.bind, Pure.pure, h_act, ParserState.mkErrorFromEvidence,
+                                        ParserState.mkErrorWithEvidence, ParserState.mkError,
+                                        ParserState.withDB, DB.mkErrorWithEvidence, DB.mkError]
+                                    exact (h_bad h_success).elim
                             | hyp _ _ _ =>
                                 have h_gate :
                                     s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk') := by
-                                  unfold DB.mathSymbolViolation? DB.isSym
+                                  unfold DB.mathSymbolViolation?
                                   simp [h_find]
                                 have h_bad : (s.feedToken i tk).db.error? ≠ none := by
                                   simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
@@ -9690,7 +10625,7 @@ theorem feedToken_maintains_wf
                             | assert _ _ _ =>
                                 have h_gate :
                                     s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk') := by
-                                  unfold DB.mathSymbolViolation? DB.isSym
+                                  unfold DB.mathSymbolViolation?
                                   simp [h_find]
                                 have h_bad : (s.feedToken i tk).db.error? ≠ none := by
                                   simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
@@ -9718,11 +10653,11 @@ theorem feedToken_maintains_scopedWithScopes
   | start =>
       exact feedToken_start_maintains_scopedWithScopes s i tk
         h_tokp h_wf h_scoped h_ok h_success
-  | const =>
-      exact feedToken_const_maintains_scopedWithScopes s i tk
+  | const seen =>
+      exact feedToken_const_maintains_scopedWithScopes s i tk seen
         h_tokp h_wf h_scoped h_no_err h_success
-  | var =>
-      exact feedToken_var_maintains_scopedWithScopes s i tk
+  | var seen =>
+      exact feedToken_var_maintains_scopedWithScopes s i tk seen
         h_tokp h_wf h_scoped h_no_err h_success
   | djvars arr =>
       exact feedToken_djvars_maintains_scopedWithScopes s i tk arr
@@ -9787,7 +10722,7 @@ theorem feedToken_maintains_scopedWithScopes
               simp [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd,
                 ParserState.mkErrorFromEvidence, ParserState.mkErrorWithEvidence, ParserState.mkError, ParserState.withDB, DB.mkErrorWithEvidence, DB.mkError]
             exact (h_bad h_success).elim
-  | includePath includePos =>
+  | includePath resume includePos =>
       by_cases h_open : tk.eqArray "$(".toAscii
       · have h_db_eq : (s.feedToken i tk).db = s.db := by
           simp [ParserState.feedToken, h_tokp, h_open]
@@ -9814,7 +10749,7 @@ theorem feedToken_maintains_scopedWithScopes
             exact (h_bad h_success).elim
           · let rawPath := (ParserState.includePathFromToken tk).1
             let closesInline := (ParserState.includePathFromToken tk).2
-            cases h_norm : ParserState.normalizeIncludePath s.sourceFile rawPath with
+            cases h_norm : ParserState.normalizeIncludePath s.db.config.literalIncludePaths s.sourceFile rawPath with
             | error err =>
                 have h_bad : (s.feedToken i tk).db.error? ≠ none := by
                   simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end, rawPath, closesInline, h_norm,
@@ -9823,15 +10758,16 @@ theorem feedToken_maintains_scopedWithScopes
                 exact (h_bad h_success).elim
             | ok includePath =>
                 by_cases h_inline : closesInline
-                · have h_req : (s.requestInclude includePath).db.error? ≠ none :=
-                    Metamath.ParserLoopInduction.ParserState_requestInclude_sets_error s includePath
-                  have h_eq : s.feedToken i tk = s.requestInclude includePath := by
+                · have h_req : (s.requestInclude resume includePath).db.error? ≠ none :=
+                    Metamath.ParserLoopInduction.ParserState_requestInclude_sets_error
+                      s resume includePath
+                  have h_eq : s.feedToken i tk = s.requestInclude resume includePath := by
                     simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end, rawPath, closesInline, h_norm, h_inline]
                   exact (h_req (by simpa [h_eq] using h_success)).elim
                 · have h_db_eq : (s.feedToken i tk).db = s.db := by
                     simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end, rawPath, closesInline, h_norm, h_inline]
                   simpa [h_db_eq] using h_scoped
-  | includeClose includePos includePath =>
+  | includeClose resume includePos includePath =>
       by_cases h_open : tk.eqArray "$(".toAscii
       · have h_db_eq : (s.feedToken i tk).db = s.db := by
           simp [ParserState.feedToken, h_tokp, h_open]
@@ -9851,9 +10787,10 @@ theorem feedToken_maintains_scopedWithScopes
             simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate_none]
           simpa [h_db_eq] using h_scoped
         · by_cases h_close : tk.eqArray "$]".toAscii
-          · have h_req : (s.requestInclude includePath).db.error? ≠ none :=
-              Metamath.ParserLoopInduction.ParserState_requestInclude_sets_error s includePath
-            have h_eq : s.feedToken i tk = s.requestInclude includePath := by
+          · have h_req : (s.requestInclude resume includePath).db.error? ≠ none :=
+              Metamath.ParserLoopInduction.ParserState_requestInclude_sets_error
+                s resume includePath
+            have h_eq : s.feedToken i tk = s.requestInclude resume includePath := by
               simp [ParserState.feedToken, h_tokp, h_open, h_include, h_close]
             exact (h_req (by simpa [h_eq] using h_success)).elim
           · have h_bad : (s.feedToken i tk).db.error? ≠ none := by
@@ -9979,12 +10916,23 @@ theorem feedToken_maintains_scopedWithScopes
                                 simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
                                   h_math_ok, tk', h_find, Bind.bind, Pure.pure]
                             | var _ =>
-                                simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
-                                  h_math_ok, tk', h_find, Bind.bind, Pure.pure]
+                                -- `.var` now gates on activity; the inactive branch errors,
+                                -- which `h_success` excludes
+                                cases h_act : s.db.isActiveVar tk' with
+                                | true =>
+                                    simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
+                                      h_math_ok, tk', h_find, Bind.bind, Pure.pure, h_act]
+                                | false =>
+                                    have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                                      simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
+                                        h_math_ok, tk', h_find, Bind.bind, Pure.pure, h_act, ParserState.mkErrorFromEvidence,
+                                        ParserState.mkErrorWithEvidence, ParserState.mkError,
+                                        ParserState.withDB, DB.mkErrorWithEvidence, DB.mkError]
+                                    exact (h_bad h_success).elim
                             | hyp _ _ _ =>
                                 have h_gate :
                                     s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk') := by
-                                  unfold DB.mathSymbolViolation? DB.isSym
+                                  unfold DB.mathSymbolViolation?
                                   simp [h_find]
                                 have h_bad : (s.feedToken i tk).db.error? ≠ none := by
                                   simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
@@ -9993,7 +10941,7 @@ theorem feedToken_maintains_scopedWithScopes
                             | assert _ _ _ =>
                                 have h_gate :
                                     s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk') := by
-                                  unfold DB.mathSymbolViolation? DB.isSym
+                                  unfold DB.mathSymbolViolation?
                                   simp [h_find]
                                 have h_bad : (s.feedToken i tk).db.error? ≠ none := by
                                   simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
@@ -10016,10 +10964,10 @@ theorem feedToken_maintains_scopesOk
   cases h_tokp : s.tokp with
   | start =>
       exact feedToken_start_maintains_scopesOk s i tk h_tokp h_ok h_success
-  | const =>
-      exact feedToken_const_maintains_scopesOk s i tk h_tokp h_ok h_success
-  | var =>
-      exact feedToken_var_maintains_scopesOk s i tk h_tokp h_ok h_success
+  | const seen =>
+      exact feedToken_const_maintains_scopesOk s i tk seen h_tokp h_ok h_success
+  | var seen =>
+      exact feedToken_var_maintains_scopesOk s i tk seen h_tokp h_ok h_success
   | djvars arr =>
       exact feedToken_djvars_maintains_scopesOk s i tk arr h_tokp h_ok h_success
   | proof pr =>
@@ -10081,7 +11029,7 @@ theorem feedToken_maintains_scopesOk
               simp [ParserState.feedToken, h_tokp, h_open, h_include, h_cmd,
                 ParserState.mkErrorFromEvidence, ParserState.mkErrorWithEvidence, ParserState.mkError, ParserState.withDB, DB.mkErrorWithEvidence, DB.mkError]
             exact (h_bad h_success).elim
-  | includePath includePos =>
+  | includePath resume includePos =>
       by_cases h_open : tk.eqArray "$(".toAscii
       · have h_db_eq : (s.feedToken i tk).db = s.db := by
           simp [ParserState.feedToken, h_tokp, h_open]
@@ -10108,7 +11056,7 @@ theorem feedToken_maintains_scopesOk
             exact (h_bad h_success).elim
           · let rawPath := (ParserState.includePathFromToken tk).1
             let closesInline := (ParserState.includePathFromToken tk).2
-            cases h_norm : ParserState.normalizeIncludePath s.sourceFile rawPath with
+            cases h_norm : ParserState.normalizeIncludePath s.db.config.literalIncludePaths s.sourceFile rawPath with
             | error err =>
                 have h_bad : (s.feedToken i tk).db.error? ≠ none := by
                   simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end, rawPath, closesInline, h_norm,
@@ -10117,15 +11065,16 @@ theorem feedToken_maintains_scopesOk
                 exact (h_bad h_success).elim
             | ok includePath =>
                 by_cases h_inline : closesInline
-                · have h_req : (s.requestInclude includePath).db.error? ≠ none :=
-                    Metamath.ParserLoopInduction.ParserState_requestInclude_sets_error s includePath
-                  have h_eq : s.feedToken i tk = s.requestInclude includePath := by
+                · have h_req : (s.requestInclude resume includePath).db.error? ≠ none :=
+                    Metamath.ParserLoopInduction.ParserState_requestInclude_sets_error
+                      s resume includePath
+                  have h_eq : s.feedToken i tk = s.requestInclude resume includePath := by
                     simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end, rawPath, closesInline, h_norm, h_inline]
                   exact (h_req (by simpa [h_eq] using h_success)).elim
                 · have h_db_eq : (s.feedToken i tk).db = s.db := by
                     simp [ParserState.feedToken, h_tokp, h_open, h_include, h_end, rawPath, closesInline, h_norm, h_inline]
                   simpa [h_db_eq] using h_ok
-  | includeClose includePos includePath =>
+  | includeClose resume includePos includePath =>
       by_cases h_open : tk.eqArray "$(".toAscii
       · have h_db_eq : (s.feedToken i tk).db = s.db := by
           simp [ParserState.feedToken, h_tokp, h_open]
@@ -10145,9 +11094,10 @@ theorem feedToken_maintains_scopesOk
             simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate_none]
           simpa [h_db_eq] using h_ok
         · by_cases h_close : tk.eqArray "$]".toAscii
-          · have h_req : (s.requestInclude includePath).db.error? ≠ none :=
-              Metamath.ParserLoopInduction.ParserState_requestInclude_sets_error s includePath
-            have h_eq : s.feedToken i tk = s.requestInclude includePath := by
+          · have h_req : (s.requestInclude resume includePath).db.error? ≠ none :=
+              Metamath.ParserLoopInduction.ParserState_requestInclude_sets_error
+                s resume includePath
+            have h_eq : s.feedToken i tk = s.requestInclude resume includePath := by
               simp [ParserState.feedToken, h_tokp, h_open, h_include, h_close]
             exact (h_req (by simpa [h_eq] using h_success)).elim
           · have h_bad : (s.feedToken i tk).db.error? ≠ none := by
@@ -10267,12 +11217,23 @@ theorem feedToken_maintains_scopesOk
                                 simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
                                   h_math_ok, tk', h_find, Bind.bind, Pure.pure]
                             | var _ =>
-                                simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
-                                  h_math_ok, tk', h_find, Bind.bind, Pure.pure]
+                                -- `.var` now gates on activity; the inactive branch errors,
+                                -- which `h_success` excludes
+                                cases h_act : s.db.isActiveVar tk' with
+                                | true =>
+                                    simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
+                                      h_math_ok, tk', h_find, Bind.bind, Pure.pure, h_act]
+                                | false =>
+                                    have h_bad : (s.feedToken i tk).db.error? ≠ none := by
+                                      simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
+                                        h_math_ok, tk', h_find, Bind.bind, Pure.pure, h_act, ParserState.mkErrorFromEvidence,
+                                        ParserState.mkErrorWithEvidence, ParserState.mkError,
+                                        ParserState.withDB, DB.mkErrorWithEvidence, DB.mkError]
+                                    exact (h_bad h_success).elim
                             | hyp _ _ _ =>
                                 have h_gate :
                                     s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk') := by
-                                  unfold DB.mathSymbolViolation? DB.isSym
+                                  unfold DB.mathSymbolViolation?
                                   simp [h_find]
                                 have h_bad : (s.feedToken i tk).db.error? ≠ none := by
                                   simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
@@ -10281,7 +11242,7 @@ theorem feedToken_maintains_scopesOk
                             | assert _ _ _ =>
                                 have h_gate :
                                     s.db.mathSymbolViolation? tk' = some (.tokenNotConstantOrVariable tk') := by
-                                  unfold DB.mathSymbolViolation? DB.isSym
+                                  unfold DB.mathSymbolViolation?
                                   simp [h_find]
                                 have h_bad : (s.feedToken i tk).db.error? ≠ none := by
                                   simp [ParserState.feedToken, h_tokp, h_open, h_include, h_delim, ParserState.withMath,
@@ -10602,11 +11563,11 @@ theorem done_no_error_wellScoped_of_stateInv
           exfalso
           simp [ParserState.done, h_no_err, h_db_err_false, h_charp, h_tokp, DB.error,
             Bind.bind, Id.run, Pure.pure, DB.mkParseError, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence] at h_done
-      | includePath includePos =>
+      | includePath resume includePos =>
           exfalso
           simp [ParserState.done, h_no_err, h_db_err_false, h_charp, h_tokp, DB.error,
             Bind.bind, Id.run, Pure.pure, DB.mkParseError, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence] at h_done
-      | includeClose includePos includePath =>
+      | includeClose resume includePos includePath =>
           exfalso
           simp [ParserState.done, h_no_err, h_db_err_false, h_charp, h_tokp, DB.error,
             Bind.bind, Id.run, Pure.pure, DB.mkParseError, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence] at h_done
@@ -10668,11 +11629,11 @@ theorem done_no_error_wellScoped_of_stateInv
           exfalso
           simp [ParserState.done, h_no_err, h_db_err_false, h_feed_ok, h_feed_err_false, h_charp, h_tokp, DB.error,
             Bind.bind, Id.run, Pure.pure, DB.mkParseError, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence] at h_done
-      | includePath includePos =>
+      | includePath resume includePos =>
           exfalso
           simp [ParserState.done, h_no_err, h_db_err_false, h_feed_ok, h_feed_err_false, h_charp, h_tokp, DB.error,
             Bind.bind, Id.run, Pure.pure, DB.mkParseError, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence] at h_done
-      | includeClose includePos includePath =>
+      | includeClose resume includePos includePath =>
           exfalso
           simp [ParserState.done, h_no_err, h_db_err_false, h_feed_ok, h_feed_err_false, h_charp, h_tokp, DB.error,
             Bind.bind, Id.run, Pure.pure, DB.mkParseError, DB.mkErrorFromEvidence, DB.mkErrorWithEvidence] at h_done

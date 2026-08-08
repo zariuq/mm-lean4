@@ -36,8 +36,13 @@ theorem parseErrorCode?_topLevelEssentialNotAllowed_payload_inversion
   | expectedConstantAndVariable => cases h_err_code
   | variableAlreadyHasFloatHyp v => cases h_err_code
   | duplicateDisjointVariable sym => cases h_err_code
+  | disjointStatementTooShort actual => cases h_err_code
+  | variableAlreadyActive name => cases h_err_code
+  | constantStatementEmpty => cases h_err_code
+  | variableStatementEmpty => cases h_err_code
   | tokenNotInScope sym =>
       simp [ScopeDeclError.code] at h_err_code
+  | inactiveMathSymbol sym_ => cases h_err_code
   | tokenNotVariable sym => cases h_err_code
   | tokenNotConstantOrVariable sym =>
       simp [ScopeDeclError.code] at h_err_code
@@ -62,9 +67,13 @@ theorem parseErrorCode?_tokenNotInScope_payload_inversion
   | expectedConstantAndVariable => cases h_err_code
   | variableAlreadyHasFloatHyp v => cases h_err_code
   | duplicateDisjointVariable sym => cases h_err_code
+  | disjointStatementTooShort actual => cases h_err_code
+  | variableAlreadyActive name => cases h_err_code
+  | constantStatementEmpty => cases h_err_code
+  | variableStatementEmpty => cases h_err_code
   | tokenNotInScope sym =>
-      simp [ScopeDeclError.code] at h_err_code
       exact ⟨sym, by simpa using h_ev⟩
+  | inactiveMathSymbol sym_ => cases h_err_code
   | tokenNotVariable sym => cases h_err_code
   | tokenNotConstantOrVariable sym =>
       simp [ScopeDeclError.code] at h_err_code
@@ -89,8 +98,13 @@ theorem parseErrorCode?_tokenNotConstantOrVariable_payload_inversion
   | expectedConstantAndVariable => cases h_err_code
   | variableAlreadyHasFloatHyp v => cases h_err_code
   | duplicateDisjointVariable sym => cases h_err_code
+  | disjointStatementTooShort actual => cases h_err_code
+  | variableAlreadyActive name => cases h_err_code
+  | constantStatementEmpty => cases h_err_code
+  | variableStatementEmpty => cases h_err_code
   | tokenNotInScope sym =>
       simp [ScopeDeclError.code] at h_err_code
+  | inactiveMathSymbol sym_ => cases h_err_code
   | tokenNotVariable sym => cases h_err_code
   | tokenNotConstantOrVariable sym =>
       simp [ScopeDeclError.code] at h_err_code
@@ -98,6 +112,79 @@ theorem parseErrorCode?_tokenNotConstantOrVariable_payload_inversion
   | topLevelEssentialNotAllowed =>
       simp [ScopeDeclError.code] at h_err_code
   | outOfOrderHypothesesInFrame => cases h_err_code
+
+/-- Inversion: decoded `.disjointStatementTooShort` retains the number of
+variables consumed before the `$d` terminator. -/
+theorem parseErrorCode?_disjointStatementTooShort_payload_inversion
+    (s : DB) :
+    s.parseErrorCode? = some .disjointStatementTooShort →
+    s.DisjointStatementTooShortPayloadWitness := by
+  intro h_code
+  have h_rule := parseErrorCode?_ruleSemantic_sound s
+    .disjointStatementTooShort h_code
+  rcases h_rule with ⟨err, h_ev, h_err_code⟩
+  cases err with
+  | cantPopGlobalScope => cases h_err_code
+  | constMustBeOutermost => cases h_err_code
+  | duplicateSymbolOrAssert label => cases h_err_code
+  | firstSymbolNotConstant => cases h_err_code
+  | hypothesisSymbolsNotInFrame => cases h_err_code
+  | outOfOrderHypothesesInFrame => cases h_err_code
+  | expectedConstantAndVariable => cases h_err_code
+  | variableAlreadyHasFloatHyp v => cases h_err_code
+  | duplicateDisjointVariable v => cases h_err_code
+  | disjointStatementTooShort actual =>
+      exact ⟨actual, by simpa using h_ev⟩
+  | variableAlreadyActive name => cases h_err_code
+  | constantStatementEmpty => cases h_err_code
+  | variableStatementEmpty => cases h_err_code
+  | tokenNotInScope v => cases h_err_code
+  | inactiveMathSymbol v_ => cases h_err_code
+  | tokenNotVariable v => cases h_err_code
+  | tokenNotConstantOrVariable symbol => cases h_err_code
+  | topLevelEssentialNotAllowed => cases h_err_code
+
+/-- Inversion: a decoded `.variableAlreadyActive` carries the offending
+variable name. -/
+theorem parseErrorCode?_variableAlreadyActive_payload_inversion (s : DB) :
+    s.parseErrorCode? = some .variableAlreadyActive →
+    ∃ name,
+      s.errorEvidence? = some (.scopeDecl (.variableAlreadyActive name)) := by
+  intro h_code
+  have h_rule := parseErrorCode?_ruleSemantic_sound s
+    .variableAlreadyActive h_code
+  rcases h_rule with ⟨err, h_ev, h_err_code⟩
+  cases err with
+  | variableAlreadyActive name => exact ⟨name, by simpa using h_ev⟩
+  | _ => cases h_err_code
+
+/-- Inversion: a decoded `.constantStatementEmpty` carries its scope-decl
+evidence. -/
+theorem parseErrorCode?_constantStatementEmpty_evidence_inversion
+    (s : DB) :
+    s.parseErrorCode? = some .constantStatementEmpty →
+    s.errorEvidence? = some (.scopeDecl .constantStatementEmpty) := by
+  intro h_code
+  have h_rule := parseErrorCode?_ruleSemantic_sound s
+    .constantStatementEmpty h_code
+  rcases h_rule with ⟨err, h_ev, h_err_code⟩
+  cases err with
+  | constantStatementEmpty => simpa using h_ev
+  | _ => cases h_err_code
+
+/-- Inversion: a decoded `.variableStatementEmpty` carries its scope-decl
+evidence. -/
+theorem parseErrorCode?_variableStatementEmpty_evidence_inversion
+    (s : DB) :
+    s.parseErrorCode? = some .variableStatementEmpty →
+    s.errorEvidence? = some (.scopeDecl .variableStatementEmpty) := by
+  intro h_code
+  have h_rule := parseErrorCode?_ruleSemantic_sound s
+    .variableStatementEmpty h_code
+  rcases h_rule with ⟨err, h_ev, h_err_code⟩
+  cases err with
+  | variableStatementEmpty => simpa using h_ev
+  | _ => cases h_err_code
 
 /-- Inversion: decoded `.includeInInnerScope` carries include payload with position+depth. -/
 theorem parseErrorCode?_includeInInnerScope_payload_inversion
@@ -110,6 +197,7 @@ theorem parseErrorCode?_includeInInnerScope_payload_inversion
   cases err with
   | cycleDetected path => cases h_err_code
   | depthExceeded path => cases h_err_code
+  | budgetExhausted path => cases h_err_code
   | inInnerScope pos depth inStatement allowIncludeInnerScopeWitness =>
       exact ⟨pos, depth, inStatement, allowIncludeInnerScopeWitness, by simpa using h_ev⟩
   | insideStatement pos scopeDepth inStatement allowTokenSplicingWitness =>
@@ -130,6 +218,7 @@ theorem parseErrorCode?_includeInsideStatement_payload_inversion
   cases err with
   | cycleDetected path => cases h_err_code
   | depthExceeded path => cases h_err_code
+  | budgetExhausted path => cases h_err_code
   | inInnerScope pos depth inStatement allowIncludeInnerScopeWitness =>
       cases h_err_code
   | insideStatement pos scopeDepth inStatement allowTokenSplicingWitness =>

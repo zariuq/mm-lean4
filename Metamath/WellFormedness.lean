@@ -64,6 +64,18 @@ def WellFormedDB (db : DB) : Prop :=
     | .var v         => v = lbl  -- Invariant: var labels = var names
     | _              => True)
 
+/-- Well-formedness reads `objects` and the frame only, so an update confined
+to `activeVars` leaves it fixed — the scoping repair is invisible here. -/
+@[simp] theorem wellFormedFrame_with_activeVars (db : DB)
+    (av : Array (String × Nat)) (fr : Frame) :
+    WellFormedFrame { db with activeVars := av } fr =
+      WellFormedFrame db fr := rfl
+
+@[simp] theorem wellFormedDB_with_activeVars (db : DB)
+    (av : Array (String × Nat)) (fr : Frame) (sc : Array (Nat × Nat)) :
+    WellFormedFrame { db with activeVars := av, frame := fr, scopes := sc }
+        fr = WellFormedFrame db fr := rfl
+
 /-- A variable `v` is declared by some earlier floating hypothesis in the frame. -/
 def FloatDeclaredBefore (db : DB) (fr : Frame) (i : Nat) (v : String) : Prop :=
   ∃ j : Nat, j < i ∧
@@ -71,6 +83,15 @@ def FloatDeclaredBefore (db : DB) (fr : Frame) (i : Nat) (v : String) : Prop :=
       db.find? fr.hyps[j]! = some (.hyp false f lbl) ∧
       f.isFloatShape = true ∧
       f[1]! = Sym.var v
+
+/-- `FloatDeclaredBefore` reads only `objects` and the frame, so it is blind
+to the activity stack. -/
+@[simp] theorem FloatDeclaredBefore_with_activeVars (db : DB) (fr0 : Frame)
+    (sc : Array (Nat × Nat)) (av : Array (String × Nat))
+    (fr : Frame) (i : Nat) (v : String) :
+    FloatDeclaredBefore
+        { db with frame := fr0, scopes := sc, activeVars := av } fr i v =
+      FloatDeclaredBefore db fr i v := rfl
 
 /-- A frame is well-scoped if:
 1. Every essential hypothesis respects the frame's float variables
@@ -928,4 +949,3 @@ theorem assertDvVarsInFrame_of_assertDvVarsInFrame?
 
 end WF
 end Metamath
-

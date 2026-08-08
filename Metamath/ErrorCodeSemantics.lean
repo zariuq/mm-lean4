@@ -1,14 +1,14 @@
 /-
-ErrorCodeSemantics — Total evidence extraction for all 55 ParseErrorCode constructors.
+ErrorCodeSemantics — Total evidence extraction for every ParseErrorCode constructor.
 
 This module proves that every decoded parser error code carries a concrete,
 family-specific evidence payload.  Combined with the existing semantic layer
-(`parseErrorCode?_ruleSemantic_sound`, 55/55), this gives a fully certified
+(`parseErrorCode?_ruleSemantic_sound`, all constructors), this gives a fully certified
 error-code ↔ evidence-shape correspondence.
 
 **Main results (all sorry-free):**
 
-1. `CodePayloadWitness`  — per-code evidence shape predicate (55 branches)
+1. `CodePayloadWitness`  — per-code evidence shape predicate
 2. `DB.parseErrorCode?_guardFacts_total` — total DB-level evidence extraction
 3. `checkBytes_parseErrorCode?_guardFacts_total` — bytes-level lift
 4. `checkBytes_parseErrorCode?_fullyCertified` — payload ∧ semantic bundle
@@ -34,7 +34,8 @@ open Metamath.Verify
 whose shape matches the error family and constructor for `code`.
 Each branch is the *tightest* statement extractable from the evidence layer. -/
 
-/-- Per-code evidence shape predicate.  55 branches, one per `ParseErrorCode` constructor. -/
+/-- Per-code evidence shape predicate, one branch per `ParseErrorCode`
+constructor. -/
 @[simp] def CodePayloadWitness (s : DB) : ParseErrorCode → Prop
   -- CompressedSaveError (1)
   | .cantSaveEmptyStack =>
@@ -61,7 +62,7 @@ Each branch is the *tightest* statement extractable from the evidence layer. -/
       ∃ tok, s.errorEvidence? = some (.tokenForm (.unknownStatementType tok))
   | .nestedCommentDelimiter =>
       s.errorEvidence? = some (.tokenForm .nestedCommentDelimiter)
-  -- ScopeDeclError (13)
+  -- ScopeDeclError
   | .cantPopGlobalScope => s.errorEvidence? = some (.scopeDecl .cantPopGlobalScope)
   | .constMustBeOutermost => s.errorEvidence? = some (.scopeDecl .constMustBeOutermost)
   | .duplicateSymbolOrAssert =>
@@ -77,8 +78,19 @@ Each branch is the *tightest* statement extractable from the evidence layer. -/
       ∃ v, s.errorEvidence? = some (.scopeDecl (.variableAlreadyHasFloatHyp v))
   | .duplicateDisjointVariable =>
       ∃ sym, s.errorEvidence? = some (.scopeDecl (.duplicateDisjointVariable sym))
+  | .disjointStatementTooShort =>
+      ∃ actual,
+        s.errorEvidence? = some (.scopeDecl (.disjointStatementTooShort actual))
+  | .variableAlreadyActive =>
+      ∃ name, s.errorEvidence? = some (.scopeDecl (.variableAlreadyActive name))
+  | .constantStatementEmpty =>
+      s.errorEvidence? = some (.scopeDecl .constantStatementEmpty)
+  | .variableStatementEmpty =>
+      s.errorEvidence? = some (.scopeDecl .variableStatementEmpty)
   | .tokenNotInScope =>
       ∃ sym, s.errorEvidence? = some (.scopeDecl (.tokenNotInScope sym))
+  | .inactiveMathSymbol =>
+      ∃ sym, s.errorEvidence? = some (.scopeDecl (.inactiveMathSymbol sym))
   | .tokenNotVariable =>
       ∃ sym, s.errorEvidence? = some (.scopeDecl (.tokenNotVariable sym))
   | .tokenNotConstantOrVariable =>
@@ -132,6 +144,8 @@ Each branch is the *tightest* statement extractable from the evidence layer. -/
       ∃ path, s.errorEvidence? = some (.includeErr (.cycleDetected path))
   | .includeDepthExceeded =>
       ∃ path, s.errorEvidence? = some (.includeErr (.depthExceeded path))
+  | .includeBudgetExhausted =>
+      ∃ path, s.errorEvidence? = some (.includeErr (.budgetExhausted path))
   | .includeInInnerScope =>
       ∃ pos depth inStmt witness,
         s.errorEvidence? = some (.includeErr (.inInnerScope pos depth inStmt witness))
@@ -162,7 +176,7 @@ matching the `CodePayloadWitness` shape.  The proof combines:
   `parseErrorCode?_ruleSemantic_sound` + family case analysis) -/
 
 /-- Total evidence extraction: every decoded code has a `CodePayloadWitness`.
-Covers all 55 `ParseErrorCode` constructors. -/
+Covers every `ParseErrorCode` constructor. -/
 theorem DB.parseErrorCode?_guardFacts_total (s : DB) (code : ParseErrorCode) :
     s.parseErrorCode? = some code → CodePayloadWitness s code := by
   intro h
@@ -357,8 +371,21 @@ theorem DB.parseErrorCode?_guardFacts_total (s : DB) (code : ParseErrorCode) :
                DB.ScopeDeclViolation] at h_rule
     obtain ⟨err, h_ev, h_code_eq⟩ := h_rule
     cases err <;> simp_all [ScopeDeclError.code]
+  | disjointStatementTooShort =>
+    exact DB.parseErrorCode?_disjointStatementTooShort_payload_inversion s h
+  | variableAlreadyActive =>
+    exact DB.parseErrorCode?_variableAlreadyActive_payload_inversion s h
+  | constantStatementEmpty =>
+    exact DB.parseErrorCode?_constantStatementEmpty_evidence_inversion s h
+  | variableStatementEmpty =>
+    exact DB.parseErrorCode?_variableStatementEmpty_evidence_inversion s h
   | tokenNotInScope =>
     exact DB.parseErrorCode?_tokenNotInScope_guardFacts s h
+  | inactiveMathSymbol =>
+    have h_rule := DB.parseErrorCode?_ruleSemantic_sound s .inactiveMathSymbol h
+    simp only [DB.RuleSemanticViolation] at h_rule
+    obtain ⟨err, h_ev, h_code_eq⟩ := h_rule
+    cases err <;> simp_all [ScopeDeclError.code]
   | tokenNotVariable =>
     have h_rule := DB.parseErrorCode?_ruleSemantic_sound s .tokenNotVariable h
     simp only [DB.RuleSemanticViolation, DB.ScopeDeclViolation] at h_rule
@@ -449,6 +476,8 @@ theorem DB.parseErrorCode?_guardFacts_total (s : DB) (code : ParseErrorCode) :
     exact DB.parseErrorCode?_includeCycleDetected_guardFacts s h
   | includeDepthExceeded =>
     exact DB.parseErrorCode?_includeDepthExceeded_guardFacts s h
+  | includeBudgetExhausted =>
+    exact DB.parseErrorCode?_includeBudgetExhausted_guardFacts s h
   | includeInInnerScope =>
     exact DB.parseErrorCode?_includeInInnerScope_guardFacts s h
   | includeInsideStatement =>
