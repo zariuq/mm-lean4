@@ -132,6 +132,10 @@ constructor. -/
         s.errorEvidence? = some (.proofCheck (.mandatoryHypothesisNotFoundInDatabase label))
   | .hypothesisNotFound =>
       ∃ label, s.errorEvidence? = some (.proofCheck (.hypothesisNotFound label))
+  | .mandatoryHypothesisInCompressedHeader =>
+      ∃ label,
+        s.errorEvidence? = some
+          (.proofCheck (.mandatoryHypothesisInCompressedHeader label))
   -- TheoremFinalityError (2)
   | .theoremMoreThanOneStackElement =>
       ∃ stackSize,
@@ -454,6 +458,12 @@ theorem DB.parseErrorCode?_guardFacts_total (s : DB) (code : ParseErrorCode) :
     exact DB.parseErrorCode?_mandatoryHypothesisNotFoundInDatabase_guardFacts s h
   | hypothesisNotFound =>
     exact DB.parseErrorCode?_hypothesisNotFound_guardFacts s h
+  | mandatoryHypothesisInCompressedHeader =>
+    have h_rule := DB.parseErrorCode?_ruleSemantic_sound s
+      .mandatoryHypothesisInCompressedHeader h
+    simp only [DB.RuleSemanticViolation, DB.ProofCheckViolation] at h_rule
+    obtain ⟨err, h_ev, h_code_eq⟩ := h_rule
+    cases err <;> simp_all [ProofCheckError.code]
   -- ═══════════════════════════════════════════════════════════════
   -- TheoremFinality (2) — both existing
   -- ═══════════════════════════════════════════════════════════════

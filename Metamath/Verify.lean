@@ -57,6 +57,28 @@ inductive CompressedInvalidBytePolicy where
   | ignore
   deriving DecidableEq, Repr, Inhabited
 
+/-- Placement policy for the postfix compressed-proof save marker.
+
+The book permits exactly one `Z` immediately after a completed index.  The
+repeatable alternative is isolated for the historical `metamath.exe` mirror;
+it does not weaken the default source-language interpretation. -/
+inductive CompressedSavePlacement where
+  | immediatelyAfterUse
+  | repeatableAfterUse
+  deriving DecidableEq, Repr, Inhabited
+
+/-- Admission policy for hypothesis labels in the explicit parenthesized
+header of a compressed proof.
+
+Appendix B permits active non-mandatory hypotheses there; the theorem's
+mandatory hypotheses are already prepended implicitly and must not be named a
+second time.  `metamath-knife` historically accepts any active hypothesis, so
+that behavior remains available only as an explicit compatibility policy. -/
+inductive CompressedHeaderHypothesisPolicy where
+  | nonmandatoryOnly
+  | anyActive
+  deriving DecidableEq, Repr, Inhabited
+
 /-- Finality policy at the physical end of an included file.
 
 `strict` requires the child to end between statements at its entry scope.
@@ -87,6 +109,8 @@ structure ModeConfig where
   allowTokenSplicing     : Bool := false  -- Allow include to split tokens
   childFileBoundary      : ChildFileBoundaryPolicy := .strict
   compressedInvalidBytes : CompressedInvalidBytePolicy := .reject
+  compressedSavePlacement : CompressedSavePlacement := .immediatelyAfterUse
+  compressedHeaderHypotheses : CompressedHeaderHypothesisPolicy := .nonmandatoryOnly
   maxIncludeDepth        : Nat := 100     -- Include expansion recursion bound
   maxIncludeResolutions  : Nat := 1000000 -- Include directive resolution budget (driver-loop fuel)
   -- [MM 4.1.2] "A file self-reference is ignored, as is any reference to the
@@ -119,6 +143,7 @@ def knife : ModeConfig := {
   rejectUnknownSteps := true
   rejectToplevelEss := true
   compressedInvalidBytes := .ignore
+  compressedHeaderHypotheses := .anyActive
   literalIncludePaths := true
 }
 
@@ -132,6 +157,7 @@ def exe : ModeConfig := {
   allowIncludeInnerScope := true
   allowTokenSplicing := true
   childFileBoundary := .spliceExceptComments
+  compressedSavePlacement := .repeatableAfterUse
   literalIncludePaths := true
 }
 
@@ -149,6 +175,7 @@ def permissive : ModeConfig := {
   allowIncludeInnerScope := true
   allowTokenSplicing := true
   childFileBoundary := .spliceAll
+  compressedHeaderHypotheses := .anyActive
 }
 
 /-- Sound default: Zar mode + reject incomplete proofs.
@@ -373,11 +400,21 @@ inductive Object
   | hyp : Bool → Formula → String → Object
   | assert : Formula → Frame → String → Object
 
+inductive CompressedPhase
+  | betweenSteps
+  | openIndex (accumulator : Nat)
+  | justCompletedStep
+  deriving DecidableEq, Repr, Inhabited
+
+def CompressedPhase.accumulator : CompressedPhase → Nat
+  | .openIndex accumulator => accumulator
+  | .betweenSteps | .justCompletedStep => 0
+
 inductive ProofTokenParser
   | start
   | preload
   | normal
-  | compressed (chr : Nat)
+  | compressed (phase : CompressedPhase)
 
 inductive HeapEl
   | fmla (f : Formula)
@@ -504,6 +541,7 @@ inductive ParseErrorCode
   | mandatoryHypothesisNotFoundInDatabase
   | hypothesisNotFound
   | outOfOrderHypothesesInFrame
+  | mandatoryHypothesisInCompressedHeader
   deriving DecidableEq, Repr, Inhabited
 /-- Reviewer-facing alias: verifier diagnostics include parse and proof-check phases. -/
 abbrev VerifyErrorCode := ParseErrorCode
@@ -601,6 +639,8 @@ namespace ParseErrorCode
   | .mandatoryHypothesisNotFoundInDatabase => "mandatory hypothesis '<label>' not found in database"
   | .hypothesisNotFound => "hypothesis '<label>' not found"
   | .outOfOrderHypothesesInFrame => "out of order hypotheses in frame"
+  | .mandatoryHypothesisInCompressedHeader =>
+      "mandatory hypothesis '<label>' repeated in compressed proof header"
 
 
 /-- Stable numeric ID for each parse error code. -/
@@ -667,6 +707,7 @@ def toNat : ParseErrorCode → Nat
   | .mandatoryHypothesisNotFoundInDatabase => 52
   | .hypothesisNotFound => 53
   | .outOfOrderHypothesesInFrame => 54
+  | .mandatoryHypothesisInCompressedHeader => 62
 
 /-- Decode a stable numeric ID into a parse error code. -/
 def ofNat? : Nat → Option ParseErrorCode
@@ -732,6 +773,7 @@ def ofNat? : Nat → Option ParseErrorCode
   | 52 => some .mandatoryHypothesisNotFoundInDatabase
   | 53 => some .hypothesisNotFound
   | 54 => some .outOfOrderHypothesesInFrame
+  | 62 => some .mandatoryHypothesisInCompressedHeader
   | _ => none
 
 
@@ -799,6 +841,7 @@ def specClause : ParseErrorCode → SpecClause
   | .mandatoryHypothesisNotFoundInDatabase => .sec4_3_labelResolution
   | .hypothesisNotFound => .sec4_3_labelResolution
   | .outOfOrderHypothesesInFrame => .sec4_2_7_frames
+  | .mandatoryHypothesisInCompressedHeader => .sec4_4_5_compressedProof
 
 /-- Option-valued compatibility wrapper (kept for existing callsites/tests). -/
 def specClause? (code : ParseErrorCode) : Option SpecClause :=
@@ -965,6 +1008,7 @@ inductive ProofCheckError where
   | statementNotFound (label : String)
   | mandatoryHypothesisNotFoundInDatabase (label : String)
   | hypothesisNotFound (label : String)
+  | mandatoryHypothesisInCompressedHeader (label : String)
   deriving DecidableEq, Repr, Inhabited
 
 namespace ProofCheckError
@@ -986,6 +1030,7 @@ def code : ProofCheckError → ParseErrorCode
   | .statementNotFound _ => .statementNotFound
   | .mandatoryHypothesisNotFoundInDatabase _ => .mandatoryHypothesisNotFoundInDatabase
   | .hypothesisNotFound _ => .hypothesisNotFound
+  | .mandatoryHypothesisInCompressedHeader _ => .mandatoryHypothesisInCompressedHeader
 
 def message : ProofCheckError → String
   | .stackFormulaNoConstantHead => "stack formula has no constant head"
@@ -1006,6 +1051,8 @@ def message : ProofCheckError → String
   | .mandatoryHypothesisNotFoundInDatabase label =>
       "mandatory hypothesis '" ++ label ++ "' not found in database"
   | .hypothesisNotFound label => "hypothesis '" ++ label ++ "' not found"
+  | .mandatoryHypothesisInCompressedHeader label =>
+      "mandatory hypothesis '" ++ label ++ "' repeated in compressed proof header"
 
 end ProofCheckError
 
@@ -1485,6 +1532,8 @@ def RuleSemanticViolation (s : DB) (code : ParseErrorCode) : Prop :=
   | .mandatoryHypothesisNotFoundInDatabase =>
       s.ProofCheckViolation .mandatoryHypothesisNotFoundInDatabase
   | .hypothesisNotFound => s.ProofCheckViolation .hypothesisNotFound
+  | .mandatoryHypothesisInCompressedHeader =>
+      s.ProofCheckViolation .mandatoryHypothesisInCompressedHeader
   | .theoremMoreThanOneStackElement => s.TheoremFinalityViolation .theoremMoreThanOneStackElement
   | .theoremClaimMismatch => s.TheoremFinalityViolation .theoremClaimMismatch
   | .internalIllFormedDatabaseAfterParse =>
@@ -1874,6 +1923,22 @@ def preload (db : DB) (pr : ProofState) (l : String) : Except ProofCheckFail Pro
   | some (.assert f fr _) => return pr.pushHeap (.assert f fr)
   | _ => throw (.proofCheck (.statementNotFound l))
 
+/-- Appendix-B gate for one explicit compressed-proof header label.
+
+The mandatory hypotheses are already present as the implicit prefix of the
+compressed-proof label sequence.  Strict modes reject naming one again in the
+parenthesized explicit suffix; the Knife compatibility policy preserves its
+historical acceptance of any active hypothesis. -/
+def explicitCompressedHeaderLabelCheck
+    (db : DB) (pr : ProofState) (label : String) : Except ProofCheckFail Unit :=
+  match db.config.compressedHeaderHypotheses with
+  | .anyActive => pure ()
+  | .nonmandatoryOnly =>
+      if label ∈ pr.frame.hyps.toList then
+        throw (.proofCheck (.mandatoryHypothesisInCompressedHeader label))
+      else
+        pure ()
+
 /-- Pre-populate heap with mandatory hypotheses for compressed proof format.
     Per spec Appendix B: "the order of the mandatory hypotheses of the statement
     being proved must not be changed if the compressed proof format is used"
@@ -2190,31 +2255,44 @@ inductive CompressedAction
   | save
   | unknown
 
-/-- Decode a compressed proof token into actions and the updated accumulator. -/
-def decodeCompressed (tk : ByteSlice) (chr : Nat)
-    (invalidBytePolicy : CompressedInvalidBytePolicy := .reject) :
-    Except ProofCheckFail (List CompressedAction × Nat) := do
-  let mut chr := chr
+/-- Decode a compressed proof token into actions and its explicit grammar
+phase.  Numeric accumulation, open-index state, and postfix-save permission
+are deliberately not collapsed into one natural number. -/
+def decodeCompressed (tk : ByteSlice) (phase : CompressedPhase)
+    (invalidBytePolicy : CompressedInvalidBytePolicy := .reject)
+    (savePlacement : CompressedSavePlacement := .immediatelyAfterUse) :
+    Except ProofCheckFail (List CompressedAction × CompressedPhase) := do
+  let mut phase := phase
   let mut acts : List CompressedAction := []
   for c in tk do
     if 'A'.toUInt8 ≤ c && c ≤ 'Z'.toUInt8 then
       if c ≤ 'T'.toUInt8 then
-        let n := 20 * chr + (c - 'A'.toUInt8).toNat
+        let n := 20 * phase.accumulator + (c - 'A'.toUInt8).toNat
         acts := CompressedAction.step n :: acts
-        chr := 0
+        phase := .justCompletedStep
       else if c < 'Z'.toUInt8 then
-        chr := 5 * chr + (c - 'T'.toUInt8).toNat
+        phase := .openIndex
+          (5 * phase.accumulator + (c - 'T'.toUInt8).toNat)
       else
-        acts := CompressedAction.save :: acts
-        chr := 0
+        match phase with
+        | .justCompletedStep =>
+            acts := CompressedAction.save :: acts
+            phase := match savePlacement with
+              | .immediatelyAfterUse => .betweenSteps
+              | .repeatableAfterUse => .justCompletedStep
+        | .betweenSteps | .openIndex _ =>
+            throw (.proofCheck .proofParseError)
     else if c = '?'.toUInt8 then
-      acts := CompressedAction.unknown :: acts
-      chr := 0
+      match phase with
+      | .openIndex _ => throw (.proofCheck .proofParseError)
+      | .betweenSteps | .justCompletedStep =>
+          acts := CompressedAction.unknown :: acts
+          phase := .betweenSteps
     else
       match invalidBytePolicy with
       | .reject => throw (.proofCheck .proofParseError)
       | .ignore => pure ()
-  return (acts.reverse, chr)
+  return (acts.reverse, phase)
 
 def applyCompressedActions (db : DB) (pr : ProofState) (acts : List CompressedAction) :
     Except ProofCheckFail ProofState :=
@@ -2310,24 +2388,29 @@ where
       else goNormal { pr with ptp := .normal }
     | .preload =>
       if tk.eqArray ")".toAscii then
-        pure { pr with ptp := .compressed 0 }
+        pure { pr with ptp := .compressed .betweenSteps }
       else
         let (ok, tk) := toLabel tk
-        if ok then s.db.preload pr tk
+        if ok then
+          s.db.explicitCompressedHeaderLabelCheck pr tk
+          s.db.preload pr tk
         else throw (.tokenForm (.invalidLabel tk))
     | .normal => goNormal pr
-    | .compressed chr =>
+    | .compressed phase =>
       let mut pr := pr
-      let (acts, chr) ← decodeCompressed tk chr s.db.config.compressedInvalidBytes
+      let (acts, phase) ← decodeCompressed tk phase
+        s.db.config.compressedInvalidBytes
+        s.db.config.compressedSavePlacement
       pr ← applyCompressedActions s.db pr acts
-      pure { pr with ptp := .compressed chr }
+      pure { pr with ptp := .compressed phase }
 
 
 def finishProof (s : ParserState) : ProofState → ParserState
   | ⟨pos, l, fmla, fr, _, stack, ptp, incomplete⟩ => withAt l fun _ => Id.run do
     let s := { s with tokp := .start }
     match ptp with
-    | .compressed 0 => ()
+    | .compressed .betweenSteps => ()
+    | .compressed .justCompletedStep => ()
     | .normal => ()
     | _ =>
         return s.mkErrorFromEvidence pos (.proofCheck .proofParseError)

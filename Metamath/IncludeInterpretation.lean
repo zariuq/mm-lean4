@@ -164,26 +164,41 @@ theorem permissive_selects_permissiveIncludePolicy :
 because the reference implementations disagree independently on this axis. -/
 structure CompressedProofInterpretation where
   invalidBytes : CompressedInvalidBytePolicy
+  savePlacement : CompressedSavePlacement
+  headerHypotheses : CompressedHeaderHypothesisPolicy
   deriving DecidableEq, Repr
 
 /-- Knife's decoder silently ignores bytes outside `A`--`Z` and `?`; this is
 visible in its source as the absence of a fallback branch. -/
 def metamathKnifeCompressedProofPolicy : CompressedProofInterpretation :=
-  { invalidBytes := .ignore }
+  { invalidBytes := .ignore
+    savePlacement := .immediatelyAfterUse
+    headerHypotheses := .anyActive }
 
-/-- The specification, Zar, and metamath.exe reject such bytes. -/
+/-- The specification and Zar reject invalid bytes and require each save to
+immediately follow a completed proof step. -/
 def strictCompressedProofPolicy : CompressedProofInterpretation :=
-  { invalidBytes := .reject }
+  { invalidBytes := .reject
+    savePlacement := .immediatelyAfterUse
+    headerHypotheses := .nonmandatoryOnly }
+
+/-- `metamath.exe` rejects invalid bytes but accepts repeated postfix saves. -/
+def metamathExeCompressedProofPolicy : CompressedProofInterpretation :=
+  { invalidBytes := .reject
+    savePlacement := .repeatableAfterUse
+    headerHypotheses := .nonmandatoryOnly }
 
 def compressedProofInterpretation (c : ModeConfig) : CompressedProofInterpretation :=
-  { invalidBytes := c.compressedInvalidBytes }
+  { invalidBytes := c.compressedInvalidBytes
+    savePlacement := c.compressedSavePlacement
+    headerHypotheses := c.compressedHeaderHypotheses }
 
 /-- Selection fact only; the decoder calls this configuration field directly. -/
 theorem knife_selects_metamathKnifeCompressedProofPolicy :
     knife.compressedProofInterpretation = metamathKnifeCompressedProofPolicy := rfl
 
-theorem exe_selects_strictCompressedProofPolicy :
-    exe.compressedProofInterpretation = strictCompressedProofPolicy := rfl
+theorem exe_selects_metamathExeCompressedProofPolicy :
+    exe.compressedProofInterpretation = metamathExeCompressedProofPolicy := rfl
 
 theorem zar_selects_strictCompressedProofPolicy :
     zar.compressedProofInterpretation = strictCompressedProofPolicy := rfl
@@ -246,7 +261,7 @@ def metamathExeAcceptanceRequirement : AcceptanceInterpretation :=
     allowIncludeInnerScope := true
     allowTokenSplicing := true
     includes := metamathExeIncludePolicy
-    compressedProofs := strictCompressedProofPolicy }
+    compressedProofs := metamathExeCompressedProofPolicy }
 
 /-- Zar's declared interpretation of the Metamath specification. -/
 def zarAcceptancePolicy : AcceptanceInterpretation :=

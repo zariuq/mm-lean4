@@ -9245,16 +9245,24 @@ theorem feedProof_go_ok_preserves_core
         simp
       · by_cases h_lbl_ok : (toLabel tk).fst
         · let tk' := (toLabel tk).snd
-          have h_pre : s.db.preload pr tk' = .ok pr' := by
-            simpa [h_ptp, h_close, h_lbl_ok, tk'] using h_ok
-          exact preload_ok_preserves_core s.db pr pr' tk' h_pre
+          cases h_guard : s.db.explicitCompressedHeaderLabelCheck pr tk' with
+          | error err =>
+              simp [h_ptp, h_close, h_lbl_ok, tk', h_guard,
+                bind, Except.bind] at h_ok
+          | ok value =>
+              cases value
+              have h_pre : s.db.preload pr tk' = .ok pr' := by
+                simpa [h_ptp, h_close, h_lbl_ok, tk', h_guard,
+                  bind, Except.bind, pure, Except.pure] using h_ok
+              exact preload_ok_preserves_core s.db pr pr' tk' h_pre
         · simp [h_ptp, h_close, h_lbl_ok] at h_ok
   | normal =>
       have h_norm : ParserState.feedProof.goNormal s tk pr = .ok pr' := by
         simpa [h_ptp] using h_ok
       exact feedProof_goNormal_ok_preserves_core s tk pr pr' h_norm
   | compressed chr =>
-      cases h_dec : ParserState.decodeCompressed tk chr s.db.config.compressedInvalidBytes with
+      cases h_dec : ParserState.decodeCompressed tk chr s.db.config.compressedInvalidBytes
+          s.db.config.compressedSavePlacement with
       | error msg =>
           simp [h_ptp, h_dec, Bind.bind, Except.bind] at h_ok
       | ok dec =>
@@ -9321,13 +9329,22 @@ theorem finishProof_tokp_start
             split <;> rfl
           · simp [ParserState.finishProof, ParserState.withAt_tokp, ParserState.withDB, ParserState.mkErrorFromEvidence, ParserState.mkError, h_size]
       | compressed chr =>
-          by_cases h_chr : chr = 0
-          · subst h_chr
+          cases chr with
+          | betweenSteps =>
             by_cases h_size : stack.size = 1
             · simp [ParserState.finishProof, ParserState.withAt_tokp, ParserState.withDB, ParserState.mkErrorFromEvidence, ParserState.mkError, h_size]
               split <;> rfl
             · simp [ParserState.finishProof, ParserState.withAt_tokp, ParserState.withDB, ParserState.mkErrorFromEvidence, ParserState.mkError, h_size]
-          · simp [ParserState.finishProof, h_chr, ParserState.withAt_tokp, ParserState.withDB, ParserState.mkErrorFromEvidence, ParserState.mkError]
+          | openIndex accumulator =>
+              simp [ParserState.finishProof, ParserState.withAt_tokp, ParserState.withDB,
+                ParserState.mkErrorFromEvidence, ParserState.mkError]
+          | justCompletedStep =>
+              by_cases h_size : stack.size = 1
+              · simp [ParserState.finishProof, ParserState.withAt_tokp, ParserState.withDB,
+                  ParserState.mkErrorFromEvidence, ParserState.mkError, h_size]
+                split <;> rfl
+              · simp [ParserState.finishProof, ParserState.withAt_tokp, ParserState.withDB,
+                  ParserState.mkErrorFromEvidence, ParserState.mkError, h_size]
 /-- In `.proof` mode, successful `feedToken` preserves `TokpInv`. -/
 theorem feedToken_proof_maintains_tokpInv
     (s : ParserState) (i : Nat) (tk : ByteSlice) (pr : ProofState)
@@ -9653,8 +9670,8 @@ theorem finishProof_success_insert
               simp [inner, h_size, ParserState.mkErrorFromEvidence, ParserState.mkErrorWithEvidence, ParserState.mkError, ParserState.withDB, DB.mkErrorWithEvidence, DB.mkError]
             exact (h_bad h_inner_ok).elim
       | compressed chr =>
-          by_cases h_chr : chr = 0
-          · subst h_chr
+          cases chr with
+          | betweenSteps =>
             let inner : Unit → ParserState := fun _ => Id.run do
               let s := { s with tokp := .start }
               unless stack.size == 1 do
@@ -9670,10 +9687,13 @@ theorem finishProof_success_insert
             · by_cases h_eq' : stack[0]! == fmla
               · have h_inner_db : (inner ()).db = ((s.db.insert pos l (.assert fmla fr)).recordIncomplete inc l) := by
                   simp [inner, Id.run, h_size, h_eq', ParserState.withDB]
-                have h_db_eq : (s.finishProof ⟨pos, l, fmla, fr, heap, stack, .compressed 0, inc⟩).db =
+                have h_db_eq :
+                    (s.finishProof ⟨pos, l, fmla, fr, heap, stack,
+                      .compressed .betweenSteps, inc⟩).db =
                     ((s.db.insert pos l (.assert fmla fr)).recordIncomplete inc l) := by
                   calc
-                    (s.finishProof ⟨pos, l, fmla, fr, heap, stack, .compressed 0, inc⟩).db
+                    (s.finishProof ⟨pos, l, fmla, fr, heap, stack,
+                      .compressed .betweenSteps, inc⟩).db
                         = (ParserState.withAt l inner).db := by
                             simpa [ParserState.finishProof, inner]
                     _ = (inner ()).db := h_inner_eq
@@ -9691,15 +9711,60 @@ theorem finishProof_success_insert
                 simp [inner, h_size, ParserState.mkErrorFromEvidence, ParserState.mkErrorWithEvidence,
                   ParserState.mkError, ParserState.withDB, DB.mkErrorWithEvidence, DB.mkError]
               exact (h_bad h_inner_ok).elim
-          · -- chr ≠ 0 -> parse error
+          | openIndex accumulator =>
             have h_bad_inner :
                 (ParserState.withAt l (fun _ => ({ s with tokp := .start }).mkErrorFromEvidence pos
                   (ErrorEvidence.proofCheck ProofCheckError.proofParseError))).db.error? ≠ none := by
               exact withAt_mkErrorFromEvidence_error_ne_none l { s with tokp := .start } pos
                 (ErrorEvidence.proofCheck ProofCheckError.proofParseError)
-            have h_bad : (s.finishProof ⟨pos, l, fmla, fr, heap, stack, .compressed chr, inc⟩).db.error? ≠ none := by
-              simpa [ParserState.finishProof, h_chr] using h_bad_inner
+            have h_bad :
+                (s.finishProof ⟨pos, l, fmla, fr, heap, stack,
+                  .compressed (.openIndex accumulator), inc⟩).db.error? ≠ none := by
+              simpa [ParserState.finishProof] using h_bad_inner
             exact (h_bad h_success).elim
+          | justCompletedStep =>
+            let inner : Unit → ParserState := fun _ => Id.run do
+              let s := { s with tokp := .start }
+              unless stack.size == 1 do
+                return s.mkErrorFromEvidence pos (.theoremFinality (.theoremMoreThanOneStackElement stack.size))
+              unless stack[0]! == fmla do
+                return s.mkErrorFromEvidence pos (.theoremFinality (.theoremClaimMismatch fmla stack[0]!))
+              s.withDB fun db => (db.insert pos l (.assert fmla fr)).recordIncomplete inc l
+            have h_success_at : (ParserState.withAt l inner).db.error? = none := by
+              simpa [ParserState.finishProof, inner] using h_success
+            have h_inner := withAt_success_eq l inner h_success_at
+            rcases h_inner with ⟨h_inner_ok, h_inner_eq⟩
+            by_cases h_size : stack.size == 1
+            · by_cases h_eq' : stack[0]! == fmla
+              · have h_inner_db :
+                    (inner ()).db = ((s.db.insert pos l (.assert fmla fr)).recordIncomplete inc l) := by
+                  simp [inner, Id.run, h_size, h_eq', ParserState.withDB]
+                have h_db_eq :
+                    (s.finishProof ⟨pos, l, fmla, fr, heap, stack,
+                      .compressed .justCompletedStep, inc⟩).db =
+                      ((s.db.insert pos l (.assert fmla fr)).recordIncomplete inc l) := by
+                  calc
+                    (s.finishProof ⟨pos, l, fmla, fr, heap, stack,
+                      .compressed .justCompletedStep, inc⟩).db
+                        = (ParserState.withAt l inner).db := by
+                            simpa [ParserState.finishProof, inner]
+                    _ = (inner ()).db := h_inner_eq
+                    _ = ((s.db.insert pos l (.assert fmla fr)).recordIncomplete inc l) := h_inner_db
+                have h_ok : (s.db.insert pos l (.assert fmla fr)).error? = none := by
+                  have h_m := h_inner_ok
+                  rw [h_inner_db] at h_m
+                  simpa using h_m
+                exact ⟨h_db_eq, h_ok⟩
+              · have h_bad : (inner ()).db.error? ≠ none := by
+                  simp [inner, h_size, h_eq', ParserState.mkErrorFromEvidence,
+                    ParserState.mkErrorWithEvidence, ParserState.mkError, ParserState.withDB,
+                    DB.mkErrorWithEvidence, DB.mkError]
+                exact (h_bad h_inner_ok).elim
+            · have h_bad : (inner ()).db.error? ≠ none := by
+                simp [inner, h_size, ParserState.mkErrorFromEvidence,
+                  ParserState.mkErrorWithEvidence, ParserState.mkError, ParserState.withDB,
+                  DB.mkErrorWithEvidence, DB.mkError]
+              exact (h_bad h_inner_ok).elim
 
 /-! `recordIncomplete` transports the structural invariants: it touches only
 `incompleteProofs`, which none of them read. -/

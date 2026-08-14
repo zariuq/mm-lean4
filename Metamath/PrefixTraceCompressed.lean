@@ -83,8 +83,14 @@ theorem go_preload_label_extracts
   unfold ParserState.feedProof.go at h_ok
   simp [h_preload, h_not_close] at h_ok
   by_cases h_lbl : (toLabel tk).fst
-  · simp [h_lbl] at h_ok
-    exact ⟨h_lbl, h_ok⟩
+  · cases h_guard : s.db.explicitCompressedHeaderLabelCheck pr
+        (toLabel tk).snd with
+    | error err =>
+        simp [h_lbl, h_guard, bind, Except.bind] at h_ok
+    | ok value =>
+        cases value
+        simp [h_lbl, h_guard, bind, Except.bind] at h_ok
+        exact ⟨h_lbl, h_ok⟩
   · simp [h_lbl] at h_ok
 
 /-! ### Step 1c: .preload + ")" → compressed 0 -/
@@ -94,7 +100,7 @@ theorem go_preload_close_extracts
     (s : ParserState) (tk : ByteSlice) (pr pr' : ProofState)
     (h_ok : ParserState.feedProof.go s tk pr = .ok pr')
     (h_preload : pr.ptp = .preload) (h_close : tk.eqArray ")".toAscii) :
-    pr' = {pr with ptp := .compressed 0} := by
+    pr' = {pr with ptp := .compressed .betweenSteps} := by
   unfold ParserState.feedProof.go at h_ok
   simp [h_preload, h_close, pure, Except.pure] at h_ok
   exact h_ok.symm
@@ -104,16 +110,19 @@ theorem go_preload_close_extracts
 /-- In `.compressed chr` mode, `go` decodes the token and applies compressed
     actions. Returns the decoded actions, new accumulator, and intermediate state. -/
 theorem go_compressed_extracts
-    (s : ParserState) (tk : ByteSlice) (pr pr' : ProofState) (chr : Nat)
+    (s : ParserState) (tk : ByteSlice) (pr pr' : ProofState)
+    (chr : CompressedPhase)
     (h_ok : ParserState.feedProof.go s tk pr = .ok pr')
     (h_comp : pr.ptp = .compressed chr) :
     ∃ acts chr' pr_mid,
-      ParserState.decodeCompressed tk chr s.db.config.compressedInvalidBytes = .ok (acts, chr') ∧
+      ParserState.decodeCompressed tk chr s.db.config.compressedInvalidBytes
+          s.db.config.compressedSavePlacement = .ok (acts, chr') ∧
       ParserState.applyCompressedActions s.db pr acts = .ok pr_mid ∧
       pr' = {pr_mid with ptp := .compressed chr'} := by
   unfold ParserState.feedProof.go at h_ok
   simp [h_comp] at h_ok
-  cases h_dec : ParserState.decodeCompressed tk chr s.db.config.compressedInvalidBytes with
+  cases h_dec : ParserState.decodeCompressed tk chr s.db.config.compressedInvalidBytes
+      s.db.config.compressedSavePlacement with
   | error e => simp [h_dec, bind, Except.bind] at h_ok
   | ok dec =>
     obtain ⟨acts, chr'⟩ := dec
@@ -148,12 +157,14 @@ theorem feedProof_success_go_ok
 
 /-- feedProof in compressed mode: extract decoded actions and intermediate state. -/
 theorem feedProof_compressed_extracts
-    (s : ParserState) (tk : ByteSlice) (pr : ProofState) (chr : Nat)
+    (s : ParserState) (tk : ByteSlice) (pr : ProofState)
+    (chr : CompressedPhase)
     (h_success : (s.feedProof tk pr).db.error? = none)
     (h_comp : pr.ptp = .compressed chr) :
     ∃ pr' acts chr' pr_mid,
       (s.feedProof tk pr).tokp = .proof pr' ∧
-      ParserState.decodeCompressed tk chr s.db.config.compressedInvalidBytes = .ok (acts, chr') ∧
+      ParserState.decodeCompressed tk chr s.db.config.compressedInvalidBytes
+          s.db.config.compressedSavePlacement = .ok (acts, chr') ∧
       ParserState.applyCompressedActions s.db pr acts = .ok pr_mid ∧
       pr' = {pr_mid with ptp := .compressed chr'} := by
   obtain ⟨pr', h_go, h_tokp⟩ := feedProof_success_go_ok s tk pr h_success
@@ -202,7 +213,8 @@ def CompressedTokensOK (s : ParserState) :
       (s.feedProof tk pr).db.error? = none ∧
       (s.feedProof tk pr).tokp = .proof pr_mid ∧
       pr.ptp = .compressed chr ∧
-      ParserState.decodeCompressed tk chr s.db.config.compressedInvalidBytes = .ok (acts, chr') ∧
+      ParserState.decodeCompressed tk chr s.db.config.compressedInvalidBytes
+          s.db.config.compressedSavePlacement = .ok (acts, chr') ∧
       (∀ a ∈ acts, a ≠ ParserState.CompressedAction.unknown) ∧
       CompressedTokensOK s pr_mid rest pr_final acc_rest ∧
       acc = acts ++ acc_rest
@@ -293,7 +305,14 @@ theorem PreloadTokensOK_extracts_fold
       unfold ParserState.feedProof.go at h_go
       simp [h_ptp, h_not_close] at h_go
       by_cases h_lbl : (toLabel tk).fst
-      · simp [h_lbl] at h_go; exact h_go
+      · cases h_guard : s.db.explicitCompressedHeaderLabelCheck pr₀
+            (toLabel tk).snd with
+        | error err =>
+            simp [h_lbl, h_guard, bind, Except.bind] at h_go
+        | ok value =>
+            cases value
+            simpa [h_lbl, h_guard, bind, Except.bind,
+              pure, Except.pure] using h_go
       · simp [h_lbl] at h_go
     -- Preservation
     have h_mid_core :=
@@ -767,7 +786,7 @@ theorem compressed_proof_full_provenance
     rw [h_close_tokp] at h_tokp_close; exact TokenParser.proof.inj h_tokp_close
   subst h_eq₃
   have h_ptp₂_val : pr₂.ptp = .preload := by rw [h_ptp₂, h_pr₁_eq]
-  have h_pr₃_eq : pr₃ = {pr₂ with ptp := .compressed 0} :=
+  have h_pr₃_eq : pr₃ = {pr₂ with ptp := .compressed .betweenSteps} :=
     go_preload_close_extracts s tk_close pr₂ pr₃ h_go_close h_ptp₂_val h_close
   -- Phase C: compressed body extracts actions
   obtain ⟨pr_result, h_applyCA₃, h_stack_eq, h_heap_eq, h_fmla_eq, h_frame_eq, h_no_unk⟩ :=
@@ -785,12 +804,14 @@ theorem compressed_proof_full_provenance
   let pr_pre : ProofState := {pr₂ with ptp := pr_mand.ptp}
   -- applyCA ptp bridge: token-level applyCA on {pr₂ with ptp := .compressed 0}
   -- → pure applyCA on pr_pre
-  have h_pr₃_as_pre : pr₃ = {pr_pre with ptp := .compressed 0} := by
+  have h_pr₃_as_pre :
+      pr₃ = {pr_pre with ptp := .compressed .betweenSteps} := by
     rw [h_pr₃_eq]
   have h_applyCA_pre : ParserState.applyCompressedActions s.db pr_pre all_acts =
       .ok {pr_result with ptp := pr_pre.ptp} := by
     rw [h_pr₃_as_pre] at h_applyCA₃
-    exact applyCA_ptp_rev s.db pr_pre all_acts (.compressed 0) pr_result h_applyCA₃
+    exact applyCA_ptp_rev s.db pr_pre all_acts
+      (.compressed .betweenSteps) pr_result h_applyCA₃
   -- Stack/fmla conditions for compressed_full_bridge
   let pr_bridge : ProofState := {pr_result with ptp := pr_pre.ptp}
   have h_bridge_stack : pr_bridge.stack = pr_final.stack := h_stack_eq.symm
@@ -998,7 +1019,7 @@ theorem compressed_proof_prefix_provenance
     rw [h_close_tokp] at h_tokp_close; exact TokenParser.proof.inj h_tokp_close
   subst h_eq₃
   have h_ptp₂_val : pr₂.ptp = .preload := by rw [h_ptp₂, h_pr₁_eq]
-  have h_pr₃_eq : pr₃ = {pr₂ with ptp := .compressed 0} :=
+  have h_pr₃_eq : pr₃ = {pr₂ with ptp := .compressed .betweenSteps} :=
     go_preload_close_extracts s tk_close pr₂ pr₃ h_go_close h_ptp₂_val h_close
   -- Phase C: compressed body extracts actions
   obtain ⟨pr_result, h_applyCA₃, h_stack_eq, h_heap_eq, h_fmla_eq, h_frame_eq, h_no_unk⟩ :=
@@ -1009,12 +1030,14 @@ theorem compressed_proof_prefix_provenance
     rw [h_pr₁_eq] at h_preload_fold
     exact preload_fold_ptp_rev s.db user_labels pr_mand .preload pr₂ h_preload_fold
   let pr_pre : ProofState := {pr₂ with ptp := pr_mand.ptp}
-  have h_pr₃_as_pre : pr₃ = {pr_pre with ptp := .compressed 0} := by
+  have h_pr₃_as_pre :
+      pr₃ = {pr_pre with ptp := .compressed .betweenSteps} := by
     rw [h_pr₃_eq]
   have h_applyCA_pre : ParserState.applyCompressedActions s.db pr_pre all_acts =
       .ok {pr_result with ptp := pr_pre.ptp} := by
     rw [h_pr₃_as_pre] at h_applyCA₃
-    exact applyCA_ptp_rev s.db pr_pre all_acts (.compressed 0) pr_result h_applyCA₃
+    exact applyCA_ptp_rev s.db pr_pre all_acts
+      (.compressed .betweenSteps) pr_result h_applyCA₃
   let pr_bridge : ProofState := {pr_result with ptp := pr_pre.ptp}
   have h_bridge_stack : pr_bridge.stack = pr_final.stack := h_stack_eq.symm
   have h_bridge_stack_one : pr_bridge.stack.size = 1 := by rw [h_bridge_stack]; exact h_stack_one

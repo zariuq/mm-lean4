@@ -182,17 +182,21 @@ namespace ParserState
           · split <;> simp [ParserState.mkErrorFromEvidence_db_config, ParserState.withDB, DB.insert_config]
           · simp [ParserState.mkErrorFromEvidence_db_config]
       | compressed chr =>
-          simp only [Pure.pure, Bind.bind]
-          split
-          ·
-            split
-            · split <;> simp [ParserState.mkErrorFromEvidence_db_config, ParserState.withDB, DB.insert_config]
-            · simp [ParserState.mkErrorFromEvidence_db_config]
-          ·
-            split
-            · split <;> simp [ParserState.mkErrorFromEvidence_db_config, ParserState.withDB, DB.insert_config]
-            · simp [ParserState.mkErrorFromEvidence_db_config]
-          · simp [ParserState.mkErrorFromEvidence_db_config]
+          cases chr with
+          | openIndex accumulator =>
+              simp [ParserState.mkErrorFromEvidence_db_config]
+          | betweenSteps =>
+              simp only [Pure.pure, Bind.bind]
+              split
+              · split <;> simp [ParserState.mkErrorFromEvidence_db_config,
+                  ParserState.withDB, DB.insert_config]
+              · simp [ParserState.mkErrorFromEvidence_db_config]
+          | justCompletedStep =>
+              simp only [Pure.pure, Bind.bind]
+              split
+              · split <;> simp [ParserState.mkErrorFromEvidence_db_config,
+                  ParserState.withDB, DB.insert_config]
+              · simp [ParserState.mkErrorFromEvidence_db_config]
 
 @[simp] theorem feedToken_db_config (s : ParserState) (pos : Nat) (tk : ByteSlice) :
     (s.feedToken pos tk).db.config = s.db.config := by
