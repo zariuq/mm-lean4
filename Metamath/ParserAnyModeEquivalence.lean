@@ -46,7 +46,9 @@ theorem finishProof_success_stack_conditions
     (h_success : (s.finishProof pr).db.error? = none) :
     pr.stack.size = 1 ∧
     pr.stack[0]? = some pr.fmla ∧
-    (pr.ptp = .normal ∨ pr.ptp = .compressed 0) := by
+    (pr.ptp = .normal ∨
+      pr.ptp = .compressed .betweenSteps ∨
+      pr.ptp = .compressed .justCompletedStep) := by
   cases pr with
   | mk pos l fmla fr heap stack ptp inc =>
       cases ptp with
@@ -87,8 +89,8 @@ theorem finishProof_success_stack_conditions
           · exact absurd h_ok (by simp [inner, h_size,
               ParserState.mkErrorFromEvidence, ParserState.withDB])
       | compressed chr =>
-          by_cases h_chr : chr = 0
-          · subst h_chr
+          cases chr with
+          | betweenSteps =>
             let inner : Unit → ParserState := fun _ => Id.run do
               let s := { s with tokp := .start }
               unless stack.size == 1 do
@@ -107,16 +109,45 @@ theorem finishProof_success_stack_conditions
                 have h_lt : 0 < stack.size := by omega
                 have h_val : stack[0]! = fmla := LawfulBEq.eq_of_beq h_eq'
                 simp [getElem!_pos, h_lt] at h_val
-                exact ⟨h_sz, by rw [Array.getElem?_eq_getElem h_lt, h_val], Or.inr rfl⟩
+                exact ⟨h_sz, by rw [Array.getElem?_eq_getElem h_lt, h_val],
+                  Or.inr (Or.inl rfl)⟩
               · exact absurd h_ok (by simp [inner, h_size, h_eq',
                   ParserState.mkErrorFromEvidence, ParserState.withDB])
             · exact absurd h_ok (by simp [inner, h_size,
                 ParserState.mkErrorFromEvidence, ParserState.withDB])
-          · exfalso
-            have : (s.finishProof ⟨pos, l, fmla, fr, heap, stack, .compressed chr, inc⟩).db.error? ≠ none := by
-              simp [ParserState.finishProof, h_chr]
+          | openIndex accumulator =>
+            exfalso
+            have :
+                (s.finishProof ⟨pos, l, fmla, fr, heap, stack,
+                  .compressed (.openIndex accumulator), inc⟩).db.error? ≠ none := by
+              simp [ParserState.finishProof]
               exact withAt_preserves_error l _ (ParserState_mkErrorFromEvidence_sets_error _ _ _)
             exact this h_success
+          | justCompletedStep =>
+            let inner : Unit → ParserState := fun _ => Id.run do
+              let s := { s with tokp := .start }
+              unless stack.size == 1 do
+                return s.mkErrorFromEvidence pos
+                  (.theoremFinality (.theoremMoreThanOneStackElement stack.size))
+              unless stack[0]! == fmla do
+                return s.mkErrorFromEvidence pos
+                  (.theoremFinality (.theoremClaimMismatch fmla stack[0]!))
+              s.withDB fun db => (db.insert pos l (.assert fmla fr)).recordIncomplete inc l
+            have h_at : (ParserState.withAt l inner).db.error? = none := by
+              simpa [ParserState.finishProof, inner] using h_success
+            rcases withAt_success_eq l inner h_at with ⟨h_ok, _⟩
+            by_cases h_size : stack.size == 1
+            · by_cases h_eq' : stack[0]! == fmla
+              · have h_sz : stack.size = 1 := beq_iff_eq.mp h_size
+                have h_lt : 0 < stack.size := by omega
+                have h_val : stack[0]! = fmla := LawfulBEq.eq_of_beq h_eq'
+                simp [getElem!_pos, h_lt] at h_val
+                exact ⟨h_sz, by rw [Array.getElem?_eq_getElem h_lt, h_val],
+                  Or.inr (Or.inr rfl)⟩
+              · exact absurd h_ok (by simp [inner, h_size, h_eq',
+                  ParserState.mkErrorFromEvidence, ParserState.withDB])
+            · exact absurd h_ok (by simp [inner, h_size,
+                ParserState.mkErrorFromEvidence, ParserState.withDB])
 
 /-! ## Step 2: Tightened compressed provenance (no redundant stack hypotheses)
 

@@ -309,10 +309,18 @@ private theorem feedProof_ptp_not_start
       simp [h_ptp, h_close, pure, Except.pure] at h_go
       subst h_go; nofun
     · by_cases h_lbl_ok : (toLabel tk).fst
-      · have h_pre : s.db.preload pr (toLabel tk).snd = .ok pr' := by
-          simpa [h_ptp, h_close, h_lbl_ok] using h_go
-        have h_ptp_eq := preload_preserves_ptp s.db pr pr' (toLabel tk).snd h_pre
-        rw [h_ptp_eq, h_ptp]; nofun
+      · cases h_guard : s.db.explicitCompressedHeaderLabelCheck pr
+            (toLabel tk).snd with
+        | error err =>
+            simp [h_ptp, h_close, h_lbl_ok, h_guard,
+              bind, Except.bind] at h_go
+        | ok value =>
+          cases value
+          have h_pre : s.db.preload pr (toLabel tk).snd = .ok pr' := by
+            simpa [h_ptp, h_close, h_lbl_ok, h_guard,
+              bind, Except.bind, pure, Except.pure] using h_go
+          have h_ptp_eq := preload_preserves_ptp s.db pr pr' (toLabel tk).snd h_pre
+          rw [h_ptp_eq, h_ptp]; nofun
       · simp [h_ptp, h_close, h_lbl_ok] at h_go
   | normal =>
     simp [h_ptp] at h_go
@@ -320,7 +328,8 @@ private theorem feedProof_ptp_not_start
     rw [h_ptp_eq, h_ptp]; nofun
   | compressed chr =>
     simp [h_ptp] at h_go
-    cases h_dec : ParserState.decodeCompressed tk chr s.db.config.compressedInvalidBytes with
+    cases h_dec : ParserState.decodeCompressed tk chr s.db.config.compressedInvalidBytes
+        s.db.config.compressedSavePlacement with
     | error e => simp [h_dec, bind, Except.bind] at h_go
     | ok dec =>
       obtain ⟨acts, chr'⟩ := dec
@@ -352,14 +361,23 @@ private theorem feedProof_compressed_pipeline_not_normal
     · simp [h_ptp, h_close, pure, Except.pure] at h_go
       subst h_go; nofun
     · by_cases h_lbl_ok : (toLabel tk).fst
-      · have h_pre : s.db.preload pr (toLabel tk).snd = .ok pr' := by
-          simpa [h_ptp, h_close, h_lbl_ok] using h_go
-        have h_ptp_eq := preload_preserves_ptp s.db pr pr' (toLabel tk).snd h_pre
-        rw [h_ptp_eq, h_ptp]; nofun
+      · cases h_guard : s.db.explicitCompressedHeaderLabelCheck pr
+            (toLabel tk).snd with
+        | error err =>
+            simp [h_ptp, h_close, h_lbl_ok, h_guard,
+              bind, Except.bind] at h_go
+        | ok value =>
+          cases value
+          have h_pre : s.db.preload pr (toLabel tk).snd = .ok pr' := by
+            simpa [h_ptp, h_close, h_lbl_ok, h_guard,
+              bind, Except.bind, pure, Except.pure] using h_go
+          have h_ptp_eq := preload_preserves_ptp s.db pr pr' (toLabel tk).snd h_pre
+          rw [h_ptp_eq, h_ptp]; nofun
       · simp [h_ptp, h_close, h_lbl_ok] at h_go
   | compressed chr =>
     simp [h_ptp] at h_go
-    cases h_dec : ParserState.decodeCompressed tk chr s.db.config.compressedInvalidBytes with
+    cases h_dec : ParserState.decodeCompressed tk chr s.db.config.compressedInvalidBytes
+        s.db.config.compressedSavePlacement with
     | error e => simp [h_dec, bind, Except.bind] at h_go
     | ok dec =>
       obtain ⟨acts, chr'⟩ := dec
@@ -1213,7 +1231,8 @@ theorem feedToken_proof_maintains_ghost
           | compressed chr =>
             -- .compressed → output can't be .preload
             unfold ParserState.feedProof.go at h_go; simp [h_ptp] at h_go
-            cases h_dec : ParserState.decodeCompressed tk chr s0.db.config.compressedInvalidBytes with
+            cases h_dec : ParserState.decodeCompressed tk chr s0.db.config.compressedInvalidBytes
+                s0.db.config.compressedSavePlacement with
             | error e => simp [h_dec, bind, Except.bind] at h_go
             | ok dec =>
               obtain ⟨acts, chr'⟩ := dec
@@ -1258,7 +1277,8 @@ theorem feedToken_proof_maintains_ghost
               have h_eq := go_preload_close_extracts s0 tk pr pr' h_go h_ptp h_close
               rw [h_eq] at h_compressed_mid ⊢
               have h_pghost := h_preload_ghost h_ptp
-              show CompressedFoldGhost s.db {pr with ptp := .compressed 0}
+              show CompressedFoldGhost s.db
+                {pr with ptp := .compressed .betweenSteps}
               obtain ⟨preloads, pr_start, pr_mand, pr_preload,
                 h_start_lbl, h_start_fmla, h_start_frame, h_start_stack, h_start_heap, h_start_ptp,
                 h_scope, h_mand, h_fold, h_stack, h_heap⟩ := h_pghost
@@ -1705,10 +1725,18 @@ theorem feedToken_finishProofEvent_prefixProvable
     cases h_mode with
     | inl h_ptp_normal =>
       exact .normal (h_normal h_ptp_normal)
-    | inr h_ptp_comp0 =>
-      have h_cghost : CompressedFoldGhost s.db pr := h_compressed ⟨0, h_ptp_comp0⟩
-      exact CompressedFoldGhost_to_ProofReachableZ s.db pr
-        h_cghost h_wf h_stack_one h_stack_fmla
+    | inr h_compressed_mode =>
+      cases h_compressed_mode with
+      | inl h_between =>
+        have h_cghost : CompressedFoldGhost s.db pr :=
+          h_compressed ⟨.betweenSteps, h_between⟩
+        exact CompressedFoldGhost_to_ProofReachableZ s.db pr
+          h_cghost h_wf h_stack_one h_stack_fmla
+      | inr h_completed =>
+        have h_cghost : CompressedFoldGhost s.db pr :=
+          h_compressed ⟨.justCompletedStep, h_completed⟩
+        exact CompressedFoldGhost_to_ProofReachableZ s.db pr
+          h_cghost h_wf h_stack_one h_stack_fmla
   simpa [s0] using
     (finishProof_any_mode_prefix_provable s0 pr h_reach h_wf h_no_err0 h_finish)
 

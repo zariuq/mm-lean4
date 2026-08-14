@@ -31,6 +31,7 @@ neg() { # neg <desc> <forbidden-pattern> <args...>
 }
 Q=test_databases/incomplete_proofs
 B=test_databases/include_budget
+P=test_databases/compressed_phase
 
 # [MM 4.1.4] `?` honesty
 chk "zar normal ? accepted"      0 "accepted, 6 objects, 1 incomplete proof(s): incomplete" "$Q/normal_qmark.mm"
@@ -42,6 +43,24 @@ chk "knife rejects ?"            1 "unknown step '?' not allowed"        --mode=
 chk "zar complete verified"      0 "verified, 6 objects"                                    "$Q/complete.mm"
 chk "sound complete verified"    0 "verified, 6 objects"                 --mode=sound "$Q/complete.mm"
 chk "knife complete verified"    0 "verified, 6 objects"                 --mode=knife "$Q/complete.mm"
+
+# Appendix-B compressed-phase grammar.  The adversarial fixtures would be
+# valid proof DAGs after erasing their malformed control transitions: the
+# interrupted-prefix case injects a numerically meaningless `U`, while the
+# duplicate-save case manufactures a second addressable alias of one node.
+chk "single postfix save verifies" 0 "verified" "$P/positive_single_save.mm"
+chk "interrupted index rejects"    1 "proof parse error" "$P/evil_interrupted_index.mm"
+chk "knife interrupted index rejects" 1 "proof parse error" --mode=knife "$P/evil_interrupted_index.mm"
+chk "exe interrupted index rejects" 1 "proof parse error" --mode=exe "$P/evil_interrupted_index.mm"
+chk "duplicate save rejects"       1 "proof parse error" "$P/evil_duplicate_save.mm"
+chk "knife duplicate save rejects" 1 "proof parse error" --mode=knife "$P/evil_duplicate_save.mm"
+chk "exe legacy duplicate save is explicit" 0 "verified" --mode=exe "$P/evil_duplicate_save.mm"
+chk "unknown cannot close index"   1 "proof parse error" "$P/evil_unknown_interrupt.mm"
+chk "nonmandatory header hypothesis verifies" 0 "verified" "$P/positive_nonmandatory_header_hyp.mm"
+chk "mandatory header hypothesis rejects" 1 "repeated in compressed proof header" "$P/evil_mandatory_header_hyp.mm"
+chk "sound mandatory header hypothesis rejects" 1 "repeated in compressed proof header" --mode=sound "$P/evil_mandatory_header_hyp.mm"
+chk "exe mandatory header hypothesis rejects" 1 "repeated in compressed proof header" --mode=exe "$P/evil_mandatory_header_hyp.mm"
+chk "knife legacy mandatory header hypothesis is explicit" 0 "verified" --mode=knife "$P/evil_mandatory_header_hyp.mm"
 
 # Include-resolution budget canaries (resource bound, not a spec violation)
 chk "budget zero exhausts loudly" 1 "include resolution budget exhausted" --max-include-resolutions=0 "$B/main.mm"

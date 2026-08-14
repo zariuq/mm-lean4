@@ -282,6 +282,18 @@ theorem finishProof_preserves_error (s : ParserState) (pr : ProofState) :
       · -- stack.size != 1
         exact ParserState_mkErrorFromEvidence_sets_error ({ s with tokp := .start }) pos
           (.theoremFinality (.theoremMoreThanOneStackElement stack.size))
+    · -- ptp = .compressed .justCompletedStep
+      split
+      · split
+        · apply withDB_preserves_error?
+          · intro h
+            simpa using ParserCorrectness.insert_preserves_error _ pos l
+              (.assert fmla fr) h
+          · exact h_err
+        · exact ParserState_mkErrorFromEvidence_sets_error ({ s with tokp := .start }) pos
+            (.theoremFinality (.theoremClaimMismatch fmla stack[0]!))
+      · exact ParserState_mkErrorFromEvidence_sets_error ({ s with tokp := .start }) pos
+          (.theoremFinality (.theoremMoreThanOneStackElement stack.size))
     · -- ptp = .normal
       split
       · split
@@ -294,7 +306,7 @@ theorem finishProof_preserves_error (s : ParserState) (pr : ProofState) :
             (.theoremFinality (.theoremClaimMismatch fmla stack[0]!))
       · exact ParserState_mkErrorFromEvidence_sets_error ({ s with tokp := .start }) pos
           (.theoremFinality (.theoremMoreThanOneStackElement stack.size))
-    · -- ptp = other
+    · -- ptp is not a final proof phase
       exact ParserState_mkErrorFromEvidence_sets_error ({ s with tokp := .start }) pos
         (.proofCheck .proofParseError)
 
@@ -1367,7 +1379,8 @@ theorem finishProof_hyps_behavior (s : ParserState) (pr : ProofState) :
   let f : Unit → ParserState := fun _ => Id.run do
     let s := { s with tokp := .start }
     match ptp with
-    | .compressed 0 => ()
+    | .compressed .betweenSteps => ()
+    | .compressed .justCompletedStep => ()
     | .normal => ()
     | _ =>
         return s.mkErrorFromEvidence pos (.proofCheck .proofParseError)
@@ -1379,7 +1392,7 @@ theorem finishProof_hyps_behavior (s : ParserState) (pr : ProofState) :
         (.theoremClaimMismatch fmla stack[0]!))
     s.withDB fun db => (db.insert pos l (.assert fmla fr)).recordIncomplete hInc l
   have h_inner : (f ()).db.frame.hyps = s.db.frame.hyps ∨ (f ()).db.error = true := by
-    -- Case split on `ptp`; only `.normal` and `.compressed 0` can succeed.
+    -- Case split on `ptp`; only `.normal` and closed compressed phases succeed.
     cases ptp with
     | start =>
         right
@@ -1391,10 +1404,10 @@ theorem finishProof_hyps_behavior (s : ParserState) (pr : ProofState) :
         simpa [f, Id.run, pure] using
           (ParserState_mkErrorFromEvidence_sets_error_bool
             { s with tokp := .start } pos (.proofCheck .proofParseError))
-    | compressed n =>
-        cases n with
-        | zero =>
-            -- Compressed 0: may succeed depending on stack checks.
+    | compressed phase =>
+        cases phase with
+        | betweenSteps =>
+            -- A closed compressed stream may succeed depending on stack checks.
             -- Split on the `unless` checks.
             cases h_size : (stack.size == 1) with
             | false =>
@@ -1419,13 +1432,36 @@ theorem finishProof_hyps_behavior (s : ParserState) (pr : ProofState) :
                         (s.db.insert pos l (.assert fmla fr)) hInc l)).trans
                       (congrArg Frame.hyps (insert_preserves_frame s.db pos l
                         (.assert fmla fr)))
-        | succ n =>
-            -- Compressed with nonzero state: parse error.
+        | openIndex accumulator =>
+            -- An unfinished compressed integer is a parse error.
             right
             simpa [f, Id.run, pure] using
               (ParserState_mkErrorFromEvidence_sets_error_bool
                 { s with tokp := .start } pos
                 (.proofCheck .proofParseError))
+        | justCompletedStep =>
+            cases h_size : (stack.size == 1) with
+            | false =>
+                right
+                simp only [f, Id.run, pure, bind, h_size, Bool.false_eq_true, ↓reduceIte]
+                exact (ParserState_mkErrorFromEvidence_sets_error_bool
+                    { s with tokp := .start } pos
+                    (.theoremFinality (.theoremMoreThanOneStackElement stack.size)))
+            | true =>
+                cases h_claim : (stack[0]! == fmla) with
+                | false =>
+                    right
+                    simp only [f, Id.run, pure, bind, h_size, h_claim, Bool.false_eq_true, ↓reduceIte]
+                    exact (ParserState_mkErrorFromEvidence_sets_error_bool
+                        { s with tokp := .start } pos
+                        (.theoremFinality (.theoremClaimMismatch fmla stack[0]!)))
+                | true =>
+                    left
+                    simp [f, Id.run, pure, h_size, h_claim]
+                    exact (congrArg Frame.hyps (DB.recordIncomplete_frame
+                        (s.db.insert pos l (.assert fmla fr)) hInc l)).trans
+                      (congrArg Frame.hyps (insert_preserves_frame s.db pos l
+                        (.assert fmla fr)))
     | normal =>
         cases h_size : (stack.size == 1) with
         | false =>
