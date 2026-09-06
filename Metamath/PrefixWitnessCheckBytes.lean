@@ -5737,45 +5737,32 @@ theorem resolvePushWithIO_ok_post (rp : String → IO System.FilePath)
     st''.parser.db = st.parser.db ∧ st''.parser.tokp = st.parser.tokp
       ∧ st''.base = st.base := by
   unfold resolvePushWithIO at h
-  rw [io_bind_apply] at h
   rw [io_tryCatch_apply] at h
   rw [io_bind_apply] at h
   split at h
   · rename_i x w2 heq
-    rw [io_pure_apply] at h
     injection h with h1 h2
     subst h2
     subst h1
     split at heq
-    · rename_i x2 w3 heq2
-      injection heq with g1 g2
-      subst g2
-      subst g1
-      split at heq2
-      · rename_i b w4 heq3
-        split at heq2
-        · rw [io_pure_apply] at heq2
-          injection heq2 with g1 g2
-          exact absurd g1 (by simp)
-        · rw [io_pure_apply] at heq2
-          injection heq2 with g1 g2
-          injection g1 with g1
-          subst g1
-          exact ⟨rfl, rfl, rfl⟩
-        · (try dsimp only [] at heq2)
-          rw [io_pure_apply] at heq2
-          injection heq2 with g1 g2
-          injection g1 with g1
-          subst g1
-          exact ⟨rfl, rfl, rfl⟩
-      · rename_i e w4 heq3
-        exact absurd heq2 (by simp)
-    · rename_i e w3 heq2
-      rw [io_pure_apply] at heq
-      injection heq with g1 g2
-      exact absurd g1 (by simp)
+    · rename_i result w3 heq2
+      cases result with
+      | error err =>
+          change (EST.Out.ok (Except.error err) w3 : EST.Out IO.Error IO.RealWorld (Except IncludeError IncludeDriverState)) = EST.Out.ok (Except.ok st'') w2 at heq
+          cases heq
+      | ok result =>
+          rcases result with ⟨frame, processing, seen⟩
+          cases frame <;>
+            change (EST.Out.ok _ w3 : EST.Out IO.Error IO.RealWorld (Except IncludeError IncludeDriverState)) = EST.Out.ok (Except.ok st'') w2 at heq
+          all_goals
+            injection heq with stateEq worldEq
+            injection stateEq with stateEq
+            subst st''
+            exact ⟨rfl, rfl, rfl⟩
+    · cases heq
   · rename_i e w2 heq
-    exact absurd h (by simp)
+    change (EST.Out.ok (Except.error _) w2 : EST.Out IO.Error IO.RealWorld (Except IncludeError IncludeDriverState)) = EST.Out.ok (Except.ok st'') w' at h
+    cases h
 
 /-- Inversion of one driver-loop layer: a successful run is a phase result
 that either finishes immediately or resolves one push and recurses with one

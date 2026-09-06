@@ -626,12 +626,13 @@ theorem expr_mem_iff_mem_vars {e : Metamath.Expr} {v : Metamath.VR} :
           constructor
           · intro h
             rcases h with rfl | h
-            · exact List.Mem.head _
-            · exact List.Mem.tail _ (ih.mp h)
+            · exact Or.inl rfl
+            · exact Or.inr (ih.mp h)
           · intro h
-            cases h with
-            | head => exact Or.inl rfl
-            | tail _ h => exact Or.inr (ih.mpr h)
+            rcases h with h | h
+            · cases h
+              exact Or.inl rfl
+            · exact Or.inr (ih.mpr h)
 
 theorem expr_subst_congr_on_vars {σ τ : Metamath.VR → Metamath.Expr}
     (e : Metamath.Expr) (h : ∀ v, v ∈ e.vars → σ v = τ v) :

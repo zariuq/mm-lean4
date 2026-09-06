@@ -457,8 +457,6 @@ theorem insert_success_new (db : DB) (pos : Pos) (label : String) (obj : String 
         -- Simplify the record projection - simp will apply HashMap lemma automatically
         simp
       · -- Prove: db'.error = false
-        unfold DB.error
-        simp
         -- Need to show db.error? = none from h_err : ¬db.error = true
         cases h : db.error?
         · rfl
@@ -480,9 +478,7 @@ theorem insert_success_new (db : DB) (pos : Pos) (label : String) (obj : String 
       · unfold DB.find?
         simp only
         simp  -- This solves the goal by reducing the record projection and applying HashMap lemma
-      · unfold DB.error
-        simp
-        cases h : db.error?
+      · cases h : db.error?
         · rfl
         · unfold DB.error at h_err
           simp [Option.isSome, h] at h_err
@@ -501,9 +497,7 @@ theorem insert_success_new (db : DB) (pos : Pos) (label : String) (obj : String 
       · unfold DB.find?
         simp only
         simp  -- This solves the goal by reducing the record projection and applying HashMap lemma
-      · unfold DB.error
-        simp
-        cases h : db.error?
+      · cases h : db.error?
         · rfl
         · unfold DB.error at h_err
           simp [Option.isSome, h] at h_err
@@ -522,9 +516,7 @@ theorem insert_success_new (db : DB) (pos : Pos) (label : String) (obj : String 
       · unfold DB.find?
         simp only
         simp  -- This solves the goal by reducing the record projection and applying HashMap lemma
-      · unfold DB.error
-        simp
-        cases h : db.error?
+      · cases h : db.error?
         · rfl
         · unfold DB.error at h_err
           simp [Option.isSome, h] at h_err

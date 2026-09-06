@@ -187,10 +187,17 @@ namespace DB
 
 @[simp] theorem insertHyp_config (db : DB) (pos : Pos) (l : String) (ess : Bool) (f : Formula) :
     (db.insertHyp pos l ess f).config = db.config := by
-  unfold insertHyp
-  simp only [DB.error]
-  split <;> try simp [DB.insertHypChecks_config]
-  split <;> simp [DB.insertHypChecks_config, DB.insert_config, DB.withHyps_config]
+  have choose (condition : Bool) (yes no : DB)
+      (hy : yes.config = db.config) (hn : no.config = db.config) :
+      (if condition then yes else no).config = db.config := by
+    cases condition <;> assumption
+  exact choose _ _ _ (DB.insertHypChecks_config db pos ess f)
+    (choose _ _ _
+      ((DB.insert_config _ pos l (.hyp ess f)).trans
+        (DB.insertHypChecks_config db pos ess f))
+      ((DB.withHyps_config _ _).trans
+        ((DB.insert_config _ pos l (.hyp ess f)).trans
+          (DB.insertHypChecks_config db pos ess f))))
 
 @[simp] theorem insertAxiom_config (db : DB) (pos : Pos) (l : String) (fmla : Formula) :
     (db.insertAxiom pos l fmla).config = db.config := by

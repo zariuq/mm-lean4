@@ -96,7 +96,7 @@ theorem checkSinglePass_eq_checkTwoPassLegacy_of_sharedExpandedBytes
           IO DB) =
       pure (checkExpandedResult config (.ok (processed, seenLegacy))) :=
     congrArg (fun db => (pure db : IO DB)) h_inner
-  simpa using h_inner_io
+  exact h_inner_io
 
 /-- IO-level bridge theorem: if both front-ends produce the same include error,
 both checkers return the same DB. -/
@@ -124,7 +124,7 @@ theorem checkSinglePass_eq_checkTwoPassLegacy_of_sharedIncludeError
       (pure (finalizeSinglePassResult config (.error err)) : IO DB) =
       pure (checkExpandedResult config (.error err)) :=
     congrArg (fun db => (pure db : IO DB)) h_inner
-  simpa using h_inner_io
+  exact h_inner_io
 
 /-- Specialized IO bridge: if both front-ends report the same include read-failure
 payload, both checkers are equal. -/
