@@ -1548,7 +1548,6 @@ theorem feedTokens_hyps_behavior (s : ParserState) (arr : Array Sym) (p : Tokens
         right; right
         apply withAt_propagates_error
         simp [ParserState.mkErrorFromEvidence, ParserState.withDB]
-        exact ParserState_mkErrorFromEvidence_sets_error_bool s pos (.scopeDecl err)
       | none =>
         simp only [ParserState.withDB, Id_bind_eq]
         by_cases h_ok : (s.db.insertHyp pos l true arr).error? = none
@@ -1580,7 +1579,6 @@ theorem feedTokens_hyps_behavior (s : ParserState) (arr : Array Sym) (p : Tokens
         cases h_int : s.db.interrupt with
         | true =>
             simp [h_int, ParserState.withDB, Verify.DB.error]
-            right; right; rfl
         | false =>
             simp
             left

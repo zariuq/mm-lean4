@@ -1239,7 +1239,7 @@ structure DB where
 
 namespace DB
 
-@[inline] def error (s : DB) : Bool := s.error?.isSome
+@[inline] abbrev error (s : DB) : Bool := s.error?.isSome
 
 
 /-- Error constructor that records structured evidence alongside the message. -/
@@ -3294,19 +3294,19 @@ def resolvePushWithIO
         st.parser.db.config.literalIncludePaths
         st.processing st.seen with
     | .error incErr =>
-        return .error incErr
+        pure (.error incErr)
     | .ok (none, processing', seen') =>
-        return .ok { st with processing := processing', seen := seen' }
+        pure (.ok { st with processing := processing', seen := seen' })
     | .ok (some childFrame, processing', seen') =>
         -- A child file starts its own per-file line numbering at line 0; the
         -- parent's state is parked on the parent frame and restored when this
         -- child is popped.
         let childParser := { st.parser with line := 0, linepos := st.base }
-        return .ok { st with processing := processing', seen := seen',
+        pure (.ok { st with processing := processing', seen := seen',
                              parser := childParser,
-                             stack := childFrame :: st.stack }
+                             stack := childFrame :: st.stack })
   catch e =>
-    return .error (.readFailure includePath fullPath.toString e.toString)
+    pure (.error (.readFailure includePath fullPath.toString e.toString))
 
 /-- The include-driver loop: alternate pure phases (`runPureSteps`) with
 include resolutions (`resolvePushWithIO`).  `fuel` bounds only the number of

@@ -195,15 +195,24 @@ def runCheckSinglePassParitySuite : IO Unit := do
     "include_cycle_violation"
     "test_databases/include_cycle/root_cycle.mm"
     .includeCycleDetected
+    { rejectIncludeCycles := true }
+  for (path, config) in
+      [("test_databases/include_cycle/root_cycle.mm", VerifierMode.zar.toConfig),
+       ("test_databases/include_cycle/literal_root.mm", VerifierMode.exe.toConfig)] do
+    let db ← checkSinglePass path config
+    if db.error || db.parseErrorCode?.isSome then
+      throw <| IO.userError s!"single-pass include cycle should be skipped in shipped modes: {repr (dbShape db)}"
+  IO.println "✓ shipped modes skip recursive includes"
+  let relativeSpliceConfig := { VerifierMode.exe.toConfig with literalIncludePaths := false }
   runParityCaseExpectAccept
     "token_splicing_resumes_djvars"
     "test_databases/include_splicing/djvars_accept_main.mm"
-    VerifierMode.exe.toConfig
+    relativeSpliceConfig
   runParityCaseExpectCode
     "empty_token_splice_preserves_unclosed_djvars"
     "test_databases/include_splicing/djvars_empty_main.mm"
     .unclosedDjvars
-    VerifierMode.exe.toConfig
+    relativeSpliceConfig
   runParityCaseExpectCode
     "strict_mode_rejects_djvars_splice"
     "test_databases/include_splicing/djvars_accept_main.mm"
@@ -212,15 +221,15 @@ def runCheckSinglePassParitySuite : IO Unit := do
   runParityCaseExpectAccept
     "token_splicing_resumes_normal_proof_start"
     "test_databases/include_splicing/normal_start_main.mm"
-    VerifierMode.exe.toConfig
+    relativeSpliceConfig
   runParityCaseExpectAccept
     "token_splicing_resumes_active_normal_proof"
     "test_databases/include_splicing/normal_active_main.mm"
-    VerifierMode.exe.toConfig
+    relativeSpliceConfig
   runParityCaseExpectAccept
     "token_splicing_resumes_compressed_proof"
     "test_databases/include_splicing/compressed_main.mm"
-    VerifierMode.exe.toConfig
+    relativeSpliceConfig
   runSinglePassIncludePositionRegression
   runNoTrailingWhitespaceNestedIncludeRegression
   runIncludeDepthOverflowRegression

@@ -834,9 +834,7 @@ theorem Hyp.toMarioFormula_roundtrip_floating (c : Constant) (v : Variable) (var
     MarioFormula.toHyp (Hyp.toMarioFormula (Hyp.floating c v) vars) =
     some (Hyp.floating c (MarioVR.toVariable (Variable.toMarioVR v))) := by
   unfold Hyp.toMarioFormula MarioFormula.toHyp
-  -- After unfolding, goal is: if c.c == c.c then some ... else none = some ...
-  -- simp automatically handles c.c == c.c and reduces the ite
-  simp only [beq_self_eq_true, ite_true]
+  exact if_pos (show ((c.c : String) == c.c) = true by simp)
 
 /-- Soundness for floating conversion: If a MarioFormula came from converting
     a floating hypothesis, then converting it back recovers a floating hypothesis
