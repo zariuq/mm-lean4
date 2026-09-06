@@ -265,6 +265,7 @@ theorem hypToMarioFormula_floating_expr (vm : VarMap) (c : Constant) (v : Variab
     hypToMarioFormula vm (Hyp.floating c v) = exprToFormula vm ⟨c, [v.v]⟩ := by
   unfold hypToMarioFormula exprToFormula exprToMarioExpr
   simp [h_find, toMarioSym_var h_find]
+  rfl
 
 /-- Hypothesis conversion always yields a member of the frame context. -/
 theorem hypToMarioFormula_mem {fr : Frame} {h : Hyp} :
@@ -1551,7 +1552,6 @@ theorem marioExpr_subst_eq_flatMap (σ : MarioVR → MarioExpr) (e : MarioExpr) 
           simp only [Metamath.Expr.subst, List.flatMap_cons, List.singleton_append, ih]
       | var v =>
           rw [Metamath.Expr.subst, List.flatMap_cons, ih]
-          rfl
 
 /-- Auxiliary lemma for substitution correspondence on symbol lists.
     Works on a general list with the const-preservation hypothesis. -/
@@ -2161,8 +2161,6 @@ theorem proofValid_stack_supported {Γ : Database} {consts : ConstSet} {fr : Fra
                   rw [h_stack_eq]
                   exact List.mem_append_left _ (List.mem_reverse.mpr h_in_needed)
                 rw [← (congrArg Constant.c h_type_pres)]
-                change SupportedProvable Γ fr
-                  ((σ v_hyp).typecode.c, List.append (exprToMarioExpr vm (σ v_hyp)) ([] : MarioExpr))
                 simpa [vm, exprToFormula, List.append_nil] using
                   ih (σ v_hyp) h_in_stack
 

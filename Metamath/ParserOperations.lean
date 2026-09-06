@@ -4115,7 +4115,6 @@ theorem feedTokens_ax_db (s : ParserState) (arr : Array Sym) (pos : Pos) (l : St
           if Formula.hasConstHead arr = true then s_inner
           else s.mkErrorFromEvidence pos (.scopeDecl .firstSymbolNotConstant))).db := by
     simp [ParserState.feedTokens, h_s_inner]
-    rfl
   calc
     (s.feedTokens arr ⟨.ax, pos, l⟩).db
         = (ParserState.withAt l (fun _ =>
@@ -4243,7 +4242,6 @@ theorem feedTokens_float_db (s : ParserState) (arr : Array Sym) (pos : Pos) (l :
             else s.mkErrorFromEvidence pos (.scopeDecl .expectedConstantAndVariable)
           else s.mkErrorFromEvidence pos (.scopeDecl .firstSymbolNotConstant))).db := by
     simp [ParserState.feedTokens, h_s_inner]
-    rfl
   calc
     (s.feedTokens arr ⟨.float, pos, l⟩).db
         = (ParserState.withAt l (fun _ =>
@@ -4351,7 +4349,6 @@ theorem feedTokens_ess_db (s : ParserState) (arr : Array Sym) (pos : Pos) (l : S
           if Formula.hasConstHead arr = true then s_inner
           else s.mkErrorFromEvidence pos (.scopeDecl .firstSymbolNotConstant))).db := by
     simp [ParserState.feedTokens, h_s_inner, h_gate_none]
-    rfl
   calc
     (s.feedTokens arr ⟨.ess, pos, l⟩).db
         = (ParserState.withAt l (fun _ =>

@@ -50,9 +50,7 @@ variables are replaced by the substitution function. -/
 
 /-- Constant name: the string representation of a constant symbol.
     Examples: "wff", "|-", "(", "->", "0" -/
-def CN := String
-instance : Inhabited CN := inferInstanceAs (Inhabited String)
-instance : DecidableEq CN := inferInstanceAs (DecidableEq String)
+abbrev CN := String
 
 /-- Variable reference: pairs a variable with its typecode.
     - `type`: the typecode from the $f statement (e.g., "wff", "term", "set")
@@ -83,7 +81,7 @@ def Sym.isVar : Sym → Bool
 Per §4.2.2: "An expression is any sequence of math symbols, possibly empty." -/
 
 /-- Expression: a sequence of symbols (§4.2.2) -/
-def Expr := List Sym
+abbrev Expr := List Sym
 /-- Variable as a singleton expression -/
 def VR.expr (v : VR) : Expr := [var v]
 
@@ -521,7 +519,8 @@ theorem Provable.trans' {axs Γ} (σ) {Γ' fmla} (pr : Provable axs Γ' fmla)
   | hyp f h => exact hh f h
   | var v =>
       change Provable axs Γ (v.type, List.append (σ v) ([] : List Sym))
-      simpa [List.append_nil] using (hv v)
+      exact (congrArg (fun expression : List Sym => Provable axs Γ (v.type, expression))
+        (List.append_nil (σ v))).mpr (hv v)
   | @ax σ' a ha dj' _ _ IH_h IH_v =>
     rw [← Formula.subst_tr]
     apply ax (subst.trans σ' σ) ha
@@ -596,7 +595,7 @@ theorem DJ_cons {a b l σ dj'}
   | _, _, ⟨h, .inl (.tail _ h')⟩ => h₂ _ _ ⟨h, .inl h'⟩
   | _, _, ⟨h, .inr (.tail _ h')⟩ => h₂ _ _ ⟨h, .inr h'⟩
 
-theorem HH_nil {axs Γ σ} : ∀ h:Formula, h ∈ [] → Provable axs Γ (h.subst σ)
+theorem HH_nil {axs Γ σ} : ∀ h:Formula, h ∈ ([] : List Formula) → Provable axs Γ (h.subst σ)
   | _, h => nomatch h
 
 theorem HH_cons {axs Γ σ c f hyps}

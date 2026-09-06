@@ -62,7 +62,7 @@ private def runParityCaseExpectCode
       s!"{label}: single-pass parseErrorCode mismatch, expected {repr expected}, got {repr dbSingle.parseErrorCode?}"
   IO.println s!"✓ {label}"
 
-/-- Regression: include-depth fuel overflow must decode to includeCycleDetected.
+/-- Regression: include-depth fuel overflow must decode to includeDepthExceeded.
 Also checked for legacy/single-pass parity. -/
 def runIncludeDepthOverflowRegression : IO Unit := do
   let path := "test_databases/include_depth/root_depth.mm"
@@ -71,11 +71,11 @@ def runIncludeDepthOverflowRegression : IO Unit := do
   let dbSingle ← checkSinglePass path cfg
   assertShapeEq "include-depth-overflow" (dbShape dbLegacy) (dbShape dbSingle)
   match dbSingle.parseErrorCode? with
-  | some .includeCycleDetected =>
-      IO.println "✓ include-depth-overflow decodes as includeCycleDetected"
+  | some .includeDepthExceeded =>
+      IO.println "✓ include-depth-overflow decodes as includeDepthExceeded"
   | code =>
       throw <| IO.userError
-        s!"include-depth-overflow: expected includeCycleDetected, got {repr code}"
+        s!"include-depth-overflow: expected includeDepthExceeded, got {repr code}"
 
 /-- End-to-end parity checks between two-pass legacy and single-pass checker. -/
 def runCheckSinglePassParitySuite : IO Unit := do
