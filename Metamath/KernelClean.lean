@@ -2403,9 +2403,10 @@ This lemma eliminates eta-expansion issues between different lambda representati
 - `(fun cv => checkFloat σ cv.1 cv.2)` (projection form)
 
 These are definitionally equal but elaboration doesn't always recognize this.
-The @[simp] attribute enables automatic normalization during proof search.
+The lemma is invoked explicitly where this normalization is needed; making a
+lambda-headed equality globally simp-active causes overly broad matching.
 -/
-@[simp] theorem uncurry_checkFloat
+theorem uncurry_checkFloat
     (σ : Std.HashMap String Verify.Formula) :
   (fun (cv : Spec.Constant × Spec.Variable) => checkFloat σ cv.1 cv.2) =
   (fun (c, v) => checkFloat σ c v) := by
@@ -2524,7 +2525,7 @@ theorem toSubstTyped_of_allM_true
 
 section
 
-attribute [-simp] uncurry_checkFloat allM_pair_eta_checkFloat List.pair_eta₂
+attribute [-simp] allM_pair_eta_checkFloat
 
 theorem toSubstTyped_sigma_of_lookup
     (fr : Spec.Frame) (σ_impl : Std.HashMap String Verify.Formula)

@@ -166,17 +166,41 @@ private def proofGhostCore (db : DB) (pr : ProofState) : Prop :=
 /-- Ghost invariant for proof-mode execution.
     - `.proof pr`: core ghost conditions for `pr`
     - `.comment inner`: recursively tracks ghost through comment nesting
+    - `.includePath resume _` and `.includeClose resume _ _`: recursively
+      track the suspended mode through include administration
     - Other modes: trivially `True`
 
-    The recursive definition on `.comment` makes entering/exiting comments
-    transparent to the ghost: `ProofGhost db (.comment p) = ProofGhost db p`.
+    The recursive clauses make comment and include administration transparent
+    to the ghost.
 
     In strict mode (`rejectUnknownSteps = true`), this ghost is maintained
     through the entire feed loop when combined with `ParserStateInv`. -/
 def ProofGhost (db : DB) : TokenParser → Prop
   | .proof pr => proofGhostCore db pr
   | .comment inner => ProofGhost db inner
+  | .includePath resume _ => ProofGhost db resume
+  | .includeClose resume _ _ => ProofGhost db resume
   | _ => True
+
+/-- Consuming an include request preserves the proof-execution ghost carried
+by the restored parser continuation. -/
+theorem clearIncludeRequest_requestInclude_maintains_proofGhost
+    (s : ParserState) (resume : TokenParser) (includePath : String)
+    (h_ghost : ProofGhost s.db resume)
+    (h_errorFree : s.db.error? = none) :
+    ProofGhost
+      (clearIncludeRequest (s.requestInclude resume includePath)).db
+      (clearIncludeRequest (s.requestInclude resume includePath)).tokp := by
+  have h_state :
+      clearIncludeRequest (s.requestInclude resume includePath) =
+        { s with tokp := resume } := by
+    cases s with
+    | mk db tokp charp line linepos sourceFile =>
+        simp only [ParserState.requestInclude, clearIncludeRequest]
+        congr
+        exact h_errorFree.symm
+  rw [h_state]
+  exact h_ghost
 
 /-! ## Per-event prefix provability
 
@@ -1010,9 +1034,13 @@ theorem feedToken_proof_maintains_ghost
               simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate,
                 ParserState.mkErrorFromEvidence, ParserState.withDB]
             exact (h_bad h_success).elim
-      have h_tokp_result : (s.feedToken i tk).tokp = .includePath (s.mkPos i) := by
+      have h_tokp_result :
+          (s.feedToken i tk).tokp = .includePath (.proof pr) (s.mkPos i) := by
         simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate_none]
-      simp [ProofGhost, h_tokp_result]
+      have h_db_result : (s.feedToken i tk).db = s.db := by
+        simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate_none]
+      rw [h_db_result, h_tokp_result]
+      exact h_ghost
     · by_cases h_end : tk.eqArray "$.".toAscii
       · -- Case 2: "$." → finishProof → exits proof mode
         let s0 : ParserState := { s with tokp := default }
@@ -1265,14 +1293,22 @@ private theorem withAt_mkError_ne_none
   withAt_preserves_error label _
     (ParserState_mkErrorFromEvidence_sets_error s pos ev)
 
-/-- `ProofGhost` is trivially `True` for simple (non-proof, non-comment) token parsers.
-    Comments are excluded because `ProofGhost db (.comment inner)` recurses into `inner`. -/
-private theorem proofGhost_trivial {db : DB} {tp : TokenParser}
-    (h_np : ∀ pr, tp ≠ .proof pr) (h_nc : ∀ inner, tp ≠ .comment inner) :
-    ProofGhost db tp := by
-  cases tp with
-  | proof pr => exact absurd rfl (h_np pr)
-  | comment inner => exact absurd rfl (h_nc inner)
+/-- No proof mode occurs beneath the administrative wrappers of a token-parser
+mode. -/
+private def ProofModeAbsent : TokenParser → Prop
+  | .proof _ => False
+  | .comment inner => ProofModeAbsent inner
+  | .includePath resume _ => ProofModeAbsent resume
+  | .includeClose resume _ _ => ProofModeAbsent resume
+  | _ => True
+
+private theorem proofGhost_of_proofModeAbsent {db : DB} {tp : TokenParser}
+    (h : ProofModeAbsent tp) : ProofGhost db tp := by
+  induction tp with
+  | proof pr => exact h.elim
+  | comment inner ih => exact ih h
+  | includePath resume position ih => exact ih h
+  | includeClose resume position path ih => exact ih h
   | _ => exact trivial
 
 /-- `djvars_loop_aux` preserves `ProofGhost` when the input tokp is a simple
@@ -1281,26 +1317,24 @@ private theorem proofGhost_trivial {db : DB} {tp : TokenParser}
     Follows the `Nat.rec` pattern from `djvars_loop_aux_db_config` (Verify.lean). -/
 private theorem djvars_loop_aux_proofGhost
     (arr_dj : Array String) (s : ParserState) (pos : Pos) (tk : String) (i : Nat)
-    (h_np : ∀ pr, s.tokp ≠ .proof pr)
-    (h_nc : ∀ inner, s.tokp ≠ .comment inner) :
+    (h_absent : ProofModeAbsent s.tokp) :
     ProofGhost (ParserState.djvars_loop_aux arr_dj s pos tk i).db
               (ParserState.djvars_loop_aux arr_dj s pos tk i).tokp := by
   refine Nat.rec
     (motive := fun m => ∀ i (s : ParserState), arr_dj.size - i = m →
-      (∀ pr, s.tokp ≠ .proof pr) →
-      (∀ inner, s.tokp ≠ .comment inner) →
+      ProofModeAbsent s.tokp →
       ProofGhost (ParserState.djvars_loop_aux arr_dj s pos tk i).db
                 (ParserState.djvars_loop_aux arr_dj s pos tk i).tokp)
-    ?base ?step (arr_dj.size - i) i s rfl h_np h_nc
+    ?base ?step (arr_dj.size - i) i s rfl h_absent
   · -- Base: ¬ i < arr_dj.size → result is { s with tokp := .djvars _ }
-    intro i s hs h_np h_nc
+    intro i s hs h_absent
     have hi : ¬ i < arr_dj.size := by
       intro hi
       have hpos : arr_dj.size - i > 0 := Nat.sub_pos_of_lt hi
       simp [hs] at hpos
     simp [ParserState.djvars_loop_aux, hi, ProofGhost]
   · -- Step: i < arr_dj.size
-    intro m ih i s hs h_np h_nc
+    intro m ih i s hs h_absent
     have hi : i < arr_dj.size := by
       by_cases hi' : i < arr_dj.size
       · exact hi'
@@ -1312,9 +1346,9 @@ private theorem djvars_loop_aux_proofGhost
     simp only [hi, ↓reduceDIte]
     split  -- on arr_dj[i] == tk
     · -- Duplicate: mkErrorFromEvidence preserves tokp = s.tokp
-      exact proofGhost_trivial h_np h_nc
+      exact proofGhost_of_proofModeAbsent h_absent
     · -- Not duplicate: recurse with withDB (preserves tokp)
-      exact ih (i + 1) _ hs' h_np h_nc
+      exact ih (i + 1) _ hs' h_absent
 
 /-- `feedTokens` always produces an output satisfying ProofGhost.
     For `.float/.ess/.ax`: output tokp is `.start` → True.
@@ -1466,7 +1500,7 @@ theorem feedToken_maintains_ghost
         | simp [ProofGhost, h_tokp, ParserState.mkErrorFromEvidence,
             ParserState.withDB]
         | exact djvars_loop_aux_proofGhost _ s _ _ 0
-            (by intro pr; simp [h_tokp]) (by intro inner; simp [h_tokp])
+            (by simp [ProofModeAbsent, h_tokp])
   | math arr' p =>
     by_cases h_open : tk.eqArray "$(".toAscii
     · simp [ParserState.feedToken, h_tokp, h_open, ProofGhost]
@@ -1483,7 +1517,9 @@ theorem feedToken_maintains_ghost
                 simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate,
                   ParserState.mkErrorFromEvidence, ParserState.withDB]
               exact (h_bad h_success_ft).elim
-        have h_tokp_eq : (s.feedToken i tk).tokp = .includePath (s.mkPos i) := by
+        have h_tokp_eq :
+            (s.feedToken i tk).tokp =
+              .includePath (.math arr' p) (s.mkPos i) := by
           simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate_none]
         simp [h_include, h_gate_none, ProofGhost] at h_success ⊢
       · by_cases h_delim : tk.eqArray p.k.delim
@@ -1494,21 +1530,21 @@ theorem feedToken_maintains_ghost
         · -- Not delimiter → withMath → stays .math → True
           simp [h_include] at h_success ⊢
           simp only [h_delim] at h_success ⊢
-          have h_np : ∀ pr, s.tokp ≠ .proof pr := by intro pr; simp [h_tokp]
-          have h_nc : ∀ inner, s.tokp ≠ .comment inner := by intro inner; simp [h_tokp]
+          have h_absent : ProofModeAbsent s.tokp := by
+            simp [ProofModeAbsent, h_tokp]
           -- Unfold withMath and eliminate false=true conditions
           simp only [ParserState.withMath, Bool.false_eq_true, ite_false]
           split
           · -- toMath fails → mkErrorFromEvidence → tokp unchanged → non-proof
-            exact proofGhost_trivial h_np h_nc
+            exact proofGhost_of_proofModeAbsent h_absent
           · -- toMath succeeds → match on db.find? in Id monad
             try simp [Id.run]
             split
             · exact trivial  -- const → .math → True
             · exact trivial  -- var → .math → True
             · split  -- match mathSymbolViolation?
-              · exact proofGhost_trivial h_np h_nc  -- some err → mkError
-              · exact proofGhost_trivial h_np h_nc  -- none → mkError
+              · exact proofGhost_of_proofModeAbsent h_absent
+              · exact proofGhost_of_proofModeAbsent h_absent
   | label pos' lab =>
     by_cases h_open : tk.eqArray "$(".toAscii
     · simp [ParserState.feedToken, h_tokp, h_open, ProofGhost]
@@ -1518,9 +1554,12 @@ theorem feedToken_maintains_ghost
         | simp_all [ProofGhost, ParserState.mkErrorFromEvidence,
             ParserState.withDB]
 
-  | includePath includePos =>
+  | includePath resume includePos =>
+    have h_resume_ghost : ProofGhost s.db resume := by
+      simpa [h_tokp, ProofGhost] using h_ghost
     by_cases h_open : tk.eqArray "$(".toAscii
-    · simp [ParserState.feedToken, h_tokp, h_open, ProofGhost]
+    · simpa [ParserState.feedToken, h_tokp, h_open, ProofGhost] using
+        h_resume_ghost
     · by_cases h_include : tk.eqArray "$[".toAscii
       · have h_gate_none :
           includeDirectiveViolation? s.db.config s.db.scopes.size true i = none := by
@@ -1531,10 +1570,14 @@ theorem feedToken_maintains_ghost
                 simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate,
                   ParserState.mkErrorFromEvidence, ParserState.withDB]
               exact (h_bad h_success).elim
-        have h_tokp_eq : (s.feedToken i tk).tokp = .includePath (s.mkPos i) := by
+        have h_tokp_eq :
+            (s.feedToken i tk).tokp =
+              .includePath (.includePath resume includePos) (s.mkPos i) := by
           simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate_none]
-        rw [h_tokp_eq]
-        trivial
+        have h_db_eq : (s.feedToken i tk).db = s.db := by
+          simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate_none]
+        rw [h_db_eq, h_tokp_eq]
+        exact h_resume_ghost
       · by_cases h_close : tk.eqArray "$]".toAscii
         · have h_bad : (s.feedToken i tk).db.error? ≠ none := by
             simp [ParserState.feedToken, h_tokp, h_open, h_include, h_close,
@@ -1551,21 +1594,28 @@ theorem feedToken_maintains_ghost
               exact (h_bad h_success).elim
           | ok includePath =>
               by_cases h_inline : closesInline
-              · have h_req : (s.requestInclude includePath).db.error? ≠ none :=
-                  ParserState_requestInclude_sets_error s includePath
-                have h_eq : s.feedToken i tk = s.requestInclude includePath := by
+              · have h_req : (s.requestInclude resume includePath).db.error? ≠ none :=
+                  ParserState_requestInclude_sets_error s resume includePath
+                have h_eq : s.feedToken i tk = s.requestInclude resume includePath := by
                   simp [ParserState.feedToken, h_tokp, h_open, h_include, h_close,
                     rawPath, closesInline, h_norm, h_inline]
                 exact (h_req (by simpa [h_eq] using h_success)).elim
               · have h_tokp_eq :
-                  (s.feedToken i tk).tokp = .includeClose includePos includePath := by
+                  (s.feedToken i tk).tokp =
+                    .includeClose resume includePos includePath := by
                   simp [ParserState.feedToken, h_tokp, h_open, h_include, h_close,
                     rawPath, closesInline, h_norm, h_inline]
-                rw [h_tokp_eq]
-                trivial
-  | includeClose includePos includePath =>
+                have h_db_eq : (s.feedToken i tk).db = s.db := by
+                  simp [ParserState.feedToken, h_tokp, h_open, h_include, h_close,
+                    rawPath, closesInline, h_norm, h_inline]
+                rw [h_db_eq, h_tokp_eq]
+                exact h_resume_ghost
+  | includeClose resume includePos includePath =>
+    have h_resume_ghost : ProofGhost s.db resume := by
+      simpa [h_tokp, ProofGhost] using h_ghost
     by_cases h_open : tk.eqArray "$(".toAscii
-    · simp [ParserState.feedToken, h_tokp, h_open, ProofGhost]
+    · simpa [ParserState.feedToken, h_tokp, h_open, ProofGhost] using
+        h_resume_ghost
     · by_cases h_include : tk.eqArray "$[".toAscii
       · have h_gate_none :
           includeDirectiveViolation? s.db.config s.db.scopes.size true i = none := by
@@ -1576,14 +1626,19 @@ theorem feedToken_maintains_ghost
                 simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate,
                   ParserState.mkErrorFromEvidence, ParserState.withDB]
               exact (h_bad h_success).elim
-        have h_tokp_eq : (s.feedToken i tk).tokp = .includePath (s.mkPos i) := by
+        have h_tokp_eq :
+            (s.feedToken i tk).tokp =
+              .includePath (.includeClose resume includePos includePath)
+                (s.mkPos i) := by
           simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate_none]
-        rw [h_tokp_eq]
-        trivial
+        have h_db_eq : (s.feedToken i tk).db = s.db := by
+          simp [ParserState.feedToken, h_tokp, h_open, h_include, h_gate_none]
+        rw [h_db_eq, h_tokp_eq]
+        exact h_resume_ghost
       · by_cases h_close : tk.eqArray "$]".toAscii
-        · have h_req : (s.requestInclude includePath).db.error? ≠ none :=
-            ParserState_requestInclude_sets_error s includePath
-          have h_eq : s.feedToken i tk = s.requestInclude includePath := by
+        · have h_req : (s.requestInclude resume includePath).db.error? ≠ none :=
+            ParserState_requestInclude_sets_error s resume includePath
+          have h_eq : s.feedToken i tk = s.requestInclude resume includePath := by
             simp [ParserState.feedToken, h_tokp, h_open, h_include, h_close]
           exact (h_req (by simpa [h_eq] using h_success)).elim
         · have h_bad : (s.feedToken i tk).db.error? ≠ none := by

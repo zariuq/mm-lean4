@@ -244,7 +244,7 @@ namespace ParserState
         · split <;> simp [ParserState.mkErrorFromEvidence_db_config]
         ·
           split
-          · rfl
+          · split <;> simp [ParserState.mkErrorFromEvidence_db_config]
           · simp [ParserState.djvars_loop_db_config]
   | math arr' p =>
       simp only []

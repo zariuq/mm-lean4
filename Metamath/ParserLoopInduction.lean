@@ -90,14 +90,17 @@ theorem ParserState_mkErrorFromEvidence_sets_error_bool (s : ParserState) (pos :
   simp [ParserState.mkErrorFromEvidence, ParserState.withDB]
 
 /-- `requestInclude` always sets an interrupt-like parser error. -/
-theorem ParserState_requestInclude_sets_error (s : ParserState) (includePath : String) :
-    (s.requestInclude includePath).db.error? ≠ none := by
+theorem ParserState_requestInclude_sets_error (s : ParserState)
+    (resume : TokenParser) (includePath : String) :
+    (s.requestInclude resume includePath).db.error? ≠ none := by
   simp [ParserState.requestInclude]
 
 /-- Boolean form of `ParserState_requestInclude_sets_error`. -/
-theorem ParserState_requestInclude_sets_error_bool (s : ParserState) (includePath : String) :
-    (s.requestInclude includePath).db.error = true := by
-  exact (error_iff_error?_ne_none _).2 (ParserState_requestInclude_sets_error s includePath)
+theorem ParserState_requestInclude_sets_error_bool (s : ParserState)
+    (resume : TokenParser) (includePath : String) :
+    (s.requestInclude resume includePath).db.error = true := by
+  exact (error_iff_error?_ne_none _).2
+    (ParserState_requestInclude_sets_error s resume includePath)
 /-- label either preserves db or sets error -/
 theorem label_preserves_error (s : ParserState) (pos : Pos) (tk : ByteSlice) :
     s.db.error? ≠ none → (s.label pos tk).db.error? ≠ none := by
@@ -547,7 +550,10 @@ theorem feedToken_preserves_error (s : ParserState) (pos : Nat) (tk : ByteSlice)
         · exact h_err
       · simp [h_comment, h_include]
         split
-        · exact h_err
+        · split
+          · exact ParserState_mkErrorFromEvidence_sets_error
+              s (s.mkPos pos) _
+          · exact h_err
         · apply withMath_preserves_error
           · intro s' tk' h_err'
             exact djvars_loop_preserves_error arr s' (s.mkPos pos) tk' h_err'
@@ -588,7 +594,7 @@ theorem feedToken_preserves_error (s : ParserState) (pos : Nat) (tk : ByteSlice)
           · exact h_err
           · exact ParserState_mkErrorFromEvidence_sets_error s pos' _
         · exact ParserState_mkErrorFromEvidence_sets_error s pos' _
-  | includePath includePos =>
+  | includePath resume includePos =>
     by_cases h_comment : tk.eqArray "$(".toAscii = true
     · simp [h_comment, h_err]
     · by_cases h_include : tk.eqArray "$[".toAscii = true
@@ -604,9 +610,9 @@ theorem feedToken_preserves_error (s : ParserState) (pos : Nat) (tk : ByteSlice)
           split
           · exact ParserState_mkErrorFromEvidence_sets_error s includePos _
           · split
-            · exact ParserState_requestInclude_sets_error s _
+            · exact ParserState_requestInclude_sets_error s resume _
             · exact h_err
-  | includeClose includePos includePath =>
+  | includeClose resume includePos includePath =>
     by_cases h_comment : tk.eqArray "$(".toAscii = true
     · simp [h_comment, h_err]
     · by_cases h_include : tk.eqArray "$[".toAscii = true
@@ -616,7 +622,7 @@ theorem feedToken_preserves_error (s : ParserState) (pos : Nat) (tk : ByteSlice)
         · exact h_err
       · simp [h_comment, h_include]
         split
-        · exact ParserState_requestInclude_sets_error s includePath
+        · exact ParserState_requestInclude_sets_error s resume includePath
         · exact ParserState_mkErrorFromEvidence_sets_error s includePos _
   | proof pr =>
     by_cases h_comment : tk.eqArray "$(".toAscii = true
@@ -1691,7 +1697,12 @@ theorem feedToken_frame_behavior (s : ParserState) (pos : Nat) (tk : ByteSlice) 
       ·
         simp [h_comment, h_include]
         split
-        · left; rfl
+        · split
+          · left
+            simp [ParserState.mkErrorFromEvidence,
+              ParserState.withDB, DB.mkErrorFromEvidence,
+              DB.mkErrorWithEvidence]
+          · left; rfl
         ·
           cases djvars_withMath_hyps_behavior arr s (s.mkPos pos) tk with
           | inl h => left; exact h
@@ -1797,7 +1808,7 @@ theorem feedToken_frame_behavior (s : ParserState) (pos : Nat) (tk : ByteSlice) 
         · right; right; right
           simp [h_kw]
           exact ParserState_mkErrorFromEvidence_sets_error_bool s pos' _
-  | includePath includePos =>
+  | includePath resume includePos =>
     by_cases h_comment : tk.eqArray "$(".toAscii = true
     · left; simp [h_comment]
     · by_cases h_include : tk.eqArray "$[".toAscii = true
@@ -1818,9 +1829,9 @@ theorem feedToken_frame_behavior (s : ParserState) (pos : Nat) (tk : ByteSlice) 
             exact ParserState_mkErrorFromEvidence_sets_error_bool s includePos _
           · split
             · right; right; right
-              exact ParserState_requestInclude_sets_error_bool s _
+              exact ParserState_requestInclude_sets_error_bool s resume _
             · left; rfl
-  | includeClose includePos includePath =>
+  | includeClose resume includePos includePath =>
     by_cases h_comment : tk.eqArray "$(".toAscii = true
     · left; simp [h_comment]
     · by_cases h_include : tk.eqArray "$[".toAscii = true
@@ -1833,7 +1844,7 @@ theorem feedToken_frame_behavior (s : ParserState) (pos : Nat) (tk : ByteSlice) 
         simp [h_comment, h_include]
         split
         · right; right; right
-          exact ParserState_requestInclude_sets_error_bool s includePath
+          exact ParserState_requestInclude_sets_error_bool s resume includePath
         · right; right; right
           exact ParserState_mkErrorFromEvidence_sets_error_bool s includePos _
   | proof pr =>

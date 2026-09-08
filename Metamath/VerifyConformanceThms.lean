@@ -55,6 +55,20 @@ theorem checkBytes_duplicateDisjointVariable_implies_sec4_2_4_duplicate
   exact duplicateDisjointVariable_violation_implies_sec4_2_4_duplicate (s := checkBytes arr config)
     h_vio
 
+theorem checkBytes_disjointStatementTooShort_implies_sec4_2_4_arity
+    (arr : ByteArray) (config : ModeConfig) :
+    (checkBytes arr config).parseErrorCode? = some .disjointStatementTooShort →
+    (checkBytes arr config).Sec4_2_4_DjvarsArityViolation := by
+  intro h_code
+  have h_sem :=
+    DB.parseErrorCode?_semantic_sound (s := checkBytes arr config) .disjointStatementTooShort h_code
+  have h_rule : (checkBytes arr config).RuleSemanticViolation .disjointStatementTooShort :=
+    h_sem.2.2
+  have h_vio : (checkBytes arr config).DisjointStatementTooShortViolation := by
+    simpa [DB.RuleSemanticViolation, DB.DisjointStatementTooShortViolation] using h_rule
+  exact disjointStatementTooShort_violation_implies_sec4_2_4_arity (s := checkBytes arr config)
+    h_vio
+
 theorem checkBytes_tokenNotInScope_implies_sec4_2_4_scope
     (arr : ByteArray) (config : ModeConfig) :
     (checkBytes arr config).parseErrorCode? = some .tokenNotInScope →

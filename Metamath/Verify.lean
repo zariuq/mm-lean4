@@ -71,7 +71,7 @@ instance : Inhabited ModeConfig := ⟨{}⟩
 
 namespace ModeConfig
 
-/-- Zar mode: strict spec compliance (150/150 on the current metamath-test suite). -/
+/-- Zar mode: strict spec compliance against the full metamath-test suite. -/
 def zar : ModeConfig := {}
 
 /-- Knife mode: Stricter - rejects incomplete proofs, top-level $e -/
@@ -80,8 +80,7 @@ def knife : ModeConfig := {
   rejectToplevelEss := true
 }
 
-/-- Exe mode: more permissive compatibility mode (147/150 on the current
-    metamath-test suite).
+/-- Exe mode: more permissive metamath.exe-compatibility profile.
     NOTE: allowConstInnerScope = false because metamath.exe rejects direct $c
     in inner scope. -/
 def exe : ModeConfig := {
@@ -417,6 +416,7 @@ inductive ParseErrorCode
   | invalidLabel
   | invalidMathString
   | duplicateDisjointVariable
+  | disjointStatementTooShort
   | tokenNotInScope
   | tokenNotVariable
   | unknownStepQuestionRejected
@@ -504,6 +504,7 @@ namespace ParseErrorCode
   | .invalidLabel => "invalid label '<label>'"
   | .invalidMathString => "invalid math string '<math>'"
   | .duplicateDisjointVariable => "duplicate disjoint variable '<sym>'"
+  | .disjointStatementTooShort => "$d statement must contain at least two variables"
   | .tokenNotInScope => "symbol '<sym>' not in scope"
   | .tokenNotVariable => "symbol '<sym>' is not a variable"
   | .unknownStepQuestionRejected => "unknown step '?' not allowed (config rejects incomplete proofs)"
@@ -564,6 +565,7 @@ def toNat : ParseErrorCode → Nat
   | .invalidLabel => 29
   | .invalidMathString => 30
   | .duplicateDisjointVariable => 31
+  | .disjointStatementTooShort => 56
   | .tokenNotInScope => 32
   | .tokenNotVariable => 33
   | .unknownStepQuestionRejected => 34
@@ -623,6 +625,7 @@ def ofNat? : Nat → Option ParseErrorCode
   | 29 => some .invalidLabel
   | 30 => some .invalidMathString
   | 31 => some .duplicateDisjointVariable
+  | 56 => some .disjointStatementTooShort
   | 32 => some .tokenNotInScope
   | 33 => some .tokenNotVariable
   | 34 => some .unknownStepQuestionRejected
@@ -684,6 +687,7 @@ def specClause : ParseErrorCode → SpecClause
   | .invalidLabel => .sec4_2_1_labels
   | .invalidMathString => .sec4_1_1_whitespace
   | .duplicateDisjointVariable => .sec4_2_4_djvars
+  | .disjointStatementTooShort => .sec4_2_4_djvars
   | .tokenNotInScope => .sec4_2_4_djvars
   | .tokenNotVariable => .sec4_2_4_djvars
   | .unknownStepQuestionRejected => .sec4_4_6_unknownProof
@@ -796,6 +800,7 @@ inductive ScopeDeclError where
   | expectedConstantAndVariable
   | variableAlreadyHasFloatHyp (v : String)
   | duplicateDisjointVariable (sym : String)
+  | disjointStatementTooShort (actual : Nat)
   | tokenNotInScope (sym : String)
   | tokenNotVariable (sym : String)
   | tokenNotConstantOrVariable (sym : String)
@@ -814,6 +819,7 @@ def code : ScopeDeclError → ParseErrorCode
   | .expectedConstantAndVariable => .expectedConstantAndVariable
   | .variableAlreadyHasFloatHyp _ => .variableAlreadyHasFloatHyp
   | .duplicateDisjointVariable _ => .duplicateDisjointVariable
+  | .disjointStatementTooShort _ => .disjointStatementTooShort
   | .tokenNotInScope _ => .tokenNotInScope
   | .tokenNotVariable _ => .tokenNotVariable
   | .tokenNotConstantOrVariable _ => .tokenNotConstantOrVariable
@@ -829,6 +835,9 @@ def message : ScopeDeclError → String
   | .expectedConstantAndVariable => "expected a constant and a variable"
   | .variableAlreadyHasFloatHyp v => "variable '" ++ v ++ "' already has $f hypothesis"
   | .duplicateDisjointVariable sym => "duplicate disjoint variable '" ++ sym ++ "'"
+  | .disjointStatementTooShort actual =>
+      "$d statement must contain at least two variables (found " ++
+        toString actual ++ ")"
   | .tokenNotInScope sym => "symbol '" ++ sym ++ "' not in scope"
   | .tokenNotVariable sym => "symbol '" ++ sym ++ "' is not a variable"
   | .tokenNotConstantOrVariable sym => "symbol '" ++ sym ++ "' is not a constant or variable"
@@ -1160,6 +1169,11 @@ def InvalidLabelViolation (s : DB) : Prop :=
 def DuplicateDisjointVariableViolation (s : DB) : Prop :=
   s.ScopeDeclViolation .duplicateDisjointVariable
 
+/-- Concrete parser violation for a `$d` statement with fewer than two
+variables, as required by Metamath book Section 4.2.4. -/
+def DisjointStatementTooShortViolation (s : DB) : Prop :=
+  s.ScopeDeclViolation .disjointStatementTooShort
+
 /-- Concrete parser violation for out-of-scope `$d` symbol use. -/
 def TokenNotInScopeViolation (s : DB) : Prop :=
   s.ScopeDeclViolation .tokenNotInScope
@@ -1172,6 +1186,10 @@ def Sec4_2_1_LabelSyntaxViolation (s : DB) : Prop :=
 def Sec4_2_4_DjvarsDuplicateViolation (s : DB) : Prop :=
   s.DuplicateDisjointVariableViolation
 
+/-- Metamath book §4.2.4 predicate for a `$d` statement with fewer than two variables. -/
+def Sec4_2_4_DjvarsArityViolation (s : DB) : Prop :=
+  s.DisjointStatementTooShortViolation
+
 /-- Metamath book §4.2.4 predicate for `$d` variable scope violations. -/
 def Sec4_2_4_DjvarsScopeViolation (s : DB) : Prop :=
   s.TokenNotInScopeViolation
@@ -1183,6 +1201,12 @@ def InvalidLabelPayloadWitness (s : DB) : Prop :=
 /-- Payload witness for `.topLevelEssentialNotAllowed` carrying strict-mode gate values. -/
 def TopLevelEssentialPayloadWitness (s : DB) : Prop :=
   s.errorEvidence? = some (.scopeDecl (.topLevelEssentialNotAllowed))
+
+/-- Payload witness for a degenerate `$d` statement, retaining the number of
+variables seen before the terminator. -/
+def DisjointStatementTooShortPayloadWitness (s : DB) : Prop :=
+  ∃ actual,
+    s.errorEvidence? = some (.scopeDecl (.disjointStatementTooShort actual))
 
 /-- Payload witness for `.tokenNotInScope` carrying symbol + gate booleans. -/
 def TokenNotInScopePayloadWitness (s : DB) : Prop :=
@@ -1211,6 +1235,7 @@ def HighValueShapeViolation (s : DB) (code : ParseErrorCode) : Prop :=
   match code with
   | .invalidLabel => s.InvalidLabelViolation
   | .duplicateDisjointVariable => s.DuplicateDisjointVariableViolation
+  | .disjointStatementTooShort => s.DisjointStatementTooShortViolation
   | .tokenNotInScope => s.TokenNotInScopeViolation
   | _ => True
 
@@ -1258,6 +1283,7 @@ def RuleSemanticViolation (s : DB) (code : ParseErrorCode) : Prop :=
   match code with
   | .invalidLabel => s.InvalidLabelViolation
   | .duplicateDisjointVariable => s.DuplicateDisjointVariableViolation
+  | .disjointStatementTooShort => s.DisjointStatementTooShortViolation
   | .tokenNotInScope => s.TokenNotInScopeViolation
   | .cantSaveEmptyStack => s.CompressedSaveViolation
   | .unclosedBlock => s.DoneModeViolation .unclosedBlock
@@ -1778,8 +1804,8 @@ inductive TokenParser
   | djvars : Array String → TokenParser
   | math : Array Sym → TokensParser → TokenParser
   | label : Pos → String → TokenParser
-  | includePath : Pos → TokenParser
-  | includeClose : Pos → String → TokenParser
+  | includePath : TokenParser → Pos → TokenParser
+  | includeClose : TokenParser → Pos → String → TokenParser
   | proof : ProofState → TokenParser
   deriving Inhabited
 
@@ -1791,8 +1817,10 @@ def TokenParser.toString : TokenParser → String
   | .djvars s => s!"djvars {s}"
   | .math s p => s!"math {s} {p}"
   | .label pos l => s!"at {pos}: ? {l}"
-  | .includePath pos => s!"at {pos}: include path"
-  | .includeClose pos path => s!"at {pos}: include close {path}"
+  | .includePath resume pos =>
+      s!"at {pos}: include path (resume {toString resume})"
+  | .includeClose resume pos path =>
+      s!"at {pos}: include close {path} (resume {toString resume})"
   | .proof p => ToString.toString p
 
 instance : ToString TokenParser := ⟨TokenParser.toString⟩
@@ -1824,9 +1852,10 @@ def mkErrorWithEvidence (s : ParserState) (pos : Pos) (msg : String) (ev : Error
 def mkErrorFromEvidence (s : ParserState) (pos : Pos) (ev : ErrorEvidence) : ParserState :=
   s.withDB fun db => db.mkErrorFromEvidence pos ev
 
-@[inline] def requestInclude (s : ParserState) (includePath : String) : ParserState :=
+@[inline] def requestInclude (s : ParserState) (resume : TokenParser)
+    (includePath : String) : ParserState :=
   { s with
-      tokp := .start
+      tokp := resume
       db := { s.db with error? := some ⟨.includeRequest s.sourceFile includePath, default⟩ } }
 
 def normalizeIncludePath (sourceFile : String) (rawPath : String) : Except IncludeError String := do
@@ -1923,27 +1952,45 @@ inductive CompressedAction
   | save
   | unknown
 
+/-- Decode one byte of a compressed proof.  The action list is stored in
+    reverse order while scanning, matching `decodeCompressed`. -/
+def decodeCompressedByte
+    (acts : List CompressedAction) (chr : Nat) (c : UInt8) :
+    Except ProofCheckFail (List CompressedAction × Nat) :=
+  let code := c.toNat
+  if 65 ≤ code && code ≤ 84 then
+    .ok (.step (20 * chr + (code - 65)) :: acts, 0)
+  else if 85 ≤ code && code ≤ 89 then
+    .ok (acts, 5 * chr + (code - 84))
+  else if code = 90 then
+    .ok (.save :: acts, 0)
+  else if code = 63 then
+    .ok (.unknown :: acts, 0)
+  else
+    .error (.proofCheck .proofParseError)
+
+/-- Scan the remaining bytes of a compressed token from left to right.  This
+    named recursion exposes the exact iterator used by `decodeCompressed` to
+    refinement proofs without changing its reverse-action accumulator. -/
+def decodeCompressedLoop (tk : ByteSlice) :
+    (remaining : Nat) → remaining ≤ tk.size →
+      List CompressedAction → Nat →
+      Except ProofCheckFail (List CompressedAction × Nat)
+  | 0, _, acts, chr => .ok (acts, chr)
+  | remaining + 1, h, acts, chr =>
+      have hi : tk.size - 1 - remaining < tk.size := by omega
+      match decodeCompressedByte
+          acts chr tk[tk.size - 1 - remaining] with
+      | .ok (nextActs, nextChr) =>
+          decodeCompressedLoop tk remaining
+            (Nat.le_of_succ_le h) nextActs nextChr
+      | .error err => .error err
+
 /-- Decode a compressed proof token into actions and the updated accumulator. -/
 def decodeCompressed (tk : ByteSlice) (chr : Nat) :
     Except ProofCheckFail (List CompressedAction × Nat) := do
-  let mut chr := chr
-  let mut acts : List CompressedAction := []
-  for c in tk do
-    if 'A'.toUInt8 ≤ c && c ≤ 'Z'.toUInt8 then
-      if c ≤ 'T'.toUInt8 then
-        let n := 20 * chr + (c - 'A'.toUInt8).toNat
-        acts := CompressedAction.step n :: acts
-        chr := 0
-      else if c < 'Z'.toUInt8 then
-        chr := 5 * chr + (c - 'T'.toUInt8).toNat
-      else
-        acts := CompressedAction.save :: acts
-        chr := 0
-    else if c = '?'.toUInt8 then
-      acts := CompressedAction.unknown :: acts
-      chr := 0
-    else
-      throw (.proofCheck .proofParseError)
+  let (acts, chr) ←
+    decodeCompressedLoop tk tk.size (Nat.le_refl _) [] chr
   return (acts.reverse, chr)
 
 def applyCompressedActions (db : DB) (pr : ProofState) (acts : List CompressedAction) :
@@ -2093,7 +2140,7 @@ def feedToken (s : ParserState) (pos : Nat) (tk : ByteSlice) : ParserState :=
       | some err =>
           s.mkErrorFromEvidence pos (.includeErr err)
       | none =>
-          { s with tokp := .includePath pos }
+          { s with tokp := .includePath p pos }
     else
     match p with
     | .comment _ => unreachable!
@@ -2110,7 +2157,13 @@ def feedToken (s : ParserState) (pos : Nat) (tk : ByteSlice) : ParserState :=
     | .const => s.sym pos tk .const
     | .var => s.sym pos tk .var
     | .djvars arr =>
-      if tk.eqArray "$.".toAscii then { s with tokp := .start } else
+      if tk.eqArray "$.".toAscii then
+        if arr.size < 2 then
+          s.mkErrorFromEvidence pos
+            (.scopeDecl (.disjointStatementTooShort arr.size))
+        else
+          { s with tokp := .start }
+      else
       s.withMath pos tk fun s tk => djvars_loop arr s pos tk
     | .math arr p =>
       if tk.eqArray p.k.delim then
@@ -2143,7 +2196,7 @@ def feedToken (s : ParserState) (pos : Nat) (tk : ByteSlice) : ParserState :=
       else
         let ty := (toLabel tk).2
         s.mkErrorFromEvidence pos (.tokenForm (.unknownStatementType ty))
-    | .includePath includePos =>
+    | .includePath resume includePos =>
       if tk.eqArray "$]".toAscii then
         s.mkErrorFromEvidence includePos (.includeErr (.emptyPathBeforeNormalization s.sourceFile))
       else
@@ -2153,12 +2206,12 @@ def feedToken (s : ParserState) (pos : Nat) (tk : ByteSlice) : ParserState :=
             s.mkErrorFromEvidence includePos (.includeErr err)
         | .ok includePath =>
             if closesInline then
-              s.requestInclude includePath
+              s.requestInclude resume includePath
             else
-              { s with tokp := .includeClose includePos includePath }
-    | .includeClose includePos includePath =>
+              { s with tokp := .includeClose resume includePos includePath }
+    | .includeClose resume includePos includePath =>
       if tk.eqArray "$]".toAscii then
-        s.requestInclude includePath
+        s.requestInclude resume includePath
       else
         s.mkErrorFromEvidence includePos (.tokenForm (.notACommand tk.toString))
     | .proof pr =>
@@ -2246,8 +2299,8 @@ def done (s : ParserState) (base : Nat) : DB := Id.run do
     | .ax => db.mkParseError base .unclosedAx
     | .thm => db.mkParseError base .unclosedThm
   | .label pos lab => db.mkErrorFromEvidence pos (.tokenForm (.notACommand lab))
-  | .includePath pos => db.mkErrorFromEvidence pos (.tokenForm (.notACommand "$["))
-  | .includeClose pos _ => db.mkErrorFromEvidence pos (.tokenForm (.notACommand "$["))
+  | .includePath _ pos => db.mkErrorFromEvidence pos (.tokenForm (.notACommand "$["))
+  | .includeClose _ pos _ => db.mkErrorFromEvidence pos (.tokenForm (.notACommand "$["))
   | .proof _ => db.mkParseError base .unclosedProof
 
 
@@ -2373,20 +2426,27 @@ def scanIncludes (contents : ByteArray) (fname : String) (config : ModeConfig :=
       i := i + 1
       continue
 
-    -- Track scope depth for strict mode validation
-    if i + 1 < contents.size && contents[i]! == '$'.toUInt8 then
-      let c := Metamath.Verify.uint8ToChar (contents[i+1]!)
-      if c == '{' then
-        scopeDepth := scopeDepth + 1
-      else if c == '}' then
-        scopeDepth := max 0 (scopeDepth - 1)
-      else if c == '.' then
-        inStatement := false  -- Statement terminator
-
-    -- Track if we're entering a statement (simplified: after $f, $e, $a, $p)
-    if i + 1 < contents.size && contents[i]! == '$'.toUInt8 then
-      let c := Metamath.Verify.uint8ToChar (contents[i+1]!)
-      if c == 'f' || c == 'e' || c == 'a' || c == 'p' then
+    -- Track statement boundaries at token starts.  `$c`, `$v`, and `$d`
+    -- begin with their keyword; labeled statements begin with the label, so a
+    -- four-keyword (`$f`/`$e`/`$a`/`$p`) heuristic is incomplete.  Outside
+    -- comments, only `$.`, `${`, and `$}` leave the scanner between
+    -- statements; `$[` preserves the current state until its placement gate
+    -- below has run.
+    let atTokenStart := i == 0 || isWhitespace contents[i - 1]!
+    if atTokenStart then
+      if i + 1 < contents.size && contents[i]! == '$'.toUInt8 then
+        let c := Metamath.Verify.uint8ToChar (contents[i+1]!)
+        if c == '{' then
+          scopeDepth := scopeDepth + 1
+          inStatement := false
+        else if c == '}' then
+          scopeDepth := max 0 (scopeDepth - 1)
+          inStatement := false
+        else if c == '.' then
+          inStatement := false
+        else if c != '[' then
+          inStatement := true
+      else if !isWhitespace contents[i]! then
         inStatement := true
 
     -- Look for $[ token (only outside comments)
@@ -2462,6 +2522,15 @@ def includePreprocessErrorDB (config : ModeConfig) (err : IncludeError) : DB :=
     let s := s.feedAll base chunk
     (s, base + chunk.size)
 
+/-- Finalize the one token already buffered by `feedAll`, without rereading
+source bytes or manufacturing a second input pass.  Resetting `charp` makes the
+result safe to resume after an include request. -/
+@[inline] def flushPendingToken (s : ParserState) : ParserState :=
+  match s.charp with
+  | .ws => s
+  | .token pos tk =>
+      { s.feedToken pos tk.toSlice with charp := .ws }
+
 /-- Extract a driver-level include request from parser error payloads. -/
 @[inline] def parserIncludeRequestOfError? (err : Error) :
     Option IncludeRequest :=
@@ -2471,11 +2540,11 @@ def includePreprocessErrorDB (config : ModeConfig) (err : IncludeError) : DB :=
   | _ =>
       none
 
-/-- Extract include preprocessor errors emitted via parser evidence payload. -/
-@[inline] def parserIncludeErrorOfDB? (db : DB) : Option IncludeError :=
-  match db.errorEvidence? with
-  | some (.includeErr err) => some err
-  | _ => none
+/-- Clear a driver-consumed include request without changing the suspended
+token-parser continuation.  This is used only after
+`parserIncludeRequestOfError?` has identified the interrupt payload. -/
+@[inline] def clearIncludeRequest (s : ParserState) : ParserState :=
+  { s with db := { s.db with error? := none } }
 
 /-- Build an include stack frame from a file path under depth/cycle/duplicate guards.
 Returns:
@@ -2523,8 +2592,32 @@ def stepFrame (st : IncludeDriverState) : FrameStep :=
         .fed { st with parser := s1, base := base1,
                        stack := { frame with needsSep := false } :: rest }
       else if frame.offset >= frame.contents.size then
-        -- frame exhausted: pop it (pure, no IO)
-        .fed { st with processing := st.processing.erase frame.canonStr, stack := rest }
+        match st.parser.charp with
+        | .ws =>
+            -- The frame is exhausted and has no pending token: pop it.
+            .fed { st with processing := st.processing.erase frame.canonStr,
+                           stack := rest }
+        | .token _ _ =>
+            -- `feedAll` deliberately retains the final token until a boundary.
+            -- Flush that one buffered token while this file frame is still live,
+            -- so a terminal `$]` can request its child before the frame is popped.
+            let sInput := { st.parser with sourceFile := frame.fname }
+            let s1 := flushPendingToken sInput
+            match s1.db.error? with
+            | some ⟨err, consumed⟩ =>
+                match parserIncludeRequestOfError? err with
+                | some (.pushFile sourceFile includeFile) =>
+                    let parentFrame := { frame with needsSep := true }
+                    let sCleared := clearIncludeRequest s1
+                    .push sourceFile includeFile frame.nextDepth
+                      { st with parser := sCleared, base := st.base + consumed,
+                                stack := parentFrame :: rest }
+                | none =>
+                    .fed { st with parser := s1, base := st.base + consumed }
+            | none =>
+                .fed { st with parser := s1,
+                               processing := st.processing.erase frame.canonStr,
+                               stack := rest }
       else
         let chunk := frame.contents.extract frame.offset frame.contents.size
         let sInput := { st.parser with sourceFile := frame.fname }
@@ -2534,7 +2627,7 @@ def stepFrame (st : IncludeDriverState) : FrameStep :=
             match parserIncludeRequestOfError? err with
             | some (.pushFile sourceFile includeFile) =>
                 let parentFrame := { frame with offset := frame.offset + consumed, needsSep := true }
-                let sCleared := { s1 with db := { s1.db with error? := none } }
+                let sCleared := clearIncludeRequest s1
                 .push sourceFile includeFile frame.nextDepth
                   { st with parser := sCleared, base := st.base + consumed,
                             stack := parentFrame :: rest }
@@ -2542,7 +2635,7 @@ def stepFrame (st : IncludeDriverState) : FrameStep :=
                 .fed { st with parser := s1, base := st.base + consumed }
         | none =>
             .fed { st with parser := s1, base := st.base + chunk.size,
-                           processing := st.processing.erase frame.canonStr, stack := rest }
+                           stack := { frame with offset := frame.contents.size } :: rest }
 
 /-- Single-pass include-aware parser driver parameterized by filesystem hooks.
 Reads each file once, scans `$[ ... $]` directives on the fly, and streams non-include
@@ -2566,17 +2659,16 @@ def processFileSinglePassWithIO
       repeat
         match stepFrame st with
         | .done st' =>
-            let dbAtBoundary := st'.parser.done st'.base
-            match parserIncludeErrorOfDB? dbAtBoundary with
-            | some err => return .error err
-            | none     => return .ok st'
+            -- `finalizeSinglePassResult` is the sole owner of EOF finality.
+            -- Returning the streaming state here avoids evaluating a pending
+            -- final token twice.
+            return .ok st'
         | .fed st' =>
-            -- Check for include-preprocessing errors embedded in DB evidence
-            match parserIncludeErrorOfDB? st'.parser.db with
-            | some incErr => return .error incErr
-            | none =>
-                if st'.parser.db.error then return .ok st'
-                st := st'
+            -- Parser-originated errors already carry their exact position and
+            -- terminate this pass.  Driver-originated IO/include failures use
+            -- the `Except` branch instead.
+            if st'.parser.db.error then return .ok st'
+            st := st'
         | .push sourceFile includeFile nextDepth st' =>
             let baseDir := System.FilePath.parent sourceFile |>.getD "."
             let fullPath := baseDir / includeFile

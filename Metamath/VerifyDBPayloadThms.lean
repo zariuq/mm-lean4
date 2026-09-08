@@ -36,6 +36,7 @@ theorem parseErrorCode?_topLevelEssentialNotAllowed_payload_inversion
   | expectedConstantAndVariable => cases h_err_code
   | variableAlreadyHasFloatHyp v => cases h_err_code
   | duplicateDisjointVariable sym => cases h_err_code
+  | disjointStatementTooShort actual => cases h_err_code
   | tokenNotInScope sym =>
       simp [ScopeDeclError.code] at h_err_code
   | tokenNotVariable sym => cases h_err_code
@@ -62,6 +63,7 @@ theorem parseErrorCode?_tokenNotInScope_payload_inversion
   | expectedConstantAndVariable => cases h_err_code
   | variableAlreadyHasFloatHyp v => cases h_err_code
   | duplicateDisjointVariable sym => cases h_err_code
+  | disjointStatementTooShort actual => cases h_err_code
   | tokenNotInScope sym =>
       simp [ScopeDeclError.code] at h_err_code
       exact ⟨sym, by simpa using h_ev⟩
@@ -89,6 +91,7 @@ theorem parseErrorCode?_tokenNotConstantOrVariable_payload_inversion
   | expectedConstantAndVariable => cases h_err_code
   | variableAlreadyHasFloatHyp v => cases h_err_code
   | duplicateDisjointVariable sym => cases h_err_code
+  | disjointStatementTooShort actual => cases h_err_code
   | tokenNotInScope sym =>
       simp [ScopeDeclError.code] at h_err_code
   | tokenNotVariable sym => cases h_err_code
@@ -98,6 +101,33 @@ theorem parseErrorCode?_tokenNotConstantOrVariable_payload_inversion
   | topLevelEssentialNotAllowed =>
       simp [ScopeDeclError.code] at h_err_code
   | outOfOrderHypothesesInFrame => cases h_err_code
+
+/-- Inversion: decoded `.disjointStatementTooShort` retains the number of
+variables consumed before the `$d` terminator. -/
+theorem parseErrorCode?_disjointStatementTooShort_payload_inversion
+    (s : DB) :
+    s.parseErrorCode? = some .disjointStatementTooShort →
+    s.DisjointStatementTooShortPayloadWitness := by
+  intro h_code
+  have h_rule := parseErrorCode?_ruleSemantic_sound s
+    .disjointStatementTooShort h_code
+  rcases h_rule with ⟨err, h_ev, h_err_code⟩
+  cases err with
+  | cantPopGlobalScope => cases h_err_code
+  | constMustBeOutermost => cases h_err_code
+  | duplicateSymbolOrAssert label => cases h_err_code
+  | firstSymbolNotConstant => cases h_err_code
+  | hypothesisSymbolsNotInFrame => cases h_err_code
+  | outOfOrderHypothesesInFrame => cases h_err_code
+  | expectedConstantAndVariable => cases h_err_code
+  | variableAlreadyHasFloatHyp v => cases h_err_code
+  | duplicateDisjointVariable v => cases h_err_code
+  | disjointStatementTooShort actual =>
+      exact ⟨actual, by simpa using h_ev⟩
+  | tokenNotInScope v => cases h_err_code
+  | tokenNotVariable v => cases h_err_code
+  | tokenNotConstantOrVariable symbol => cases h_err_code
+  | topLevelEssentialNotAllowed => cases h_err_code
 
 /-- Inversion: decoded `.includeInInnerScope` carries include payload with position+depth. -/
 theorem parseErrorCode?_includeInInnerScope_payload_inversion
