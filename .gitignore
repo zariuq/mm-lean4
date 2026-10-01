@@ -55,3 +55,8 @@ lean-mm4.aux
 lean-mm4.log
 lean-mm4.out
 lean-mm4.toc
+
+# Agent notes and archives are never tracked
+docs_archive/
+archive_*/
+.claude/

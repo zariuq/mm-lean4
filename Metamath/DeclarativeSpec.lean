@@ -1,7 +1,11 @@
 /-!
 # Declarative Specification
 
-Mario Carneiro's canonical declarative specification of Metamath proof validity.
+Mario Carneiro's canonical declarative specification of Metamath proof validity, with one
+restriction: the typing premise of the `ax` rule ranges over the variables of the applied statement
+(the book's clause C.2.5 2(a)) instead of every variable. `Spec/DeclarativeOriginal.lean` keeps his
+original rule and proves that the two agree on trimmed axiom sets, which the translated databases
+are.
 This defines **what** a valid proof is mathematically (the "big-step" view),
 as opposed to **how** the verifier checks it operationally (the "small-step" view
 in `Spec/Operational.lean`).
@@ -20,18 +24,28 @@ in `Spec/Operational.lean`).
 
 ## Key Results
 
-Fixed-database proof-checker adequacy (an already-parsed database, not source):
-  `KernelClean.lean`: `proofChecker_normal_acceptance_iff_specProvable_in_parsedDB`
-  Parser acceptance of raw bytes ↔ `Spec.Provable`. No extra assumptions.
+Acceptance by the checker (`CheckerCompleteness.lean`, `SourceCompleteness.lean`):
+  `acceptedWithDummies_iff_statementProvable` — at a parser state between
+  statements, the statement a `$p` claim stores is `Statement.Provable` iff the
+  checker accepts a normal proof of it after declaring fresh dummy variables.
+  `statementProvable_iff_sourceAccepts`, `statementProvable_iff_fileAccepts` —
+  the same for the source text the parser reads, and for complete files.
 
-Spec-level components (`Spec/Equivalence.lean`):
-  `operational_to_semantic` — soundness: `Provable Γ fr e → Semantic.Provable ...`
-  `mario_to_proofValid`     — completeness: `SupportedProvable ... → Provable Γ fr e`
+Proof runs in an already-parsed database (`KernelCorrectness.lean`):
+  `proofChecker_normal_acceptance_iff_specProvable_in_parsedDB` — a normal proof
+  runs to a one-element stack with the expression `toExpr f` iff `toExpr f` is
+  `Spec.Provable` in the active frame (expression level, not acceptance).
 
-`SupportedProvable` is Mario's `Provable` where each `var` leaf carries a
-witness that the variable is in the frame's floating hypothesis map. This is
-the exact condition needed for completeness: the operational verifier requires
-every variable to be explicitly typed in the frame.
+At one fixed frame (`Spec/Equivalence.lean`):
+  `operational_to_declarative`   — `Spec.Provable Γ fr e → Provable ...`
+  `frameDerivable_to_proofValid` — `FrameDerivable ... → Spec.Provable Γ fr e`
+
+`Spec/Derivable.lean` defines the closure of the Metamath book's Appendix C
+(`Derivable`), of which `Provable` (every variable typed) and `FrameDerivable`
+(only the variables of a frame typed) are instances. `Provable` allows any
+variable, so a stored statement can be provable without a proof in its own
+frame. `Spec/Completeness.lean` proves that `Statement.Provable` holds exactly
+when some extended frame of the statement (Metamath book §4.2.7) has a proof.
 -/
 
 namespace Metamath
@@ -493,8 +507,7 @@ theorem Statement.Provable.trim {axs} {s : Statement} : s.trim.Provable axs ↔ 
 def Statement.WellFormed (s : Statement) : Prop :=
   ∀ v ∈ s.vars, v.vhyp ∈ s.ctx.hyps
 
-theorem Provable.ax_self (axs : Statement → Prop) {ax} (H : axs ax)
-    (_h_wf : ax.WellFormed) : ax.Provable' axs := by
+theorem Provable.ax_self (axs : Statement → Prop) {ax} (H : axs ax) : ax.Provable' axs := by
   have := Provable.ax (Γ := ax.ctx) VR.expr H ?disj ?hyp ?var
   rw [Formula.subst_id] at this; exact this
   case disj =>
@@ -611,6 +624,6 @@ class Typed (axs : outParam _) (c : outParam CN) (e : Expr) where
 
 def Expr.ty (e) {axs c} [Typed axs c e] {Γ} : Provable axs Γ (c, e) := Typed.type Γ
 
--- Demo section archived to docs_archive/MarioDemo.md
+-- Mario Carneiro's `Demo` section is in `Metamath/DeclarativeSpecDemo.lean`.
 
 end Metamath

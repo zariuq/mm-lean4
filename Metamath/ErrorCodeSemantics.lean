@@ -3,24 +3,26 @@ ErrorCodeSemantics — Total evidence extraction for every ParseErrorCode constr
 
 This module proves that every decoded parser error code carries a concrete,
 family-specific evidence payload.  Combined with the existing semantic layer
-(`parseErrorCode?_ruleSemantic_sound`, all constructors), this gives a fully certified
-error-code ↔ evidence-shape correspondence.
+(`parseErrorCode?_ruleSemantic_sound`, all constructors), this certifies that each decoded
+error code agrees with its evidence payload.  The evidence is what
+the parser recorded: these theorems do not show, independently of it, that the source violates
+the rule.
 
 **Main results (all sorry-free):**
 
-1. `CodePayloadWitness`  — per-code evidence shape predicate
+1. `HasCodeEvidence`  — per-code evidence shape predicate
 2. `DB.parseErrorCode?_guardFacts_total` — total DB-level evidence extraction
 3. `checkBytes_parseErrorCode?_guardFacts_total` — bytes-level lift
 4. `checkBytes_parseErrorCode?_fullyCertified` — payload ∧ semantic bundle
 -/
 
 import Metamath.Verify
-import Metamath.VerifyDBSemanticThms
-import Metamath.VerifyDBPayloadThms
-import Metamath.VerifyIncludeThms
-import Metamath.VerifyPackagingThms
-import Metamath.VerifyProofGuardThms
-import Metamath.VerifyScopeThms
+import Metamath.Verify.DBSemantic
+import Metamath.Verify.DBPayload
+import Metamath.Verify.Include
+import Metamath.Verify.Packaging
+import Metamath.Verify.ProofGuard
+import Metamath.Verify.Scope
 
 set_option autoImplicit false
 
@@ -30,13 +32,13 @@ open Metamath.Verify
 
 /-! ## Evidence shape specification
 
-`CodePayloadWitness s code` states that the DB `s` carries error evidence
+`HasCodeEvidence s code` states that the DB `s` carries error evidence
 whose shape matches the error family and constructor for `code`.
 Each branch is the *tightest* statement extractable from the evidence layer. -/
 
 /-- Per-code evidence shape predicate, one branch per `ParseErrorCode`
 constructor. -/
-@[simp] def CodePayloadWitness (s : DB) : ParseErrorCode → Prop
+@[simp] def HasCodeEvidence (s : DB) : ParseErrorCode → Prop
   -- CompressedSaveError (1)
   | .cantSaveEmptyStack =>
       ∃ stackSize, s.errorEvidence? = some (.compressedSave (.cantSaveEmptyStack stackSize))
@@ -51,7 +53,7 @@ constructor. -/
   | .unclosedAx => s.errorEvidence? = some (.doneMode .unclosedAx)
   | .unclosedThm => s.errorEvidence? = some (.doneMode .unclosedThm)
   | .unclosedProof => s.errorEvidence? = some (.doneMode .unclosedProof)
-  -- TokenFormError (5)
+  -- TokenFormError (7)
   | .notACommand =>
       ∃ label, s.errorEvidence? = some (.tokenForm (.notACommand label))
   | .invalidLabel =>
@@ -62,6 +64,10 @@ constructor. -/
       ∃ tok, s.errorEvidence? = some (.tokenForm (.unknownStatementType tok))
   | .nestedCommentDelimiter =>
       s.errorEvidence? = some (.tokenForm .nestedCommentDelimiter)
+  | .commentDelimiterInToken =>
+      s.errorEvidence? = some (.tokenForm .commentDelimiterInToken)
+  | .commentIllegalByte =>
+      ∃ byte, s.errorEvidence? = some (.tokenForm (.commentIllegalByte byte))
   -- ScopeDeclError
   | .cantPopGlobalScope => s.errorEvidence? = some (.scopeDecl .cantPopGlobalScope)
   | .constMustBeOutermost => s.errorEvidence? = some (.scopeDecl .constMustBeOutermost)
@@ -174,15 +180,15 @@ constructor. -/
 /-! ## Total evidence extraction
 
 Every decoded parser error code carries a concrete evidence payload
-matching the `CodePayloadWitness` shape.  The proof combines:
+matching the `HasCodeEvidence` shape.  The proof combines:
 - 19 existing `DB.parseErrorCode?_*_guardFacts` theorems (Verify.lean)
 - 36 new inline proofs (DoneMode via `parseErrorCode?_sound`, others via
   `parseErrorCode?_ruleSemantic_sound` + family case analysis) -/
 
-/-- Total evidence extraction: every decoded code has a `CodePayloadWitness`.
+/-- Total evidence extraction: every decoded code has a `HasCodeEvidence`.
 Covers every `ParseErrorCode` constructor. -/
 theorem DB.parseErrorCode?_guardFacts_total (s : DB) (code : ParseErrorCode) :
-    s.parseErrorCode? = some code → CodePayloadWitness s code := by
+    s.parseErrorCode? = some code → HasCodeEvidence s code := by
   intro h
   cases code with
   -- ═══════════════════════════════════════════════════════════════
@@ -323,6 +329,16 @@ theorem DB.parseErrorCode?_guardFacts_total (s : DB) (code : ParseErrorCode) :
     cases err <;> simp_all [TokenFormError.code]
   | nestedCommentDelimiter =>
     have h_rule := DB.parseErrorCode?_ruleSemantic_sound s .nestedCommentDelimiter h
+    simp only [DB.RuleSemanticViolation, DB.TokenFormViolation] at h_rule
+    obtain ⟨err, h_ev, h_code_eq⟩ := h_rule
+    cases err <;> simp_all [TokenFormError.code]
+  | commentDelimiterInToken =>
+    have h_rule := DB.parseErrorCode?_ruleSemantic_sound s .commentDelimiterInToken h
+    simp only [DB.RuleSemanticViolation, DB.TokenFormViolation] at h_rule
+    obtain ⟨err, h_ev, h_code_eq⟩ := h_rule
+    cases err <;> simp_all [TokenFormError.code]
+  | commentIllegalByte =>
+    have h_rule := DB.parseErrorCode?_ruleSemantic_sound s .commentIllegalByte h
     simp only [DB.RuleSemanticViolation, DB.TokenFormViolation] at h_rule
     obtain ⟨err, h_ev, h_code_eq⟩ := h_rule
     cases err <;> simp_all [TokenFormError.code]
@@ -522,16 +538,17 @@ theorem DB.parseErrorCode?_guardFacts_total (s : DB) (code : ParseErrorCode) :
 theorem checkBytes_parseErrorCode?_guardFacts_total
     (arr : ByteArray) (config : ModeConfig) (code : ParseErrorCode) :
     (checkBytes arr config).parseErrorCode? = some code →
-    CodePayloadWitness (checkBytes arr config) code :=
+    HasCodeEvidence (checkBytes arr config) code :=
   DB.parseErrorCode?_guardFacts_total (checkBytes arr config) code
 
-/-- Fully certified error bundle: payload witness ∧ semantic violation.
-This is the strongest per-code result: every decoded error code carries
-both a concrete evidence shape AND a rule-semantic violation. -/
+/-- Every decoded error code carries evidence of the matching shape, and
+`RuleSemanticViolation` (a predicate on that evidence) holds.
+This certifies that the code and its evidence payload are consistent;
+it does not prove, independently of the evidence, that the source violates the rule. -/
 theorem checkBytes_parseErrorCode?_fullyCertified
     (arr : ByteArray) (config : ModeConfig) (code : ParseErrorCode) :
     (checkBytes arr config).parseErrorCode? = some code →
-    CodePayloadWitness (checkBytes arr config) code ∧
+    HasCodeEvidence (checkBytes arr config) code ∧
     (checkBytes arr config).RuleSemanticViolation code :=
   fun h => ⟨checkBytes_parseErrorCode?_guardFacts_total arr config code h,
             checkBytes_parseErrorCode?_ruleSemantic_sound arr config code h⟩

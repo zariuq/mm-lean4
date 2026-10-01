@@ -912,6 +912,80 @@ theorem wellFormedDB_of_wellFormed?
       (List.all_eq_true).1 h_all (lbl, obj) h_mem
     exact wellFormedObj_of_wellFormedObj? h_obj
 
+/-! ### The converse: well-formed databases pass `wellFormed?` -/
+
+theorem hasConstHead_of_wellFormedFormula {f : Formula} :
+    WellFormedFormula f → f.hasConstHead = true := by
+  rintro ⟨h_pos, c, h_head⟩
+  rw [Array.getBang_eq_get_nat f 0 h_pos] at h_head
+  simp [Formula.hasConstHead, h_pos, h_head]
+
+theorem hypOK?_of_hypOK {db : DB} {label : String} :
+    HypOK db label → db.hypOK? label = true := by
+  rintro ⟨ess, f, lbl, h_find, h_float, h_ess⟩
+  cases ess with
+  | false => simp [DB.hypOK?, h_find, isFloatShape_of_wellFormedFloat (h_float rfl)]
+  | true => simp [DB.hypOK?, h_find, hasConstHead_of_wellFormedFormula (h_ess rfl)]
+
+theorem frameFloatVarsUnique?_of_uniqueFloatVars {db : DB} {fr : Frame} :
+    UniqueFloatVars db fr → db.frameFloatVarsUnique? fr = true := by
+  intro h
+  unfold DB.frameFloatVarsUnique?
+  simp only [List.all_eq_true, List.mem_range]
+  intro i hi j hj
+  split
+  · rfl
+  · rename_i h_ij
+    rw [Array.getBang_eq_get_nat _ i hi, Array.getBang_eq_get_nat _ j hj]
+    split
+    · rename_i fi l1 fj l2 h_fi h_fj
+      unfold Formula.floatVarsDistinct?
+      split
+      · split
+        · rename_i h_si h_sj
+          have h_ne := h i j hi hj h_ij fi fj l1 l2 h_fi h_fj h_si h_sj
+          have h_ne' : fi.floatVarName ≠ fj.floatVarName := by
+            simp only [Formula.floatVarName]
+            exact h_ne
+          simp [h_ne']
+        · rfl
+      · rfl
+    · rfl
+
+theorem wellFormedFrame?_of_wellFormedFrame {db : DB} {fr : Frame} :
+    WellFormedFrame db fr → db.wellFormedFrame? fr = true := by
+  rintro ⟨h_hyps, h_uniq⟩
+  simp only [DB.wellFormedFrame?, Bool.and_eq_true]
+  refine ⟨?_, frameFloatVarsUnique?_of_uniqueFloatVars h_uniq⟩
+  simp only [DB.frameHypsOk?, List.all_eq_true, List.mem_range]
+  intro i hi
+  rw [Array.getBang_eq_get_nat _ i hi]
+  exact hypOK?_of_hypOK (h_hyps i hi)
+
+/-- The converse of `wellFormedDB_of_wellFormed?`: the post-parse well-formedness check succeeds
+on every well-formed database. -/
+theorem wellFormed?_of_wellFormedDB {db : DB} :
+    WellFormedDB db → db.wellFormed? = true := by
+  rintro ⟨h_frame, h_objs⟩
+  simp only [DB.wellFormed?, Bool.and_eq_true]
+  refine ⟨wellFormedFrame?_of_wellFormedFrame h_frame, ?_⟩
+  simp only [DB.wellFormedObjects?, List.all_eq_true]
+  rintro ⟨lbl, obj⟩ h_mem
+  have h_find : db.find? lbl = some obj :=
+    (Std.HashMap.mem_toList_iff_getElem?_eq_some).1 h_mem
+  have h := h_objs lbl obj h_find
+  cases obj with
+  | const _ => rfl
+  | var v => simpa [DB.wellFormedObj?] using h
+  | hyp ess f _ =>
+      cases ess with
+      | false => simpa [DB.wellFormedObj?] using isFloatShape_of_wellFormedFloat h
+      | true => simpa [DB.wellFormedObj?] using hasConstHead_of_wellFormedFormula h
+  | assert f fr _ =>
+      simp only [DB.wellFormedObj?, Bool.and_eq_true]
+      exact ⟨hasConstHead_of_wellFormedFormula h.1, wellFormedFrame?_of_wellFormedFrame h.2⟩
+
+
 theorem assertDvVarsInFrame_of_assertDvVarsInFrame?
     {db : DB}
     (h_ok : db.assertDvVarsInFrame? = true) :

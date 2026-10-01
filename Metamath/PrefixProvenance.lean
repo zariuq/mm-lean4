@@ -12,26 +12,26 @@ the theorem itself, and provability lifts from the prefix to the final database.
 - Part 6: Prefix witness at the finishProof boundary
 
 **Existing infrastructure reused:**
-- `feedProof_success_db` (ParserOperations): feedProof preserves s.db
-- `finishProof_success_insert` (ParserOperations): finishProof = s.db.insert
+- `feedProof_success_db` (ParserInvariantPreservation): feedProof preserves s.db
+- `finishProof_success_insert` (ParserInvariantPreservation): finishProof = s.db.insert
 - `insert_preserves_find?_ne` (ParserCorrectness): find? stable for other labels
 - `insert_frame_unchanged` (ParserCorrectness): frame preserved by insert
-- `insert_success_nonvar_fresh` (ParserOperations): insert success → label fresh
-- `toDatabase_insert_subset` (KernelClean): SpecDBSubset across insert
-- `verify_impl_sound` (KernelClean): proof checking → Spec.Provable
+- `insert_success_nonvar_fresh` (ParserInvariantPreservation): insert success → label fresh
+- `toDatabase_insert_subset` (KernelCorrectness): SpecDBSubset across insert
+- `verify_impl_sound` (KernelCorrectness): proof checking → Spec.Provable
 
 **Scope of this module.** Conclusions here are stated in the *post*-insertion
 database, which is why the names carry `postInsert_`.  The parser-trace induction
 that connects real `feedToken` execution to the `foldlM` hypothesis is done, in
-`Metamath.PrefixWitnessCheckBytes`; that development also states its conclusions
+`Metamath.PrefixProvability.Checker`; that development also states its conclusions
 in the pre-insertion database, and is the one to cite for what acceptance
 guarantees.
 -/
 
 import Metamath.Verify
-import Metamath.VerifyDBThms
-import Metamath.KernelClean
-import Metamath.ParserOperations
+import Metamath.Verify.DB
+import Metamath.KernelCorrectness
+import Metamath.ParserInvariantPreservation
 
 set_option autoImplicit false
 
@@ -51,7 +51,7 @@ open Metamath.ParserOps (feedProof_success_db finishProof_success_insert
   preloadMandatoryHyps_ok_preserves_core)
 
 -- Re-establish Formula to resolve ambiguity with Kernel.Formula
--- (KernelClean defines abbrev Kernel.Formula := Verify.Formula which
+-- (KernelCorrectness defines abbrev Kernel.Formula := Verify.Formula which
 -- shadows Verify.Formula when inside namespace Metamath)
 abbrev Formula := Verify.Formula
 
@@ -289,7 +289,7 @@ prefix provenance property at the point where `finishProof` inserts a theorem.
 
 **Where the byte-stream connection is made:** not here.  Walking the sequence of
 `feedToken` calls and showing the accumulated proof tokens agree with
-`foldlM stepNormal` is carried out in `Metamath.PrefixWitnessCheckBytes`, whose
+`foldlM stepNormal` is carried out in `Metamath.PrefixProvability.Checker`, whose
 `AllFeedEventsProvable` mirrors the feed loop and yields provability in the
 database as it stood before each theorem was inserted.
 -/
@@ -356,7 +356,7 @@ theorem toDatabase_recordIncomplete (db : DB) (b : Bool) (l : String) :
 
     **Note:** `h_proof_ok` is supplied by the caller, not discharged here.  The
     parser-trace induction that discharges it from real execution lives in
-    `Metamath.PrefixWitnessCheckBytes` (`AllFeedEventsProvable` mirrors the feed
+    `Metamath.PrefixProvability.Checker` (`AllFeedEventsProvable` mirrors the feed
     loop token by token), and that development also states its conclusion in the
     *pre*-insertion database rather than the post-insertion one below. -/
 theorem postInsert_provable_lifts_across_insert
@@ -428,7 +428,7 @@ the N parsed labels.
 only `pr.stack` (via `push` or `shrink + push`). This means: if two ProofStates agree
 on stack and frame, `stepNormal` produces results that agree on stack.
 
-**Existing lemma reused**: `stepNormal_preserves_frame` (KernelClean:7834) — frame is preserved.
+**Existing lemma reused**: `stepNormal_preserves_frame` (KernelCorrectness:7834) — frame is preserved.
 -/
 
 open Metamath.Kernel (stepNormal_preserves_frame)
@@ -1053,7 +1053,7 @@ with NO `h_reach` assumption. -/
 
     `h_hyp_disjoint` is derived from `WellFormedDB` + label freshness
     (via `hyp_disjoint_of_fresh` + `finishProof_prefix_characterization`). -/
-theorem normal_proof_full_provenance
+theorem normal_proof_provable_from_prefix
     (s : ParserState) (tk₀ : ByteSlice) (tokens : List ByteSlice)
     (pr₀ pr₁ pr_final : ProofState)
     -- Initial ProofState from resumeThm
@@ -1633,80 +1633,80 @@ copy the *certificate* that `f` is derivable. No unrolling of compressed executi
     Existential: there exist labels whose fold via `stepNormal` produces `[f]`.
     The init state uses `db.frame` (the canonical frame), dummy label/fmla fields,
     and empty stack/heap. -/
-def DerivCert (db : DB) (f : Formula) : Prop :=
+def Derivable (db : DB) (f : Formula) : Prop :=
   ∃ (labels : List String) (pr_final : ProofState),
     labels.foldlM (fun p l => db.stepNormal p l)
       ⟨⟨0,0⟩, "", #[], db.frame, #[], #[], .normal, false⟩ = .ok pr_final ∧
     pr_final.stack = #[f]
 
 /-- Every stack element has a derivation certificate. -/
-def StackCert (db : DB) (stack : Array Formula) : Prop :=
-  ∀ i (h : i < stack.size), DerivCert db stack[i]
+def StackDerivable (db : DB) (stack : Array Formula) : Prop :=
+  ∀ i (h : i < stack.size), Derivable db stack[i]
 
 /-- Every heap element has appropriate certification:
     - `.fmla f`: `f` has a derivation certificate
     - `.assert f fr`: there's a label mapping to this assertion in `db` -/
-def HeapCert (db : DB) (heap : Array HeapEl) : Prop :=
+def HeapDerivable (db : DB) (heap : Array HeapEl) : Prop :=
   ∀ i (h : i < heap.size), match heap[i] with
-    | .fmla f => DerivCert db f
+    | .fmla f => Derivable db f
     | .assert f fr => ∃ l origin, db.find? l = some (.assert f fr origin)
 
 /-! ### Foundation Lemmas -/
 
-theorem StackCert_empty (db : DB) : StackCert db #[] :=
+theorem StackDerivable_empty (db : DB) : StackDerivable db #[] :=
   fun _ h => absurd h (by simp)
 
-theorem HeapCert_empty (db : DB) : HeapCert db #[] :=
+theorem HeapDerivable_empty (db : DB) : HeapDerivable db #[] :=
   fun _ h => absurd h (by simp)
 
-theorem StackCert_push (db : DB) (stack : Array Formula) (f : Formula)
-    (h_sc : StackCert db stack) (h_cert : DerivCert db f) :
-    StackCert db (stack.push f) := by
+theorem StackDerivable_push (db : DB) (stack : Array Formula) (f : Formula)
+    (h_sc : StackDerivable db stack) (h_cert : Derivable db f) :
+    StackDerivable db (stack.push f) := by
   intro i h_i
   by_cases h_lt : i < stack.size
   · simp only [Array.getElem_push_lt h_lt]; exact h_sc i h_lt
   · have : i = stack.size := by simp [Array.size_push] at h_i; omega
     subst this; simp only [Array.getElem_push_eq]; exact h_cert
 
-theorem HeapCert_push_fmla (db : DB) (heap : Array HeapEl) (f : Formula)
-    (h_hc : HeapCert db heap) (h_cert : DerivCert db f) :
-    HeapCert db (heap.push (.fmla f)) := by
+theorem HeapDerivable_push_fmla (db : DB) (heap : Array HeapEl) (f : Formula)
+    (h_hc : HeapDerivable db heap) (h_cert : Derivable db f) :
+    HeapDerivable db (heap.push (.fmla f)) := by
   intro i h_i
   by_cases h_lt : i < heap.size
   · simp only [Array.getElem_push_lt h_lt]; exact h_hc i h_lt
   · have : i = heap.size := by simp [Array.size_push] at h_i; omega
     subst this; simp only [Array.getElem_push_eq]; exact h_cert
 
-theorem HeapCert_push_assert (db : DB) (heap : Array HeapEl) (f : Formula) (fr : Frame)
-    (h_hc : HeapCert db heap)
+theorem HeapDerivable_push_assert (db : DB) (heap : Array HeapEl) (f : Formula) (fr : Frame)
+    (h_hc : HeapDerivable db heap)
     (h_label : ∃ l origin, db.find? l = some (.assert f fr origin)) :
-    HeapCert db (heap.push (.assert f fr)) := by
+    HeapDerivable db (heap.push (.assert f fr)) := by
   intro i h_i
   by_cases h_lt : i < heap.size
   · simp only [Array.getElem_push_lt h_lt]; exact h_hc i h_lt
   · have : i = heap.size := by simp [Array.size_push] at h_i; omega
     subst this; simp only [Array.getElem_push_eq]; exact h_label
 
-/-- Extract a DerivCert for the last stack element. -/
-theorem StackCert_back (db : DB) (stack : Array Formula)
-    (h_sc : StackCert db stack) (h_ne : 0 < stack.size) :
-    DerivCert db stack[stack.size - 1] :=
+/-- Extract a Derivable for the last stack element. -/
+theorem StackDerivable_back (db : DB) (stack : Array Formula)
+    (h_sc : StackDerivable db stack) (h_ne : 0 < stack.size) :
+    Derivable db stack[stack.size - 1] :=
   h_sc (stack.size - 1) (by omega)
 
 /-! ## Part 14: Action-Step Certificate Preservation
 
 Each compressed action (step-fmla, step-assert, save) preserves
-StackCert and HeapCert. These are composed in Part 15 to handle the full
+StackDerivable and HeapDerivable. These are composed in Part 15 to handle the full
 compressed execution with Z saves. -/
 
 /-! ### Part 14a: Save Preserves Certs -/
 
-/-- Save preserves both StackCert and HeapCert.
+/-- Save preserves both StackDerivable and HeapDerivable.
     Save copies `stack.back?` to heap as `.fmla f`. Stack is unchanged. -/
 theorem save_preserves_certs (db : DB) (pr pr' : ProofState)
     (h_save : pr.save = .ok pr')
-    (h_sc : StackCert db pr.stack) (h_hc : HeapCert db pr.heap) :
-    StackCert db pr'.stack ∧ HeapCert db pr'.heap := by
+    (h_sc : StackDerivable db pr.stack) (h_hc : HeapDerivable db pr.heap) :
+    StackDerivable db pr'.stack ∧ HeapDerivable db pr'.heap := by
   unfold ProofState.save at h_save
   cases h_back : pr.stack.back? with
   | none => simp [h_back] at h_save
@@ -1716,23 +1716,23 @@ theorem save_preserves_certs (db : DB) (pr pr' : ProofState)
     -- pr'.stack = pr.stack (unchanged), pr'.heap = pr.heap.push (.fmla f)
     constructor
     · exact h_sc
-    · -- Extract DerivCert for f from StackCert: back? gives getElem? at (size-1)
+    · -- Extract Derivable for f from StackDerivable: back? gives getElem? at (size-1)
       have h_back' : pr.stack[pr.stack.size - 1]? = some f := by
         unfold Array.back? at h_back; exact h_back
       obtain ⟨h_lt, h_eq⟩ := Array.getElem_of_getElem? h_back'
-      have h_cert : DerivCert db f := by
+      have h_cert : Derivable db f := by
         have h := h_sc (pr.stack.size - 1) h_lt
         rw [h_eq] at h; exact h
-      exact HeapCert_push_fmla db pr.heap f h_hc h_cert
+      exact HeapDerivable_push_fmla db pr.heap f h_hc h_cert
 
 /-! ### Part 14b: stepProof on .fmla Preserves Certs -/
 
 /-- When `heap[n] = .fmla f`, stepProof pushes f. Certs are maintained. -/
 theorem stepProof_fmla_preserves_certs (db : DB) (pr pr' : ProofState) (n : Nat)
     (h_step : db.stepProof pr n = .ok pr')
-    (h_sc : StackCert db pr.stack) (h_hc : HeapCert db pr.heap)
+    (h_sc : StackDerivable db pr.stack) (h_hc : HeapDerivable db pr.heap)
     (h_fmla : ∃ f, pr.heap[n]? = some (.fmla f)) :
-    StackCert db pr'.stack ∧ HeapCert db pr'.heap := by
+    StackDerivable db pr'.stack ∧ HeapDerivable db pr'.heap := by
   obtain ⟨f, h_f⟩ := h_fmla
   -- stepProof with .fmla gives pr' = pr.push f
   unfold DB.stepProof at h_step
@@ -1740,13 +1740,13 @@ theorem stepProof_fmla_preserves_certs (db : DB) (pr pr' : ProofState) (n : Nat)
   subst h_step
   -- pr'.stack = pr.stack.push f, pr'.heap = pr.heap
   constructor
-  · -- StackCert: need DerivCert db f from HeapCert
+  · -- StackDerivable: need Derivable db f from HeapDerivable
     obtain ⟨h_lt, h_eq⟩ := Array.getElem_of_getElem? h_f
-    have h_cert : DerivCert db f := by
+    have h_cert : Derivable db f := by
       have := h_hc n h_lt
       rw [h_eq] at this
       exact this
-    exact StackCert_push db pr.stack f h_sc h_cert
+    exact StackDerivable_push db pr.stack f h_sc h_cert
   · exact h_hc
 
 /-! ### Part 14c Infrastructure: stepAssert Helpers -/
@@ -1775,27 +1775,27 @@ private theorem stepAssert_heap_preserved (db : DB) (pr result : ProofState)
             · exact absurd h_ok nofun  -- subst error
   · exact absurd h_ok nofun
 
-/-- StackCert for a prefix (shrink) of the stack. -/
-theorem StackCert_shrink (db : DB) (stack : Array Formula) (k : Nat)
-    (h_k : k ≤ stack.size) (h_sc : StackCert db stack) :
-    StackCert db (stack.shrink k) := by
+/-- StackDerivable for a prefix (shrink) of the stack. -/
+theorem StackDerivable_shrink (db : DB) (stack : Array Formula) (k : Nat)
+    (h_k : k ≤ stack.size) (h_sc : StackDerivable db stack) :
+    StackDerivable db (stack.shrink k) := by
   intro i h_i
   have h_i_lt : i < stack.size := by
     have := Array.size_shrink (xs := stack) (i := k); omega
   rw [Array.getElem_shrink]; exact h_sc i h_i_lt
 
-/-- StackCert for an extract (subarray) of the stack. -/
-theorem StackCert_extract (db : DB) (stack : Array Formula) (i j : Nat)
-    (h_sc : StackCert db stack) :
-    StackCert db (stack.extract i j) := by
+/-- StackDerivable for an extract (subarray) of the stack. -/
+theorem StackDerivable_extract (db : DB) (stack : Array Formula) (i j : Nat)
+    (h_sc : StackDerivable db stack) :
+    StackDerivable db (stack.extract i j) := by
   intro k h_k
   have h_k_lt : i + k < stack.size := by
     have := Array.size_extract (xs := stack) (start := i) (stop := j); omega
   rw [Array.getElem_extract]; exact h_sc _ h_k_lt
 
-/-- StackCert implies all toList members have DerivCerts. -/
-theorem StackCert_toList_certs (db : DB) (stack : Array Formula)
-    (h_sc : StackCert db stack) : ∀ f ∈ stack.toList, DerivCert db f := by
+/-- StackDerivable implies every toList member is Derivable. -/
+theorem StackDerivable_toList_certs (db : DB) (stack : Array Formula)
+    (h_sc : StackDerivable db stack) : ∀ f ∈ stack.toList, Derivable db f := by
   intro f hf
   obtain ⟨i, hi, rfl⟩ := List.mem_iff_getElem.mp hf
   have h_lt : i < stack.size := by rwa [Array.length_toList] at hi
@@ -1904,16 +1904,16 @@ private theorem stepAssert_exact_args
             rw [h0]; simp
           · exact absurd h_ok nofun  -- subst error
 
-/-- Extend a successful foldlM by appending one DerivCert.
+/-- Extend a successful foldlM by appending one Derivable.
     If `fold labels from init = .ok acc_pr` with `acc_pr.frame = db.frame`,
-    and we have `DerivCert db f`, then there's a longer fold producing
+    and we have `Derivable db f`, then there's a longer fold producing
     `acc_pr.stack.push f`. -/
 theorem compose_derivcert_step (db : DB)
     (acc_labels : List String) (acc_pr : ProofState)
     (init : ProofState)
     (h_acc_fold : acc_labels.foldlM (fun p l => db.stepNormal p l) init = .ok acc_pr)
     (h_init_frame : init.frame = db.frame)
-    (f : Formula) (h_cert : DerivCert db f) :
+    (f : Formula) (h_cert : Derivable db f) :
     ∃ (all_labels : List String) (pr_final : ProofState),
       all_labels.foldlM (fun p l => db.stepNormal p l) init = .ok pr_final ∧
       pr_final.stack = acc_pr.stack.push f ∧
@@ -1944,10 +1944,10 @@ theorem compose_derivcert_step (db : DB)
       (by simp only [List.foldlM_append, h_acc_fold, bind, Except.bind]; exact h_r₂_fold)
       |>.trans h_init_frame
 
-/-- Compose a list of DerivCerts into a single fold producing the multi-element stack.
+/-- Compose a list of Derivable facts into a single fold producing the multi-element stack.
     This is the key cert composition theorem used for building assertion hypothesis stacks. -/
 theorem compose_derivcerts (db : DB) (fs : List Formula)
-    (h_certs : ∀ f ∈ fs, DerivCert db f) :
+    (h_certs : ∀ f ∈ fs, Derivable db f) :
     let init : ProofState := ⟨⟨0,0⟩, "", #[], db.frame, #[], #[], .normal, false⟩
     ∃ (labels : List String) (pr_final : ProofState),
       labels.foldlM (fun p l => db.stepNormal p l) init = .ok pr_final ∧
@@ -1959,7 +1959,7 @@ theorem compose_derivcerts (db : DB) (fs : List Formula)
   | cons f rest ih =>
     -- 1. f's cert: f_labels from init → f_pr with stack #[f]
     obtain ⟨f_labels, f_pr, h_f_fold, h_f_stack⟩ := h_certs f List.mem_cons_self
-    -- Bridge: h_f_fold uses DerivCert's struct literal; we need init (the let binding)
+    -- Bridge: h_f_fold uses Derivable's struct literal; we need init (the let binding)
     have h_f_fold' : f_labels.foldlM (fun p l => db.stepNormal p l) init = .ok f_pr := h_f_fold
     have h_f_frame : f_pr.frame = db.frame :=
       (foldlM_preserves_frame db f_labels init f_pr h_f_fold').trans rfl
@@ -1991,13 +1991,13 @@ theorem compose_derivcerts (db : DB) (fs : List Formula)
 
 When `heap[n] = .assert f_a fr_a`, stepProof calls stepAssert.
 The top `fr_a.hyps.size` stack entries are consumed, and a conclusion is pushed.
-Each consumed entry has a DerivCert (from StackCert). Composing their proof
-labels with the assertion's label produces a DerivCert for the conclusion.
+Each consumed entry has a Derivable (from StackDerivable). Composing their proof
+labels with the assertion's label produces a Derivable for the conclusion.
 
 This is the key lemma that enables Z save support: it shows that stepAssert
 produces certified results when all inputs are certified.
 
-`h_frame` is required because DerivCert replays proofs from init with `db.frame`,
+`h_frame` is required because Derivable replays proofs from init with `db.frame`,
 and dvCheck in stepAssert uses the ProofState's frame. During compressed proof
 execution, `pr.frame = db.frame` throughout (stepProof preserves frame). -/
 
@@ -2005,16 +2005,16 @@ execution, `pr.frame = db.frame` throughout (stepProof preserves frame). -/
     The conclusion is certified if the stack entries and assertion are certified. -/
 theorem stepProof_assert_preserves_certs (db : DB) (pr pr' : ProofState) (n : Nat)
     (h_step : db.stepProof pr n = .ok pr')
-    (h_sc : StackCert db pr.stack) (h_hc : HeapCert db pr.heap)
+    (h_sc : StackDerivable db pr.stack) (h_hc : HeapDerivable db pr.heap)
     (h_assert : ∃ f fr, pr.heap[n]? = some (.assert f fr)) :
-    StackCert db pr'.stack ∧ HeapCert db pr'.heap := by
+    StackDerivable db pr'.stack ∧ HeapDerivable db pr'.heap := by
   obtain ⟨f_a, fr_a, h_a⟩ := h_assert
   -- stepProof with .assert calls stepAssert
   unfold DB.stepProof at h_step
   simp only [h_a] at h_step
   -- h_step : db.stepAssert pr f_a fr_a = .ok pr'
   constructor
-  · -- StackCert for pr'.stack
+  · -- StackDerivable for pr'.stack
     -- Step 1: Extract concl and structure from stepAssert
     obtain ⟨concl, h_exact_args, h_pr'_eq⟩ :=
       stepAssert_exact_args db pr pr' f_a fr_a h_step
@@ -2024,10 +2024,10 @@ theorem stepProof_assert_preserves_certs (db : DB) (pr pr' : ProofState) (n : Na
         (pr.stack.shrink (pr.stack.size - fr_a.hyps.size)).push concl := by
       rw [h_pr'_eq]
     rw [h_pr'_stack]
-    apply StackCert_push
-    · exact StackCert_shrink db pr.stack _ (by omega) h_sc
-    · -- DerivCert for concl: compose arg certs + assertion label
-      -- Step 2: HeapCert gives us the assertion's label in db
+    apply StackDerivable_push
+    · exact StackDerivable_shrink db pr.stack _ (by omega) h_sc
+    · -- Derivable for concl: compose arg certs + assertion label
+      -- Step 2: HeapDerivable gives us the assertion's label in db
       have h_n_bound : n < pr.heap.size := by
         simp only [GetElem?.getElem?, decidableGetElem?] at h_a
         split at h_a <;> [assumption; exact absurd h_a nofun]
@@ -2038,10 +2038,10 @@ theorem stepProof_assert_preserves_certs (db : DB) (pr pr' : ProofState) (n : Na
       rw [h_heap_val] at h_hc_n
       obtain ⟨l_a, origin_a, h_find_a⟩ := h_hc_n
       -- Step 3: Extract args and get certs for them
-      have h_args_sc : StackCert db
+      have h_args_sc : StackDerivable db
           (pr.stack.extract (pr.stack.size - fr_a.hyps.size) pr.stack.size) :=
-        StackCert_extract db pr.stack _ _ h_sc
-      have h_args_certs := StackCert_toList_certs db _ h_args_sc
+        StackDerivable_extract db pr.stack _ _ h_sc
+      have h_args_certs := StackDerivable_toList_certs db _ h_args_sc
       -- Step 4: Compose arg certs into a single fold
       obtain ⟨labels₁, pr₁, h_fold₁, h_stack₁, h_frame₁⟩ :=
         compose_derivcerts db
@@ -2068,12 +2068,12 @@ theorem stepProof_assert_preserves_certs (db : DB) (pr pr' : ProofState) (n : Na
             pr.stack.extract (pr.stack.size - fr_a.hyps.size) pr.stack.size})
         pr₁ ({pr with stack := #[concl]})
         (by simp [h_stack₁_args]) h_fold_la
-      -- Step 8: Compose labels₁ ++ [l_a] → DerivCert for concl
+      -- Step 8: Compose labels₁ ++ [l_a] → Derivable for concl
       refine ⟨labels₁ ++ [l_a], r₂, ?_, h_r₂_stack⟩
       rw [List.foldlM_append, h_fold₁]
       simp only [bind, Except.bind]
       exact h_r₂_fold
-  · -- HeapCert: pr'.heap = pr.heap since stepAssert only modifies stack
+  · -- HeapDerivable: pr'.heap = pr.heap since stepAssert only modifies stack
     rw [stepAssert_heap_preserved db pr pr' f_a fr_a h_step]; exact h_hc
 
 /-! ## Part 15: Z-Aware Compressed Proof Provenance
@@ -2087,7 +2087,7 @@ from stack to heap.
 1. `StepSaveAction` + `execStepSave`: compressed actions (step/save, no unknown)
 2. Frame preservation through actions
 3. Cert preservation through a single action + fold
-4. Preload HeapCert: the preloaded heap satisfies HeapCert under WellFormedDB
+4. Preload HeapDerivable: the preloaded heap satisfies HeapDerivable under WellFormedDB
 5. `ZCompressedProofReachable`: preload + step/save actions
 6. Bridge to NormalProofReachable + upgrade dispatcher
 -/
@@ -2165,11 +2165,11 @@ private theorem stepProof_heap_cases (db : DB) (pr pr' : ProofState) (n : Nat)
 
 /-! ### Part 15d: Cert Preservation for One Action -/
 
-/-- One step-or-save action preserves StackCert and HeapCert. -/
+/-- One step-or-save action preserves StackDerivable and HeapDerivable. -/
 theorem execStepSave_preserves_certs (db : DB) (pr pr' : ProofState) (act : StepSaveAction)
     (h_ok : execStepSave db pr act = .ok pr')
-    (h_sc : StackCert db pr.stack) (h_hc : HeapCert db pr.heap) :
-    StackCert db pr'.stack ∧ HeapCert db pr'.heap := by
+    (h_sc : StackDerivable db pr.stack) (h_hc : HeapDerivable db pr.heap) :
+    StackDerivable db pr'.stack ∧ HeapDerivable db pr'.heap := by
   cases act with
   | step n =>
     simp [execStepSave] at h_ok
@@ -2188,12 +2188,12 @@ theorem execStepSave_preserves_certs (db : DB) (pr pr' : ProofState) (act : Step
 
 /-! ### Part 15e: Cert Preservation Through Action Fold -/
 
-/-- Fold of step-or-save actions preserves StackCert and HeapCert. -/
+/-- Fold of step-or-save actions preserves StackDerivable and HeapDerivable. -/
 theorem execStepSave_fold_preserves_certs (db : DB)
     (acts : List StepSaveAction) (pr result : ProofState)
     (h_fold : acts.foldlM (fun p a => execStepSave db p a) pr = .ok result)
-    (h_sc : StackCert db pr.stack) (h_hc : HeapCert db pr.heap) :
-    StackCert db result.stack ∧ HeapCert db result.heap := by
+    (h_sc : StackDerivable db pr.stack) (h_hc : HeapDerivable db pr.heap) :
+    StackDerivable db result.stack ∧ HeapDerivable db result.heap := by
   induction acts generalizing pr with
   | nil =>
     simp [List.foldlM_nil, pure, Except.pure] at h_fold
@@ -2208,16 +2208,16 @@ theorem execStepSave_fold_preserves_certs (db : DB)
         execStepSave_preserves_certs db pr pr' act h_step h_sc h_hc
       exact ih pr' h_fold h_sc' h_hc'
 
-/-! ### Part 15f: Preload HeapCert -/
+/-! ### Part 15f: Preload HeapDerivable -/
 
-/-- One-step normal proof yields a DerivCert for any hypothesis in scope.
+/-- One-step normal proof yields a Derivable for any hypothesis in scope.
     Under WellFormedDB, format checks (hasConstHead / isFloatShape) pass. -/
 private theorem hyp_derivcert (db : DB) (l : String) (ess : Bool)
     (f : Formula) (origin : String)
     (h_find : db.find? l = some (.hyp ess f origin))
     (h_in_frame : l ∈ db.frame.hyps)
     (h_wf : WellFormedDB db) :
-    DerivCert db f := by
+    Derivable db f := by
   have h_obj_wf := h_wf.2 l _ h_find; simp at h_obj_wf
   have h_in_list : l ∈ db.frame.hyps.toList := Array.mem_toList_iff.mpr h_in_frame
   let init : ProofState := ⟨⟨0,0⟩, "", #[], db.frame, #[], #[], .normal, false⟩
@@ -2243,14 +2243,14 @@ private theorem hyp_derivcert (db : DB) (l : String) (ess : Bool)
     simp [List.foldlM_cons, List.foldlM_nil, bind, Except.bind, pure, Except.pure]]
   rw [h_step]; rfl
 
-/-- One preload step preserves HeapCert.
-    For `.hyp` entries, constructs a one-step DerivCert.
+/-- One preload step preserves HeapDerivable.
+    For `.hyp` entries, constructs a one-step Derivable.
     For `.assert` entries, records the label as witness. -/
-theorem preload_preserves_heapCert (db : DB) (pr pr' : ProofState) (l : String)
+theorem preload_preserves_heapDerivable (db : DB) (pr pr' : ProofState) (l : String)
     (h_preload : db.preload pr l = .ok pr')
-    (h_hc : HeapCert db pr.heap)
+    (h_hc : HeapDerivable db pr.heap)
     (h_wf : WellFormedDB db) :
-    HeapCert db pr'.heap := by
+    HeapDerivable db pr'.heap := by
   unfold DB.preload at h_preload
   cases h_find : db.find? l with
   | none => simp [h_find] at h_preload
@@ -2261,22 +2261,22 @@ theorem preload_preserves_heapCert (db : DB) (pr pr' : ProofState) (l : String)
       by_cases h_in : l ∈ db.frame.hyps
       · simp [h_in, pure, Except.pure] at h_preload
         rw [← h_preload]; simp [ProofState.pushHeap]
-        exact HeapCert_push_fmla db pr.heap f h_hc
+        exact HeapDerivable_push_fmla db pr.heap f h_hc
           (hyp_derivcert db l ess f origin h_find h_in h_wf)
       · simp [h_in] at h_preload
     | assert f fr origin =>
       rw [h_find] at h_preload; simp [pure, Except.pure] at h_preload
       rw [← h_preload]; simp [ProofState.pushHeap]
-      exact HeapCert_push_assert db pr.heap f fr h_hc ⟨l, origin, h_find⟩
+      exact HeapDerivable_push_assert db pr.heap f fr h_hc ⟨l, origin, h_find⟩
     | var v => rw [h_find] at h_preload; simp at h_preload
     | const _ => rw [h_find] at h_preload; simp at h_preload
 
-/-- Preload fold preserves HeapCert. -/
-theorem preload_fold_preserves_heapCert (db : DB)
+/-- Preload fold preserves HeapDerivable. -/
+theorem preload_fold_preserves_heapDerivable (db : DB)
     (preloads : List String) (pr result : ProofState)
     (h_fold : preloads.foldlM (DB.preload db) pr = .ok result)
-    (h_hc : HeapCert db pr.heap) (h_wf : WellFormedDB db) :
-    HeapCert db result.heap := by
+    (h_hc : HeapDerivable db pr.heap) (h_wf : WellFormedDB db) :
+    HeapDerivable db result.heap := by
   induction preloads generalizing pr with
   | nil =>
     simp [List.foldlM_nil, pure, Except.pure] at h_fold; subst h_fold; exact h_hc
@@ -2286,25 +2286,25 @@ theorem preload_fold_preserves_heapCert (db : DB)
     | error e => simp [h_step] at h_fold
     | ok pr' =>
       simp [h_step] at h_fold
-      exact ih pr' h_fold (preload_preserves_heapCert db pr pr' l h_step h_hc h_wf)
+      exact ih pr' h_fold (preload_preserves_heapDerivable db pr pr' l h_step h_hc h_wf)
 
-/-! ### Part 15g: DerivCert Extraction + Bridge -/
+/-! ### Part 15g: Derivable Extraction + Bridge -/
 
-/-- Extract a DerivCert from a StackCert when the formula is at index 0. -/
-theorem compressed_final_cert (db : DB) (result : ProofState)
-    (h_sc : StackCert db result.stack)
+/-- Extract a Derivable from a StackDerivable when the formula is at index 0. -/
+theorem derivable_of_stack_top (db : DB) (result : ProofState)
+    (h_sc : StackDerivable db result.stack)
     (fmla : Formula) (h_fmla : result.stack[0]? = some fmla) :
-    DerivCert db fmla := by
+    Derivable db fmla := by
   obtain ⟨h_lt, h_eq⟩ := Array.getElem_of_getElem? h_fmla
   rw [← h_eq]; exact h_sc 0 h_lt
 
-/-- DerivCert bridges to NormalProofReachable.
+/-- Derivable bridges to NormalProofReachable.
     Both definitions use `foldlM stepNormal` from init states with the same
     stack (#[]) and frame (db.frame), differing only in metadata (label, fmla).
     `foldlM_stepNormal_transfer` handles the metadata difference. -/
-theorem DerivCert_to_NormalProofReachable
+theorem Derivable_to_NormalProofReachable
     (db : DB) (label : String) (fmla : Formula) (f : Formula)
-    (h_cert : DerivCert db f) :
+    (h_cert : Derivable db f) :
     NormalProofReachable db label fmla #[f] := by
   obtain ⟨labels, pr_final, h_fold, h_stack⟩ := h_cert
   obtain ⟨r₂, h_r₂_fold, h_r₂_stack⟩ := foldlM_stepNormal_transfer db labels
@@ -2347,10 +2347,10 @@ private theorem array_eq_singleton {α : Type} (a : Array α) (x : α)
 /-- Z-compressed proof reachability implies normal proof reachability.
 
     The proof:
-    1. Preload preserves HeapCert (empty → preloaded, via WellFormedDB)
-    2. Actions fold preserves StackCert + HeapCert
-    3. Final StackCert gives DerivCert for the formula
-    4. DerivCert bridges to NormalProofReachable -/
+    1. Preload preserves HeapDerivable (empty → preloaded, via WellFormedDB)
+    2. Actions fold preserves StackDerivable + HeapDerivable
+    3. Final StackDerivable gives Derivable for the formula
+    4. Derivable bridges to NormalProofReachable -/
 theorem z_compressed_to_normal_reachable (db : DB) (label : String) (fmla : Formula)
     (stack : Array Formula)
     (h_wf : WellFormedDB db)
@@ -2363,23 +2363,23 @@ theorem z_compressed_to_normal_reachable (db : DB) (label : String) (fmla : Form
   let pr_init : ProofState :=
     ⟨⟨0,0⟩, label, fmla, db.frame, #[], #[], .normal, false⟩
   -- 1. Establish initial certs
-  have h_sc_init : StackCert db pr_preload.stack := by
+  have h_sc_init : StackDerivable db pr_preload.stack := by
     have h_stack_eq := preload_fold_preserves_stack db preloads pr_init pr_preload h_preload
-    rw [h_stack_eq]; exact StackCert_empty db
-  have h_hc_init : HeapCert db pr_preload.heap :=
-    preload_fold_preserves_heapCert db preloads pr_init pr_preload
-      h_preload (HeapCert_empty db) h_wf
+    rw [h_stack_eq]; exact StackDerivable_empty db
+  have h_hc_init : HeapDerivable db pr_preload.heap :=
+    preload_fold_preserves_heapDerivable db preloads pr_init pr_preload
+      h_preload (HeapDerivable_empty db) h_wf
   -- 2. Actions preserve certs
   have ⟨h_sc_final, _⟩ :=
     execStepSave_fold_preserves_certs db actions pr_preload pr_final
       h_actions h_sc_init h_hc_init
-  -- 3. Extract DerivCert from final stack
+  -- 3. Extract Derivable from final stack
   have h_fmla_final : pr_final.stack[0]? = some fmla := h_stack ▸ h_stack_fmla
-  have h_cert : DerivCert db fmla :=
-    compressed_final_cert db pr_final h_sc_final fmla h_fmla_final
+  have h_cert : Derivable db fmla :=
+    derivable_of_stack_top db pr_final h_sc_final fmla h_fmla_final
   -- 4. stack = #[fmla], then bridge to NormalProofReachable
   rw [array_eq_singleton stack fmla h_stack_one h_stack_fmla]
-  exact DerivCert_to_NormalProofReachable db label fmla fmla h_cert
+  exact Derivable_to_NormalProofReachable db label fmla fmla h_cert
 
 /-! ### Part 15i: Updated Proof Reachable + Unified Dispatcher -/
 
@@ -2396,7 +2396,7 @@ inductive ProofReachableZ (db : DB) (label : String) (fmla : Formula)
 /-- **UNIFIED THEOREM (Z-AWARE)**: Prefix provability for any reachable proof.
 
     Covers normal, save-free compressed, and Z-compressed proofs.
-    The Z-compressed case requires `WellFormedDB` (for preload HeapCert),
+    The Z-compressed case requires `WellFormedDB` (for preload HeapDerivable),
     `stack.size = 1`, and `stack[0]? = some fmla`. -/
 theorem postInsert_provable_any_proof_z
     (s : ParserState) (pr : ProofState)
@@ -2431,7 +2431,7 @@ the same function for non-unknown actions.
 **Architecture:**
 - 16a: Convert `CompressedAction` → `StepSaveAction`, prove fold equivalence
 - 16b: Bridge from parser data to `ZCompressedProofReachable`
-- 16c: `preloadMandatoryHyps` property lemmas (stack, HeapCert)
+- 16c: `preloadMandatoryHyps` property lemmas (stack, HeapDerivable)
 - 16d: Full bridge from `preloadMandatoryHyps` + user preloads + compressed actions
 -/
 
@@ -2525,7 +2525,7 @@ theorem parser_compressed_to_z_reachable
 
 The parser calls `preloadMandatoryHyps` (a `for` loop over `pr.frame.hyps`)
 to populate the heap before compressed proof execution. We prove this preserves
-stack and establishes `HeapCert`. -/
+stack and establishes `HeapDerivable`. -/
 
 /-- `preloadMandatoryHyps` preserves the stack (it only modifies the heap). -/
 theorem preloadMandatoryHyps_preserves_stack
@@ -2570,18 +2570,18 @@ theorem preloadMandatoryHyps_preserves_stack
         rw [ih _ _ h]; simp [ProofState.pushHeap]
       | assert f fr origin => simp [h_find, Bind.bind, Except.bind] at h
 
-/-- `preloadMandatoryHyps` establishes `HeapCert` on the resulting heap.
+/-- `preloadMandatoryHyps` establishes `HeapDerivable` on the resulting heap.
 
     Each mandatory hypothesis label in `pr.frame.hyps` is looked up as `.hyp`,
-    yielding formula `f`. `hyp_derivcert` gives `DerivCert db f`, and
-    `HeapCert_push_fmla` extends the heap certificate. -/
-theorem preloadMandatoryHyps_heapCert
+    yielding formula `f`. `hyp_derivcert` gives `Derivable db f`, and
+    `HeapDerivable_push_fmla` extends the heap certificate. -/
+theorem preloadMandatoryHyps_heapDerivable
     (db : DB) (pr pr' : ProofState)
     (h_ok : db.preloadMandatoryHyps pr = .ok pr')
-    (h_hc : HeapCert db pr.heap)
+    (h_hc : HeapDerivable db pr.heap)
     (h_frame : pr.frame = db.frame)
     (h_wf : WellFormedDB db) :
-    HeapCert db pr'.heap := by
+    HeapDerivable db pr'.heap := by
   let body : String → ProofState → Except ProofCheckFail (ForInStep ProofState) :=
     fun lbl acc =>
       match db.find? lbl with
@@ -2601,8 +2601,8 @@ theorem preloadMandatoryHyps_heapCert
       ∀ (labels : List String) (acc acc' : ProofState),
         (∀ l ∈ labels, l ∈ db.frame.hyps) →
         forIn labels acc body = Except.ok acc' →
-        HeapCert db acc.heap →
-        HeapCert db acc'.heap from
+        HeapDerivable db acc.heap →
+        HeapDerivable db acc'.heap from
     h_aux pr.frame.hyps.toList pr pr'
       (fun l h_mem => h_frame ▸ Array.mem_toList_iff.mp h_mem)
       h_for_list h_hc
@@ -2621,11 +2621,11 @@ theorem preloadMandatoryHyps_heapCert
         simp [h_find, Bind.bind, Except.bind, pure, Except.pure] at h_fold
         have h_lbl_in : lbl ∈ db.frame.hyps :=
           h_in_frame lbl (List.Mem.head _)
-        have h_cert : DerivCert db f :=
+        have h_cert : Derivable db f :=
           hyp_derivcert db lbl ess f origin h_find h_lbl_in h_wf
-        have h_hc_new : HeapCert db (acc.pushHeap (.fmla f)).heap := by
+        have h_hc_new : HeapDerivable db (acc.pushHeap (.fmla f)).heap := by
           simp [ProofState.pushHeap]
-          exact HeapCert_push_fmla db acc.heap f h_hc_acc h_cert
+          exact HeapDerivable_push_fmla db acc.heap f h_hc_acc h_cert
         exact ih _ _
           (fun l h_mem => h_in_frame l (List.mem_cons_of_mem _ h_mem))
           h_fold h_hc_new
@@ -2643,7 +2643,7 @@ The parser's compressed proof execution has two preload sub-phases:
 
 After preloading, compressed tokens are decoded and applied via
 `applyCompressedActions`. We bridge the combined preloaded state to
-`ZCompressedProofReachable` by showing the preloaded state has HeapCert,
+`ZCompressedProofReachable` by showing the preloaded state has HeapDerivable,
 empty stack, and correct frame. -/
 
 /-- Full compressed proof bridge: from `preloadMandatoryHyps` + user preloads +
@@ -2665,7 +2665,7 @@ theorem compressed_full_bridge
     -- Compressed actions succeeded with no unknowns
     (h_actions : ParserState.applyCompressedActions db pr_preload all_cacts = .ok pr_final)
     (h_no_unk : ∀ a ∈ all_cacts, a ≠ ParserState.CompressedAction.unknown)
-    -- WellFormedDB for HeapCert
+    -- WellFormedDB for HeapDerivable
     (h_wf : WellFormedDB db)
     -- Stack and formula conditions at finish
     (h_stack_one : pr_final.stack.size = 1)
@@ -2680,16 +2680,16 @@ theorem compressed_full_bridge
     preloadMandatoryHyps_preserves_stack db pr_init pr_mand h_mand
   have h_mand_frame : pr_mand.frame = pr_init.frame :=
     (preloadMandatoryHyps_ok_preserves_core db pr_init pr_mand h_mand).2
-  have h_mand_hc : HeapCert db pr_mand.heap :=
-    preloadMandatoryHyps_heapCert db pr_init pr_mand h_mand
-      (by rw [h_init_heap]; exact HeapCert_empty db) h_init_frame h_wf
+  have h_mand_hc : HeapDerivable db pr_mand.heap :=
+    preloadMandatoryHyps_heapDerivable db pr_init pr_mand h_mand
+      (by rw [h_init_heap]; exact HeapDerivable_empty db) h_init_frame h_wf
   -- Properties after user preloads
   have h_pre_stack : pr_preload.stack = pr_mand.stack :=
     preload_fold_preserves_stack db user_preloads pr_mand pr_preload h_user
   have h_pre_frame : pr_preload.frame = pr_mand.frame :=
     preload_fold_preserves_frame db user_preloads pr_mand pr_preload h_user
-  have h_pre_hc : HeapCert db pr_preload.heap :=
-    preload_fold_preserves_heapCert db user_preloads pr_mand pr_preload
+  have h_pre_hc : HeapDerivable db pr_preload.heap :=
+    preload_fold_preserves_heapDerivable db user_preloads pr_mand pr_preload
       h_user h_mand_hc h_wf
   -- Combined properties
   have h_pre_stack_empty : pr_preload.stack = #[] := by
@@ -2702,13 +2702,13 @@ theorem compressed_full_bridge
   have ⟨h_sc_final, _⟩ :=
     execStepSave_fold_preserves_certs db (all_cacts.map compressedToStepSave)
       pr_preload pr_final h_ss_actions
-      (by rw [h_pre_stack_empty]; exact StackCert_empty db)
+      (by rw [h_pre_stack_empty]; exact StackDerivable_empty db)
       h_pre_hc
-  -- Extract DerivCert from final stack → NormalProofReachable
-  have h_cert : DerivCert db fmla :=
-    compressed_final_cert db pr_final h_sc_final fmla h_stack_fmla
+  -- Extract Derivable from final stack → NormalProofReachable
+  have h_cert : Derivable db fmla :=
+    derivable_of_stack_top db pr_final h_sc_final fmla h_stack_fmla
   have h_normal : NormalProofReachable db label fmla #[fmla] :=
-    DerivCert_to_NormalProofReachable db label fmla fmla h_cert
+    Derivable_to_NormalProofReachable db label fmla fmla h_cert
   -- pr_final.stack = #[fmla]
   have h_stack_eq : pr_final.stack = #[fmla] :=
     array_eq_singleton pr_final.stack fmla h_stack_one h_stack_fmla

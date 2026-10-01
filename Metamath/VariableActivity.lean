@@ -26,11 +26,11 @@ Two facts are proved separately because they carry different weight:
   exposes a new depth, and the new block is empty only because no stale tag
   names it; the characterization is exactly the claim that no declaration
   survives the block that made it.  That invariant travels with `ScopesOk`,
-  which `Metamath.ParserOperations` threads through every parse step.
+  which `Metamath.ParserInvariantPreservation` threads through every parse step.
 -/
 
 import Metamath.Verify
-import Metamath.ParserOperations
+import Metamath.ParserInvariantPreservation
 
 namespace Metamath
 namespace Verify

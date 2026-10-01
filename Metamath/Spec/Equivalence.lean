@@ -1,29 +1,25 @@
 /-
 Bridge between the operational verifier (Verify.lean) and Mario's declarative
-specification (DeclarativeSpec.lean).
+specification (DeclarativeSpec.lean), at one fixed frame.
 
-**Soundness** (`operational_to_semantic`): every proof accepted by the verifier
+**Soundness** (`operational_to_declarative`): every proof accepted by the verifier
 is valid under Mario's semantics.
 
-**Completeness** (`mario_to_proofValid`): every formula derivable under
-`SupportedProvable` is accepted by the verifier.
+**Frame derivability** (`FrameDerivable`): Mario's `Provable` in which every
+variable leaf must be a variable of the frame, i.e. derivability by Metamath's
+rules in that frame. It is exactly operational provability
+(`operational_to_frameDerivable`, `frameDerivable_to_proofValid`).
 
-`SupportedProvable` is Mario's `Provable` where each variable leaf carries a
-witness that the variable appears in the frame's floating hypothesis map.
-This is the appropriate completeness hypothesis: the verifier requires all
-variables to be explicitly typed in the frame, and `SupportedProvable` captures
-exactly that condition.
-
-`SemanticFrameSupported` is a global version of this support condition (every
-semantic variable in the frame can be read back from the variable map). It is
-used by `operational_iff_semantic` to obtain the biconditional directly, at
-the cost of an extra hypothesis at call sites.
+Mario's `Provable` allows any variable, so at one fixed frame it can prove more
+than the verifier (`Metamath.Spec.FixedFrameCounterexample`). The two agree up to
+extending the frame by dummy variables (`Metamath.Spec.Completeness`).
 -/
 
 import Metamath.Spec.Core
 import Metamath.Spec.Operational
-import Metamath.Spec.Semantic
+import Metamath.Spec.Declarative
 import Metamath.Spec.Bridge
+import Metamath.Spec.Derivable
 set_option linter.unnecessarySimpa false
 set_option linter.unusedSimpArgs false
 set_option linter.unusedVariables false
@@ -32,7 +28,7 @@ set_option linter.unusedVariables false
 namespace Metamath.Spec.Equivalence
 
 open Spec (Database Frame Expr Hyp Variable Constant Label Subst ProofValid Provable)
-open Semantic (Provable)
+open Declarative (Provable)
 open Bridge
 
 /-! ## Helper Conversions
@@ -42,10 +38,10 @@ variable map derived from floating hypotheses.
 
 Key idea: Mario's `VR.type` encodes the *typecode*, while the `i` index
 distinguishes variables of the same type. We therefore build a map
-`Variable → MarioVR` from floating hypotheses, preserving typecodes.
+`Variable → DeclarativeVR` from floating hypotheses, preserving typecodes.
 -/
 
-abbrev VarMap := List (Variable × MarioVR)
+abbrev VarMap := List (Variable × DeclarativeVR)
 
 /-- Enumerate floats with a running index (auxiliary). -/
 def varMapOfFrameAux (n : Nat) : List (Constant × Variable) → VarMap
@@ -63,12 +59,12 @@ def floatList (fr : Frame) : List (Constant × Variable) :=
 def varMapOfFrame (fr : Frame) : VarMap :=
   varMapOfFrameAux 0 (floatList fr)
 
-/-- Find the MarioVR corresponding to a variable. -/
-def findVR (vm : VarMap) (v : Variable) : Option MarioVR :=
+/-- Find the DeclarativeVR corresponding to a variable. -/
+def findVR (vm : VarMap) (v : Variable) : Option DeclarativeVR :=
   (vm.find? fun p => p.1 = v).map Prod.snd
 
-/-- Find the Variable corresponding to a MarioVR. -/
-def findVar (vm : VarMap) (vr : MarioVR) : Option Variable :=
+/-- Find the Variable corresponding to a DeclarativeVR. -/
+def findVar (vm : VarMap) (vr : DeclarativeVR) : Option Variable :=
   (vm.find? fun p => p.2 = vr).map Prod.fst
 
 /-- Frame has unique floating hypotheses: each variable has at most one typecode.
@@ -106,17 +102,17 @@ def WellFormedDatabaseStrong (Γ : Database) (consts : ConstSet) : Prop :=
   ∀ l fr e, Γ l = some (fr, e) → FrameWellFormed fr ∧ DVWellFormed fr
 
 /-- Convert a symbol string using a typed variable map. -/
-def toMarioSym (vm : VarMap) (s : String) : MarioSym :=
+def toDeclarativeSym (vm : VarMap) (s : String) : DeclarativeSym :=
   let v := Variable.mk s
   match findVR vm v with
   | some vr => .var vr
   | none => .const s
 
 /-- Convert our Expr (typecode + symbols) to Mario's expression (symbols only). -/
-def exprToMarioExpr (vm : VarMap) (e : Expr) : MarioExpr :=
-  e.syms.map (fun s => toMarioSym vm s)
+def exprToDeclarativeExpr (vm : VarMap) (e : Expr) : DeclarativeExpr :=
+  e.syms.map (fun s => toDeclarativeSym vm s)
 
--- Note: toMarioSym injectivity and exprToMarioExpr injectivity lemmas
+-- Note: toDeclarativeSym injectivity and exprToDeclarativeExpr injectivity lemmas
 -- are defined later after the infrastructure lemmas they depend on.
 
 /-! ## Inverse Conversions (Mario → Spec)
@@ -127,7 +123,7 @@ These convert Mario's representation back to ours. Used in the completeness proo
 /-- Convert a Mario symbol back to a string symbol.
     Variables become the string name of the variable found via findVar.
     Constants stay as themselves. -/
-def fromMarioSym (vm : VarMap) (sym : MarioSym) : Sym :=
+def fromDeclarativeSym (vm : VarMap) (sym : DeclarativeSym) : Sym :=
   match sym with
   | .const s => s
   | .var vr =>
@@ -136,24 +132,24 @@ def fromMarioSym (vm : VarMap) (sym : MarioSym) : Sym :=
       | none => "" -- shouldn't happen for well-formed inputs
 
 /-- Convert a Mario expression back to a list of symbols. -/
-def fromMarioExpr (vm : VarMap) (me : MarioExpr) : List Sym :=
-  me.map (fromMarioSym vm)
+def fromDeclarativeExpr (vm : VarMap) (me : DeclarativeExpr) : List Sym :=
+  me.map (fromDeclarativeSym vm)
 
 /-- Convert a Mario formula back to an Expr. -/
-def fromMarioFormula (vm : VarMap) (fmla : Semantic.Formula) : Expr :=
-  ⟨⟨fmla.1⟩, fromMarioExpr vm fmla.2⟩
+def fromDeclarativeFormula (vm : VarMap) (fmla : Declarative.Formula) : Expr :=
+  ⟨⟨fmla.1⟩, fromDeclarativeExpr vm fmla.2⟩
 
 /-- Convert Expr to Mario's Formula (typecode + symbols). -/
-def exprToFormula (vm : VarMap) (e : Expr) : Semantic.Formula :=
-  (e.typecode.c, exprToMarioExpr vm e)
+def exprToFormula (vm : VarMap) (e : Expr) : Declarative.Formula :=
+  (e.typecode.c, exprToDeclarativeExpr vm e)
 
--- Note: Roundtrip lemmas (fromMarioSym_toMarioSym_frame, etc.) are defined
+-- Note: Roundtrip lemmas (fromDeclarativeSym_toDeclarativeSym_frame, etc.) are defined
 -- after findVR_findVar_inverse_frame which they depend on.
 
 /-- Convert a hypothesis to Mario's Formula.
 
 Floating hypotheses become variable formulas; essential hypotheses become expressions. -/
-def hypToMarioFormula (vm : VarMap) (h : Hyp) : Semantic.Formula :=
+def hypToDeclarativeFormula (vm : VarMap) (h : Hyp) : Declarative.Formula :=
   match h with
   | Hyp.floating c v =>
       let vr :=
@@ -164,7 +160,7 @@ def hypToMarioFormula (vm : VarMap) (h : Hyp) : Semantic.Formula :=
   | Hyp.essential e => exprToFormula vm e
 
 /-- Convert a DV list to Mario's DJ using a typed variable map. -/
-def dvListToMarioDJ (vm : VarMap) (dv : List (Variable × Variable)) : MarioDJ :=
+def dvListToDeclarativeDJ (vm : VarMap) (dv : List (Variable × Variable)) : DeclarativeDJ :=
   let vrPairs := dv.filterMap fun (v, w) =>
     match findVR vm v, findVR vm w with
     | some vr1, some vr2 => some (vr1, vr2)
@@ -173,20 +169,20 @@ def dvListToMarioDJ (vm : VarMap) (dv : List (Variable × Variable)) : MarioDJ :
 
 /-- Convert a substitution to Mario's form, using axiom vars for the domain
     and caller vars for the codomain. -/
-def toMarioSubst (vmAx vm : VarMap) (σ : Subst) : MarioVR → MarioExpr :=
+def toDeclarativeSubst (vmAx vm : VarMap) (σ : Subst) : DeclarativeVR → DeclarativeExpr :=
   fun vr =>
     match findVar vmAx vr with
-    | some v => exprToMarioExpr vm (σ v)
+    | some v => exprToDeclarativeExpr vm (σ v)
     | none => [Metamath.Sym.var vr]
 
 /-- Convert Frame to Context using its typed variable map. -/
-noncomputable def frameToContext (fr : Frame) : Semantic.Context :=
+noncomputable def frameToContext (fr : Frame) : Declarative.Context :=
   let vm := varMapOfFrame fr
-  { hyps := fr.hyps.map (fun h => hypToMarioFormula vm h)
-    dj := dvListToMarioDJ vm fr.dv }
+  { hyps := fr.hyps.map (fun h => hypToDeclarativeFormula vm h)
+    dj := dvListToDeclarativeDJ vm fr.dv }
 
 /-- Convert our Database to Mario's axiom set. -/
-noncomputable def dbToAxioms (Γ : Database) : Semantic.Statement → Prop :=
+noncomputable def dbToAxioms (Γ : Database) : Declarative.Statement → Prop :=
   fun stmt => ∃ (l : Label) (fr : Frame) (e : Expr),
     Γ l = some (fr, e) ∧
     stmt.ctx = frameToContext fr ∧
@@ -194,12 +190,12 @@ noncomputable def dbToAxioms (Γ : Database) : Semantic.Statement → Prop :=
 
 /-! ## Completeness Infrastructure
 
-These lemmas support the `mario_to_proofValid` completeness proof.
+These lemmas support the `frameDerivable_to_proofValid` completeness proof.
 -/
 
 /-- Inverse of dbToAxioms: extract the concrete label, frame, and expression.
     This is trivial since dbToAxioms is defined as an existential. -/
-theorem dbToAxioms_inverse {Γ : Database} {ax : Semantic.Statement} :
+theorem dbToAxioms_inverse {Γ : Database} {ax : Declarative.Statement} :
     dbToAxioms Γ ax → ∃ l fr e, Γ l = some (fr, e) ∧
                        ax.ctx = frameToContext fr ∧
                        ax.fmla = exprToFormula (varMapOfFrame fr) e := by
@@ -207,9 +203,9 @@ theorem dbToAxioms_inverse {Γ : Database} {ax : Semantic.Statement} :
   exact h
 
 /-- Hypothesis membership in frameToContext comes from frame's hyps. -/
-theorem hyps_correspondence {fr : Frame} {h : Semantic.Formula} :
+theorem hyps_correspondence {fr : Frame} {h : Declarative.Formula} :
     h ∈ (frameToContext fr).hyps →
-    ∃ hyp ∈ fr.hyps, h = hypToMarioFormula (varMapOfFrame fr) hyp := by
+    ∃ hyp ∈ fr.hyps, h = hypToDeclarativeFormula (varMapOfFrame fr) hyp := by
   intro h_mem
   unfold frameToContext at h_mem
   simp only [] at h_mem
@@ -217,30 +213,30 @@ theorem hyps_correspondence {fr : Frame} {h : Semantic.Formula} :
   exact ⟨hyp, h_in, h_eq.symm⟩
 
 /-- Convert a Mario substitution back to a Spec substitution.
-    For variables in the axiom's frame, use fromMarioExpr to convert back.
+    For variables in the axiom's frame, use fromDeclarativeExpr to convert back.
     For other variables, use identity. -/
-def marioSubstToSpec (vmAx vm : VarMap) (σ : MarioVR → MarioExpr) : Subst :=
+def declarativeSubstToSpec (vmAx vm : VarMap) (σ : DeclarativeVR → DeclarativeExpr) : Subst :=
   fun v =>
     match findVR vmAx v with
-    | some vr => ⟨⟨vr.type⟩, fromMarioExpr vm (σ vr)⟩
+    | some vr => ⟨⟨vr.type⟩, fromDeclarativeExpr vm (σ vr)⟩
     | none => ⟨⟨""⟩, [v.v]⟩  -- identity for non-axiom vars
 
-/-- marioSubstToSpec simplifies when findVR succeeds. -/
-theorem marioSubstToSpec_findVR {vmAx vm : VarMap} {σ : MarioVR → MarioExpr}
-    {v : Variable} {vr : MarioVR}
+/-- declarativeSubstToSpec simplifies when findVR succeeds. -/
+theorem declarativeSubstToSpec_findVR {vmAx vm : VarMap} {σ : DeclarativeVR → DeclarativeExpr}
+    {v : Variable} {vr : DeclarativeVR}
     (h_find : findVR vmAx v = some vr) :
-    marioSubstToSpec vmAx vm σ v = ⟨⟨vr.type⟩, fromMarioExpr vm (σ vr)⟩ := by
-  unfold marioSubstToSpec
+    declarativeSubstToSpec vmAx vm σ v = ⟨⟨vr.type⟩, fromDeclarativeExpr vm (σ vr)⟩ := by
+  unfold declarativeSubstToSpec
   simp [h_find]
 
-/-- Typecode of marioSubstToSpec matches the VR type for axiom variables. -/
-theorem marioSubstToSpec_typecode {vmAx vm : VarMap} {σ : MarioVR → MarioExpr}
-    {v : Variable} {vr : MarioVR}
+/-- Typecode of declarativeSubstToSpec matches the VR type for axiom variables. -/
+theorem declarativeSubstToSpec_typecode {vmAx vm : VarMap} {σ : DeclarativeVR → DeclarativeExpr}
+    {v : Variable} {vr : DeclarativeVR}
     (h_find : findVR vmAx v = some vr) :
-    (marioSubstToSpec vmAx vm σ v).typecode.c = vr.type := by
-  rw [marioSubstToSpec_findVR h_find]
+    (declarativeSubstToSpec vmAx vm σ v).typecode.c = vr.type := by
+  rw [declarativeSubstToSpec_findVR h_find]
 
--- Note: marioSubstToSpec_float_typecode is defined later, after findVR_of_float_typed
+-- Note: declarativeSubstToSpec_float_typecode is defined later, after findVR_of_float_typed
 
 /-! ## Helper Lemmas
 
@@ -248,29 +244,29 @@ These lemmas show that our conversions preserve structure correctly.
 -/
 
 /-- Essential hypothesis conversion matches exprToFormula. -/
-theorem hypToMarioFormula_essential (vm : VarMap) (e : Expr) :
-    hypToMarioFormula vm (Hyp.essential e) = exprToFormula vm e := by
+theorem hypToDeclarativeFormula_essential (vm : VarMap) (e : Expr) :
+    hypToDeclarativeFormula vm (Hyp.essential e) = exprToFormula vm e := by
   rfl
 
-/-- If a variable is found in the map, toMarioSym returns .var. -/
-theorem toMarioSym_var {vm : VarMap} {v : Variable} {vr : MarioVR}
+/-- If a variable is found in the map, toDeclarativeSym returns .var. -/
+theorem toDeclarativeSym_var {vm : VarMap} {v : Variable} {vr : DeclarativeVR}
     (h_find : findVR vm v = some vr) :
-    toMarioSym vm v.v = .var vr := by
-  unfold toMarioSym
+    toDeclarativeSym vm v.v = .var vr := by
+  unfold toDeclarativeSym
   simp [h_find]
 
 /-- Floating hypothesis for single-variable expression matches exprToFormula. -/
-theorem hypToMarioFormula_floating_expr (vm : VarMap) (c : Constant) (v : Variable)
-    {vr : MarioVR} (h_find : findVR vm v = some vr) :
-    hypToMarioFormula vm (Hyp.floating c v) = exprToFormula vm ⟨c, [v.v]⟩ := by
-  unfold hypToMarioFormula exprToFormula exprToMarioExpr
-  simp [h_find, toMarioSym_var h_find]
+theorem hypToDeclarativeFormula_floating_expr (vm : VarMap) (c : Constant) (v : Variable)
+    {vr : DeclarativeVR} (h_find : findVR vm v = some vr) :
+    hypToDeclarativeFormula vm (Hyp.floating c v) = exprToFormula vm ⟨c, [v.v]⟩ := by
+  unfold hypToDeclarativeFormula exprToFormula exprToDeclarativeExpr
+  simp [h_find, toDeclarativeSym_var h_find]
   rfl
 
 /-- Hypothesis conversion always yields a member of the frame context. -/
-theorem hypToMarioFormula_mem {fr : Frame} {h : Hyp} :
+theorem hypToDeclarativeFormula_mem {fr : Frame} {h : Hyp} :
     h ∈ fr.hyps →
-    hypToMarioFormula (varMapOfFrame fr) h ∈ (frameToContext fr).hyps := by
+    hypToDeclarativeFormula (varMapOfFrame fr) h ∈ (frameToContext fr).hyps := by
   intro h_in
   unfold frameToContext
   exact (List.mem_map).2 ⟨h, h_in, rfl⟩
@@ -320,7 +316,7 @@ theorem var_mem_iff_float {fr : Frame} {v : Variable} :
     exact ⟨Hyp.floating c v, h_in, rfl⟩
 
 /-- If a variable occurs in the var map, findVR returns some value. -/
-theorem findVR_some_of_mem {vm : VarMap} {v : Variable} {vr : MarioVR} :
+theorem findVR_some_of_mem {vm : VarMap} {v : Variable} {vr : DeclarativeVR} :
     (v, vr) ∈ vm → ∃ vr', findVR vm v = some vr' := by
   intro h_mem
   classical
@@ -339,7 +335,7 @@ theorem findVR_some_of_mem {vm : VarMap} {v : Variable} {vr : MarioVR} :
       exact this.elim
 
 /-- If findVR succeeds, the pair is in the varmap. -/
-theorem findVR_mem_of_some {vm : VarMap} {v : Variable} {vr : MarioVR}
+theorem findVR_mem_of_some {vm : VarMap} {v : Variable} {vr : DeclarativeVR}
     (h_find : findVR vm v = some vr) :
     (v, vr) ∈ vm := by
   unfold findVR at h_find
@@ -398,7 +394,7 @@ theorem mem_varMapAux_of_mem_typed {n : Nat} {c : Constant} {v : Variable}
               simp [varMapOfFrameAux, h_mem']
 
 /-- Soundness for varMapOfFrameAux: membership implies a float in the list. -/
-theorem mem_varMapAux_sound {n : Nat} {v : Variable} {vr : MarioVR}
+theorem mem_varMapAux_sound {n : Nat} {v : Variable} {vr : DeclarativeVR}
     {xs : List (Constant × Variable)} :
     (v, vr) ∈ varMapOfFrameAux n xs → ∃ c, (c, v) ∈ xs := by
   intro h_mem
@@ -419,7 +415,7 @@ theorem mem_varMapAux_sound {n : Nat} {v : Variable} {vr : MarioVR}
               exact ⟨c, List.mem_cons_of_mem _ h_mem'⟩
 
 /-- Stronger soundness: membership implies float AND vr.type matches the typecode. -/
-theorem mem_varMapAux_sound_typed {n : Nat} {v : Variable} {vr : MarioVR}
+theorem mem_varMapAux_sound_typed {n : Nat} {v : Variable} {vr : DeclarativeVR}
     {xs : List (Constant × Variable)} :
     (v, vr) ∈ varMapOfFrameAux n xs → ∃ c, (c, v) ∈ xs ∧ vr.type = c.c := by
   intro h_mem
@@ -443,7 +439,7 @@ theorem mem_varMapAux_sound_typed {n : Nat} {v : Variable} {vr : MarioVR}
               exact ⟨c, List.mem_cons_of_mem _ h_mem', h_type⟩
 
 /-- Index bound: VRs in varMapOfFrameAux have index ≥ n. -/
-theorem varMapOfFrameAux_idx_bound {n : Nat} {v : Variable} {vr : MarioVR}
+theorem varMapOfFrameAux_idx_bound {n : Nat} {v : Variable} {vr : DeclarativeVR}
     {xs : List (Constant × Variable)} :
     (v, vr) ∈ varMapOfFrameAux n xs → vr.i ≥ n := by
   intro h_mem
@@ -462,7 +458,7 @@ theorem varMapOfFrameAux_idx_bound {n : Nat} {v : Variable} {vr : MarioVR}
 
 /-- Variables in varMapOfFrameAux have unique VRs when input has NoDup variables. -/
 theorem varMapOfFrameAux_var_unique_nodup {n : Nat} {xs : List (Constant × Variable)}
-    {v : Variable} {vr vr' : MarioVR}
+    {v : Variable} {vr vr' : DeclarativeVR}
     (h_nodup : List.Nodup (xs.map Prod.snd))
     (h1 : (v, vr) ∈ varMapOfFrameAux n xs)
     (h2 : (v, vr') ∈ varMapOfFrameAux n xs) :
@@ -508,7 +504,7 @@ theorem varMapOfFrameAux_var_unique_nodup {n : Nat} {xs : List (Constant × Vari
           exact ih h_nodup_rest h1_tail h2_tail
 
 /-- Typed soundness for varMapOfFrame: membership gives floating hyp AND type match. -/
-theorem mem_varMapOfFrame_sound_typed {fr : Frame} {v : Variable} {vr : MarioVR} :
+theorem mem_varMapOfFrame_sound_typed {fr : Frame} {v : Variable} {vr : DeclarativeVR} :
     (v, vr) ∈ varMapOfFrame fr → ∃ c, Hyp.floating c v ∈ fr.hyps ∧ vr.type = c.c := by
   intro h_mem
   unfold varMapOfFrame at h_mem
@@ -557,25 +553,25 @@ theorem findVR_of_float_typed {fr : Frame} {c : Constant} {v : Variable}
   refine ⟨vr', h_findVR, ?_⟩
   rw [h_type', h_c_eq]
 
-/-- For floating hypotheses with FloatUnique, marioSubstToSpec preserves the typecode. -/
-theorem marioSubstToSpec_float_typecode {frAx : Frame} {vm : VarMap}
-    {σ : MarioVR → MarioExpr} {c : Constant} {v : Variable}
+/-- For floating hypotheses with FloatUnique, declarativeSubstToSpec preserves the typecode. -/
+theorem declarativeSubstToSpec_float_typecode {frAx : Frame} {vm : VarMap}
+    {σ : DeclarativeVR → DeclarativeExpr} {c : Constant} {v : Variable}
     (h_unique : FloatUnique frAx)
     (h_float : Hyp.floating c v ∈ frAx.hyps) :
-    (marioSubstToSpec (varMapOfFrame frAx) vm σ v).typecode = c := by
+    (declarativeSubstToSpec (varMapOfFrame frAx) vm σ v).typecode = c := by
   let vmAx := varMapOfFrame frAx
   obtain ⟨vr, h_findVR, h_type_eq⟩ := findVR_of_float_typed h_unique h_float
-  have h_tc := marioSubstToSpec_typecode (vm := vm) (σ := σ) h_findVR
-  -- h_tc : (marioSubstToSpec vmAx vm σ v).typecode.c = vr.type
+  have h_tc := declarativeSubstToSpec_typecode (vm := vm) (σ := σ) h_findVR
+  -- h_tc : (declarativeSubstToSpec vmAx vm σ v).typecode.c = vr.type
   -- h_type_eq : vr.type = c.c
-  -- Goal: (marioSubstToSpec vmAx vm σ v).typecode = c
+  -- Goal: (declarativeSubstToSpec vmAx vm σ v).typecode = c
   -- Use Constant structure
-  rcases hdef : (marioSubstToSpec (varMapOfFrame frAx) vm σ v).typecode with ⟨tc⟩
+  rcases hdef : (declarativeSubstToSpec (varMapOfFrame frAx) vm σ v).typecode with ⟨tc⟩
   rcases c with ⟨c_str⟩
   simp only [Spec.Constant.mk.injEq]
   -- Goal: tc = c_str
-  -- hdef : (marioSubstToSpec ...).typecode = ⟨tc⟩
-  -- So (marioSubstToSpec ...).typecode.c = tc
+  -- hdef : (declarativeSubstToSpec ...).typecode = ⟨tc⟩
+  -- So (declarativeSubstToSpec ...).typecode.c = tc
   have h_tc' : tc = vr.type := by
     have := congrArg Spec.Constant.c hdef
     simp only at this
@@ -583,7 +579,7 @@ theorem marioSubstToSpec_float_typecode {frAx : Frame} {vm : VarMap}
   rw [h_tc', h_type_eq]
 
 /-- If a pair appears in varMapOfFrame, it came from a floating hypothesis. -/
-theorem mem_varMapOfFrame_sound {fr : Frame} {v : Variable} {vr : MarioVR} :
+theorem mem_varMapOfFrame_sound {fr : Frame} {v : Variable} {vr : DeclarativeVR} :
     (v, vr) ∈ varMapOfFrame fr → ∃ c, Hyp.floating c v ∈ fr.hyps := by
   intro h_mem
   -- Invert the map/enum structure.
@@ -635,24 +631,24 @@ theorem varMapDomain_ofFrame (fr : Frame) :
     obtain ⟨c, h_float⟩ := mem_varMapOfFrame_sound (fr := fr) (v := v) (vr := vr) h_mem'
     exact (var_mem_iff_float (fr := fr) (v := v)).2 ⟨c, h_float⟩
 
-/-- toMarioSubst simplifies when findVar succeeds. -/
-theorem toMarioSubst_findVar {vmAx vm : VarMap} {σ : Subst} {vr : MarioVR} {v : Variable}
+/-- toDeclarativeSubst simplifies when findVar succeeds. -/
+theorem toDeclarativeSubst_findVar {vmAx vm : VarMap} {σ : Subst} {vr : DeclarativeVR} {v : Variable}
     (h_find : findVar vmAx vr = some v) :
-    toMarioSubst vmAx vm σ vr = exprToMarioExpr vm (σ v) := by
-  unfold toMarioSubst
+    toDeclarativeSubst vmAx vm σ vr = exprToDeclarativeExpr vm (σ v) := by
+  unfold toDeclarativeSubst
   simp [h_find]
 
-/-- toMarioSubst is identity when findVar fails. -/
-theorem toMarioSubst_findVar_none {vmAx vm : VarMap} {σ : Subst} {vr : MarioVR}
+/-- toDeclarativeSubst is identity when findVar fails. -/
+theorem toDeclarativeSubst_findVar_none {vmAx vm : VarMap} {σ : Subst} {vr : DeclarativeVR}
     (h_find : findVar vmAx vr = none) :
-    toMarioSubst vmAx vm σ vr = [Metamath.Sym.var vr] := by
-  unfold toMarioSubst
+    toDeclarativeSubst vmAx vm σ vr = [Metamath.Sym.var vr] := by
+  unfold toDeclarativeSubst
   simp [h_find]
 
 /-- VRs in varMapOfFrameAux have indices starting from n and incrementing.
     This ensures uniqueness: no two entries have the same VR. -/
 theorem varMapOfFrameAux_vr_index_ge {n : Nat} {xs : List (Constant × Variable)}
-    {v : Variable} {vr : MarioVR} :
+    {v : Variable} {vr : DeclarativeVR} :
     (v, vr) ∈ varMapOfFrameAux n xs → vr.i ≥ n := by
   intro h_mem
   induction xs generalizing n with
@@ -669,7 +665,7 @@ theorem varMapOfFrameAux_vr_index_ge {n : Nat} {xs : List (Constant × Variable)
 
 /-- VRs in varMapOfFrameAux are unique: if (v, vr) ∈ aux and (v', vr) ∈ aux, then v = v'. -/
 theorem varMapOfFrameAux_vr_unique {n : Nat} {xs : List (Constant × Variable)}
-    {v v' : Variable} {vr : MarioVR} :
+    {v v' : Variable} {vr : DeclarativeVR} :
     (v, vr) ∈ varMapOfFrameAux n xs → (v', vr) ∈ varMapOfFrameAux n xs → v = v' := by
   intro h_mem1 h_mem2
   induction xs generalizing n v v' vr with
@@ -705,14 +701,14 @@ theorem varMapOfFrameAux_vr_unique {n : Nat} {xs : List (Constant × Variable)}
               exact ih h_tail1 h_tail2
 
 /-- VRs in varMapOfFrame are unique. -/
-theorem varMapOfFrame_vr_unique {fr : Frame} {v v' : Variable} {vr : MarioVR} :
+theorem varMapOfFrame_vr_unique {fr : Frame} {v v' : Variable} {vr : DeclarativeVR} :
     (v, vr) ∈ varMapOfFrame fr → (v', vr) ∈ varMapOfFrame fr → v = v' := by
   unfold varMapOfFrame
   exact varMapOfFrameAux_vr_unique (n := 0)
 
 /-- Key inverse lemma: if findVR vm v = some vr, then findVar vm vr = some v.
     This follows from uniqueness of VRs in the VarMap. -/
-theorem findVR_findVar_inverse {vm : VarMap} {v : Variable} {vr : MarioVR}
+theorem findVR_findVar_inverse {vm : VarMap} {v : Variable} {vr : DeclarativeVR}
     (h_unique : ∀ v' v'' vr', (v', vr') ∈ vm → (v'', vr') ∈ vm → v' = v'')
     (h_findVR : findVR vm v = some vr) :
     findVar vm vr = some v := by
@@ -757,7 +753,7 @@ theorem findVR_findVar_inverse {vm : VarMap} {v : Variable} {vr : MarioVR}
           exact h_unique q.1 v vr h_q_mem h_p_mem
 
 /-- Specialized inverse lemma for varMapOfFrame. -/
-theorem findVR_findVar_inverse_frame {fr : Frame} {v : Variable} {vr : MarioVR}
+theorem findVR_findVar_inverse_frame {fr : Frame} {v : Variable} {vr : DeclarativeVR}
     (h_findVR : findVR (varMapOfFrame fr) v = some vr) :
     findVar (varMapOfFrame fr) vr = some v := by
   apply findVR_findVar_inverse
@@ -771,42 +767,42 @@ theorem findVR_findVar_inverse_frame {fr : Frame} {v : Variable} {vr : MarioVR}
 These show the forward and inverse conversions are consistent.
 -/
 
-/-- Roundtrip for symbols: fromMarioSym inverts toMarioSym for frame-based maps. -/
-theorem fromMarioSym_toMarioSym_frame {fr : Frame} {s : Sym} :
-    fromMarioSym (varMapOfFrame fr) (toMarioSym (varMapOfFrame fr) s) = s := by
+/-- Roundtrip for symbols: fromDeclarativeSym inverts toDeclarativeSym for frame-based maps. -/
+theorem fromDeclarativeSym_toDeclarativeSym_frame {fr : Frame} {s : Sym} :
+    fromDeclarativeSym (varMapOfFrame fr) (toDeclarativeSym (varMapOfFrame fr) s) = s := by
   let vm := varMapOfFrame fr
-  simp only [fromMarioSym, toMarioSym]
+  simp only [fromDeclarativeSym, toDeclarativeSym]
   match h_find : findVR vm ⟨s⟩ with
   | none =>
-      -- s is a constant, toMarioSym returns .const s
+      -- s is a constant, toDeclarativeSym returns .const s
       rfl
   | some vr =>
-      -- s is a variable, toMarioSym returns .var vr
+      -- s is a variable, toDeclarativeSym returns .var vr
       -- findVar vm vr should return ⟨s⟩
       have h_inv := findVR_findVar_inverse_frame h_find
       simp only [h_inv]
 
-/-- Roundtrip for expressions: fromMarioExpr inverts exprToMarioExpr. -/
-theorem fromMarioExpr_exprToMarioExpr_frame {fr : Frame} {syms : List Sym} :
-    fromMarioExpr (varMapOfFrame fr) (syms.map (toMarioSym (varMapOfFrame fr))) = syms := by
-  unfold fromMarioExpr
+/-- Roundtrip for expressions: fromDeclarativeExpr inverts exprToDeclarativeExpr. -/
+theorem fromDeclarativeExpr_exprToDeclarativeExpr_frame {fr : Frame} {syms : List Sym} :
+    fromDeclarativeExpr (varMapOfFrame fr) (syms.map (toDeclarativeSym (varMapOfFrame fr))) = syms := by
+  unfold fromDeclarativeExpr
   rw [List.map_map]
-  -- Goal: (fromMarioSym vm ∘ toMarioSym vm) applied to each = id
-  have h : fromMarioSym (varMapOfFrame fr) ∘ toMarioSym (varMapOfFrame fr) = id := by
+  -- Goal: (fromDeclarativeSym vm ∘ toDeclarativeSym vm) applied to each = id
+  have h : fromDeclarativeSym (varMapOfFrame fr) ∘ toDeclarativeSym (varMapOfFrame fr) = id := by
     funext s
-    exact fromMarioSym_toMarioSym_frame
+    exact fromDeclarativeSym_toDeclarativeSym_frame
   rw [h, List.map_id]
 
-/-- Roundtrip for formulas: fromMarioFormula inverts exprToFormula. -/
-theorem fromMarioFormula_exprToFormula_frame {fr : Frame} {e : Expr} :
-    fromMarioFormula (varMapOfFrame fr) (exprToFormula (varMapOfFrame fr) e) = e := by
+/-- Roundtrip for formulas: fromDeclarativeFormula inverts exprToFormula. -/
+theorem fromDeclarativeFormula_exprToFormula_frame {fr : Frame} {e : Expr} :
+    fromDeclarativeFormula (varMapOfFrame fr) (exprToFormula (varMapOfFrame fr) e) = e := by
   rcases e with ⟨⟨tc⟩, syms⟩
-  simp only [fromMarioFormula, exprToFormula, exprToMarioExpr,
-             fromMarioExpr_exprToMarioExpr_frame]
+  simp only [fromDeclarativeFormula, exprToFormula, exprToDeclarativeExpr,
+             fromDeclarativeExpr_exprToDeclarativeExpr_frame]
 
 /-- Inverse of findVR_findVar_inverse: if findVar succeeds, findVR succeeds.
     This requires that VRs map to unique variables. -/
-theorem findVar_findVR_inverse {vm : VarMap} {v : Variable} {vr : MarioVR}
+theorem findVar_findVR_inverse {vm : VarMap} {v : Variable} {vr : DeclarativeVR}
     (h_var_unique : ∀ v' vr' vr'', (v', vr') ∈ vm → (v', vr'') ∈ vm → vr' = vr'')
     (h_findVar : findVar vm vr = some v) :
     findVR vm v = some vr := by
@@ -848,7 +844,7 @@ theorem findVar_findVR_inverse {vm : VarMap} {v : Variable} {vr : MarioVR}
 
 /-- Specialized inverse for varMapOfFrame: each variable maps to exactly one VR.
     Requires FloatVarNoDup to ensure each variable appears at most once in the varmap. -/
-theorem findVar_findVR_inverse_frame {fr : Frame} {v : Variable} {vr : MarioVR}
+theorem findVar_findVR_inverse_frame {fr : Frame} {v : Variable} {vr : DeclarativeVR}
     (h_nodup : FloatVarNoDup fr)
     (h_findVar : findVar (varMapOfFrame fr) vr = some v) :
     findVR (varMapOfFrame fr) v = some vr := by
@@ -859,45 +855,45 @@ theorem findVar_findVR_inverse_frame {fr : Frame} {v : Variable} {vr : MarioVR}
     exact varMapOfFrameAux_var_unique_nodup h_nodup h1 h2
   · exact h_findVar
 
-/-- Reverse roundtrip for symbols: toMarioSym inverts fromMarioSym for VRs in the map.
-    If findVar vm vr = some v, then toMarioSym vm (fromMarioSym vm (.var vr)) = .var vr. -/
-theorem toMarioSym_fromMarioSym_var {fr : Frame} {vr : MarioVR} {v : Variable}
+/-- Reverse roundtrip for symbols: toDeclarativeSym inverts fromDeclarativeSym for VRs in the map.
+    If findVar vm vr = some v, then toDeclarativeSym vm (fromDeclarativeSym vm (.var vr)) = .var vr. -/
+theorem toDeclarativeSym_fromDeclarativeSym_var {fr : Frame} {vr : DeclarativeVR} {v : Variable}
     (h_nodup : FloatVarNoDup fr)
     (h_find : findVar (varMapOfFrame fr) vr = some v) :
-    toMarioSym (varMapOfFrame fr) (fromMarioSym (varMapOfFrame fr) (.var vr)) =
+    toDeclarativeSym (varMapOfFrame fr) (fromDeclarativeSym (varMapOfFrame fr) (.var vr)) =
     Metamath.Sym.var vr := by
-  simp only [fromMarioSym, h_find, toMarioSym]
+  simp only [fromDeclarativeSym, h_find, toDeclarativeSym]
   have h_inv := findVar_findVR_inverse_frame h_nodup h_find
   simp only [h_inv]
 
-/-- Reverse roundtrip: exprToMarioExpr inverts fromMarioExpr for well-formed expressions.
+/-- Reverse roundtrip: exprToDeclarativeExpr inverts fromDeclarativeExpr for well-formed expressions.
     A Mario expression is well-formed w.r.t. a frame if all its VRs are in the VarMap. -/
-def MarioExprWellFormed (fr : Frame) (me : MarioExpr) : Prop :=
+def DeclarativeExprWellFormed (fr : Frame) (me : DeclarativeExpr) : Prop :=
   ∀ vr, vr ∈' me → ∃ v, findVar (varMapOfFrame fr) vr = some v
 
 /-- Constants in a Mario expression don't clash with variable names in the frame.
     This is guaranteed by Metamath's global separation of constants and variables. -/
-def MarioExprConstSeparated (fr : Frame) (me : MarioExpr) : Prop :=
+def DeclarativeExprConstSeparated (fr : Frame) (me : DeclarativeExpr) : Prop :=
   ∀ s, Metamath.Sym.const s ∈ me → findVR (varMapOfFrame fr) ⟨s⟩ = none
 
-theorem exprToMarioExpr_fromMarioExpr_wellFormed {fr : Frame} {me : MarioExpr}
+theorem exprToDeclarativeExpr_fromDeclarativeExpr_wellFormed {fr : Frame} {me : DeclarativeExpr}
     (h_nodup : FloatVarNoDup fr)
-    (h_wf : MarioExprWellFormed fr me)
-    (h_sep : MarioExprConstSeparated fr me) :
-    (fromMarioExpr (varMapOfFrame fr) me).map (toMarioSym (varMapOfFrame fr)) = me := by
+    (h_wf : DeclarativeExprWellFormed fr me)
+    (h_sep : DeclarativeExprConstSeparated fr me) :
+    (fromDeclarativeExpr (varMapOfFrame fr) me).map (toDeclarativeSym (varMapOfFrame fr)) = me := by
   let vm := varMapOfFrame fr
-  unfold fromMarioExpr
+  unfold fromDeclarativeExpr
   rw [List.map_map]
   induction me with
   | nil => rfl
   | cons sym rest ih =>
       simp only [List.map_cons]
       congr 1
-      · -- Head: toMarioSym vm (fromMarioSym vm sym) = sym
+      · -- Head: toDeclarativeSym vm (fromDeclarativeSym vm sym) = sym
         cases sym with
         | const c =>
             -- Constants: use separation to show findVR returns none
-            simp only [Function.comp_apply, fromMarioSym, toMarioSym]
+            simp only [Function.comp_apply, fromDeclarativeSym, toDeclarativeSym]
             have h_const_mem : Metamath.Sym.const c ∈ (Metamath.Sym.const c :: rest) :=
               List.Mem.head rest
             have h_none := h_sep c h_const_mem
@@ -909,47 +905,47 @@ theorem exprToMarioExpr_fromMarioExpr_wellFormed {fr : Frame} {me : MarioExpr}
               unfold Metamath.Expr.mem
               exact .head ..
             obtain ⟨v', h_findVar⟩ := h_wf vr' h_mem
-            exact toMarioSym_fromMarioSym_var h_nodup h_findVar
+            exact toDeclarativeSym_fromDeclarativeSym_var h_nodup h_findVar
       · -- Tail: apply IH
-        have h_wf_tail : MarioExprWellFormed fr rest := fun vr' h_mem =>
+        have h_wf_tail : DeclarativeExprWellFormed fr rest := fun vr' h_mem =>
           h_wf vr' (by unfold Metamath.Expr.mem at h_mem ⊢; exact List.mem_cons_of_mem _ h_mem)
-        have h_sep_tail : MarioExprConstSeparated fr rest := fun s h_mem =>
+        have h_sep_tail : DeclarativeExprConstSeparated fr rest := fun s h_mem =>
           h_sep s (List.mem_cons_of_mem _ h_mem)
         exact ih h_wf_tail h_sep_tail
 
-/-- Substitution roundtrip: toMarioSubst inverts marioSubstToSpec on VRs in the axiom frame.
+/-- Substitution roundtrip: toDeclarativeSubst inverts declarativeSubstToSpec on VRs in the axiom frame.
     When σ is a Mario substitution, and vr is a VR from vmAx with findVar vmAx vr = some v,
-    then toMarioSubst vmAx vm (marioSubstToSpec vmAx vm σ) vr = σ vr
+    then toDeclarativeSubst vmAx vm (declarativeSubstToSpec vmAx vm σ) vr = σ vr
     provided σ vr is well-formed with respect to vm. -/
-theorem toMarioSubst_marioSubstToSpec_roundtrip {frAx fr : Frame} {σ : MarioVR → MarioExpr}
-    {vr : MarioVR} {v : Variable}
+theorem toDeclarativeSubst_declarativeSubstToSpec_roundtrip {frAx fr : Frame} {σ : DeclarativeVR → DeclarativeExpr}
+    {vr : DeclarativeVR} {v : Variable}
     (h_nodup_ax : FloatVarNoDup frAx)
     (h_nodup : FloatVarNoDup fr)
     (h_findVar : findVar (varMapOfFrame frAx) vr = some v)
-    (h_wf : MarioExprWellFormed fr (σ vr))
-    (h_sep : MarioExprConstSeparated fr (σ vr)) :
-    toMarioSubst (varMapOfFrame frAx) (varMapOfFrame fr)
-                 (marioSubstToSpec (varMapOfFrame frAx) (varMapOfFrame fr) σ) vr = σ vr := by
+    (h_wf : DeclarativeExprWellFormed fr (σ vr))
+    (h_sep : DeclarativeExprConstSeparated fr (σ vr)) :
+    toDeclarativeSubst (varMapOfFrame frAx) (varMapOfFrame fr)
+                 (declarativeSubstToSpec (varMapOfFrame frAx) (varMapOfFrame fr) σ) vr = σ vr := by
   let vmAx := varMapOfFrame frAx
   let vm := varMapOfFrame fr
-  let σ' := marioSubstToSpec vmAx vm σ
-  -- toMarioSubst vmAx vm σ' vr = exprToMarioExpr vm (σ' v) when findVar succeeds
-  simp only [toMarioSubst, h_findVar]
-  -- σ' v = marioSubstToSpec vmAx vm σ v
+  let σ' := declarativeSubstToSpec vmAx vm σ
+  -- toDeclarativeSubst vmAx vm σ' vr = exprToDeclarativeExpr vm (σ' v) when findVar succeeds
+  simp only [toDeclarativeSubst, h_findVar]
+  -- σ' v = declarativeSubstToSpec vmAx vm σ v
   -- Since findVar vmAx vr = some v, by inverse lemma findVR vmAx v = some vr
   have h_findVR := findVar_findVR_inverse_frame h_nodup_ax h_findVar
-  -- marioSubstToSpec vmAx vm σ v = ⟨vr.type, fromMarioExpr vm (σ vr)⟩
-  simp only [marioSubstToSpec, h_findVR]
-  -- exprToMarioExpr vm ⟨⟨vr.type⟩, fromMarioExpr vm (σ vr)⟩
-  -- = (fromMarioExpr vm (σ vr)).map (toMarioSym vm)
-  simp only [exprToMarioExpr]
+  -- declarativeSubstToSpec vmAx vm σ v = ⟨vr.type, fromDeclarativeExpr vm (σ vr)⟩
+  simp only [declarativeSubstToSpec, h_findVR]
+  -- exprToDeclarativeExpr vm ⟨⟨vr.type⟩, fromDeclarativeExpr vm (σ vr)⟩
+  -- = (fromDeclarativeExpr vm (σ vr)).map (toDeclarativeSym vm)
+  simp only [exprToDeclarativeExpr]
   -- Apply the reverse roundtrip
-  exact exprToMarioExpr_fromMarioExpr_wellFormed h_nodup h_wf h_sep
+  exact exprToDeclarativeExpr_fromDeclarativeExpr_wellFormed h_nodup h_wf h_sep
 
 /-- Substitution extensionality: if two substitutions agree on all VRs in an expression,
     they produce the same result. -/
-theorem Expr_subst_ext {σ₁ σ₂ : MarioVR → MarioExpr} :
-    {e : MarioExpr} →
+theorem Expr_subst_ext {σ₁ σ₂ : DeclarativeVR → DeclarativeExpr} :
+    {e : DeclarativeExpr} →
     (∀ vr, vr ∈' e → σ₁ vr = σ₂ vr) →
     e.subst σ₁ = e.subst σ₂
   | [], _ => rfl
@@ -966,7 +962,7 @@ theorem Expr_subst_ext {σ₁ σ₂ : MarioVR → MarioExpr} :
       rw [h_head, h_tail]
 
 /-- If findVar succeeds, the pair is in the map. -/
-theorem findVar_mem_of_some {vm : VarMap} {vr : MarioVR} {v : Variable}
+theorem findVar_mem_of_some {vm : VarMap} {vr : DeclarativeVR} {v : Variable}
     (h_find : findVar vm vr = some v) :
     (v, vr) ∈ vm := by
   unfold findVar at h_find
@@ -1032,7 +1028,7 @@ theorem varMapOfFrameAux_vars {n : Nat} {xs : List (Constant × Variable)} {v : 
             exact ⟨vr, Or.inr h_vr_mem⟩
 
 /-- If findVR succeeds for varMapOfFrame, the variable is in Frame.vars. -/
-theorem findVR_in_vars {fr : Frame} {v : Variable} {vr : MarioVR}
+theorem findVR_in_vars {fr : Frame} {v : Variable} {vr : DeclarativeVR}
     (h : findVR (varMapOfFrame fr) v = some vr) :
     v ∈ fr.vars := by
   unfold findVR at h
@@ -1058,61 +1054,20 @@ theorem findVR_in_vars {fr : Frame} {v : Variable} {vr : MarioVR}
       rw [floatList_map_snd_eq_vars] at h_v_in_aux
       exact h_v_in_aux
 
-/-- Equivalence between v ∈ e.vars and v ∈' e (Expr.mem). -/
-theorem Expr_vars_iff_mem {vr : MarioVR} {e : MarioExpr} : vr ∈ e.vars ↔ vr ∈' e := by
-  induction e with
-  | nil =>
-      -- Both sides are membership in empty list, hence both False
-      simp only [Metamath.Expr.vars, Metamath.Expr.mem]
-      -- vr ∈ [] (List VR) ↔ Sym.var vr ∈ [] (List Sym)
-      constructor <;> (intro h; cases h)
-  | cons hd tl ih =>
-      cases hd with
-      | const c =>
-          -- e.vars = tl.vars (const is skipped)
-          -- e.mem = Sym.var vr ∈ (Sym.const c :: tl)
-          simp only [Metamath.Expr.vars, Metamath.Expr.mem]
-          constructor
-          · intro h
-            -- h : vr ∈ tl.vars, by IH: vr ∈' tl = Sym.var vr ∈ tl
-            exact List.Mem.tail _ (ih.mp h)
-          · intro h
-            -- h : Sym.var vr ∈ (Sym.const c :: tl)
-            -- Since Sym.var vr ≠ Sym.const c, must be in tail
-            match h with
-            | List.Mem.tail _ h_tail => exact ih.mpr h_tail
-      | var v =>
-          -- e.vars = v :: tl.vars
-          -- e.mem = Sym.var vr ∈ (Sym.var v :: tl)
-          simp only [Metamath.Expr.vars, Metamath.Expr.mem]
-          constructor
-          · intro h
-            cases h with
-            | head =>
-                exact List.Mem.head _
-            | tail _ h_tail =>
-                exact List.Mem.tail _ (ih.mp h_tail)
-          · intro h
-            cases h with
-            | head =>
-                exact List.Mem.head _
-            | tail _ h_tail =>
-                exact List.Mem.tail _ (ih.mpr h_tail)
-
-/-- Extract the source symbol from membership in exprToMarioExpr.
-    If vr ∈' exprToMarioExpr vm e, then there exists a symbol s in e.syms
+/-- Extract the source symbol from membership in exprToDeclarativeExpr.
+    If vr ∈' exprToDeclarativeExpr vm e, then there exists a symbol s in e.syms
     such that findVR vm (Variable.mk s) = some vr. -/
-theorem exprToMarioExpr_mem_extract {vm : VarMap} {e : Expr} {vr : MarioVR}
-    (h_mem : vr ∈' exprToMarioExpr vm e) :
+theorem exprToDeclarativeExpr_mem_extract {vm : VarMap} {e : Expr} {vr : DeclarativeVR}
+    (h_mem : vr ∈' exprToDeclarativeExpr vm e) :
     ∃ s, s ∈ e.syms ∧ findVR vm (Variable.mk s) = some vr := by
-  -- h_mem : Metamath.Expr.mem (exprToMarioExpr vm e) vr
-  -- = Metamath.Sym.var vr ∈ e.syms.map (fun s => toMarioSym vm s)
-  unfold exprToMarioExpr at h_mem
+  -- h_mem : Metamath.Expr.mem (exprToDeclarativeExpr vm e) vr
+  -- = Metamath.Sym.var vr ∈ e.syms.map (fun s => toDeclarativeSym vm s)
+  unfold exprToDeclarativeExpr at h_mem
   unfold Metamath.Expr.mem at h_mem
-  -- h_mem : Metamath.Sym.var vr ∈ List.map (toMarioSym vm) e.syms
+  -- h_mem : Metamath.Sym.var vr ∈ List.map (toDeclarativeSym vm) e.syms
   obtain ⟨s, h_s_in, h_s_eq⟩ := List.mem_map.mp h_mem
-  -- h_s_eq : toMarioSym vm s = Metamath.Sym.var vr
-  unfold toMarioSym at h_s_eq
+  -- h_s_eq : toDeclarativeSym vm s = Metamath.Sym.var vr
+  unfold toDeclarativeSym at h_s_eq
   match h_find : findVR vm (Variable.mk s) with
   | some vr' =>
       simp only [h_find] at h_s_eq
@@ -1128,7 +1083,7 @@ theorem exprToMarioExpr_mem_extract {vm : VarMap} {e : Expr} {vr : MarioVR}
     they must be the same variable. -/
 theorem findVR_injective {vm : VarMap}
     (h_unique : ∀ v' v'' vr', (v', vr') ∈ vm → (v'', vr') ∈ vm → v' = v'')
-    {v1 v2 : Variable} {vr : MarioVR}
+    {v1 v2 : Variable} {vr : DeclarativeVR}
     (h_v1 : findVR vm v1 = some vr)
     (h_v2 : findVR vm v2 = some vr) :
     v1 = v2 := by
@@ -1163,25 +1118,25 @@ theorem findVR_injective {vm : VarMap}
           exact h_unique v1 v2 vr h_p1_mem h_p2_mem
 
 /-- findVR is injective for varMapOfFrame. -/
-theorem findVR_injective_frame {fr : Frame} {v1 v2 : Variable} {vr : MarioVR}
+theorem findVR_injective_frame {fr : Frame} {v1 v2 : Variable} {vr : DeclarativeVR}
     (h_v1 : findVR (varMapOfFrame fr) v1 = some vr)
     (h_v2 : findVR (varMapOfFrame fr) v2 = some vr) :
     v1 = v2 :=
   findVR_injective (fun _ _ _ h1 h2 => varMapOfFrame_vr_unique h1 h2) h_v1 h_v2
 
-/-- toMarioSym is injective for varMapOfFrame.
+/-- toDeclarativeSym is injective for varMapOfFrame.
     Key cases:
     - Both const: trivially equal
     - Both var: by findVR_injective_frame
     - Mixed: impossible since .const ≠ .var -/
-theorem toMarioSym_inj_frame {fr : Frame} {s1 s2 : String}
-    (h_eq : toMarioSym (varMapOfFrame fr) s1 = toMarioSym (varMapOfFrame fr) s2) :
+theorem toDeclarativeSym_inj_frame {fr : Frame} {s1 s2 : String}
+    (h_eq : toDeclarativeSym (varMapOfFrame fr) s1 = toDeclarativeSym (varMapOfFrame fr) s2) :
     s1 = s2 := by
   let vm := varMapOfFrame fr
   let v1 : Variable := ⟨s1⟩
   let v2 : Variable := ⟨s2⟩
-  -- Unfold toMarioSym to see the match structure
-  simp only [toMarioSym] at h_eq
+  -- Unfold toDeclarativeSym to see the match structure
+  simp only [toDeclarativeSym] at h_eq
   -- Split on findVR results
   generalize h_find1 : findVR vm v1 = r1 at h_eq
   generalize h_find2 : findVR vm v2 = r2 at h_eq
@@ -1203,8 +1158,8 @@ theorem toMarioSym_inj_frame {fr : Frame} {s1 s2 : String}
       exact congrArg Variable.v h_v_eq
 
 /-- If two symbol lists have equal Mario expressions, the original lists are equal. -/
-theorem exprToMarioExpr_syms_inj_frame {fr : Frame} {syms1 syms2 : List String}
-    (h_eq : syms1.map (toMarioSym (varMapOfFrame fr)) = syms2.map (toMarioSym (varMapOfFrame fr))) :
+theorem exprToDeclarativeExpr_syms_inj_frame {fr : Frame} {syms1 syms2 : List String}
+    (h_eq : syms1.map (toDeclarativeSym (varMapOfFrame fr)) = syms2.map (toDeclarativeSym (varMapOfFrame fr))) :
     syms1 = syms2 := by
   -- Induct on syms1 with generalized syms2
   induction syms1 generalizing syms2 with
@@ -1222,7 +1177,7 @@ theorem exprToMarioExpr_syms_inj_frame {fr : Frame} {syms1 syms2 : List String}
       | cons s2 rest2 =>
           -- Both have heads: (s1 :: rest1).map = (s2 :: rest2).map
           simp only [List.map_cons, List.cons.injEq] at h_eq
-          have h_head := toMarioSym_inj_frame h_eq.1
+          have h_head := toDeclarativeSym_inj_frame h_eq.1
           have h_tail := ih h_eq.2
           simp only [h_head, h_tail]
 
@@ -1234,9 +1189,9 @@ theorem exprToFormula_eq_of_eq_frame {fr : Frame} {e e' : Expr}
   unfold exprToFormula at h_eq
   have h := Prod.mk.inj h_eq
   -- h.1 : e.typecode.c = e'.typecode.c
-  -- h.2 : exprToMarioExpr vm e = exprToMarioExpr vm e'
-  unfold exprToMarioExpr at h
-  have h_syms := exprToMarioExpr_syms_inj_frame h.2
+  -- h.2 : exprToDeclarativeExpr vm e = exprToDeclarativeExpr vm e'
+  unfold exprToDeclarativeExpr at h
+  have h_syms := exprToDeclarativeExpr_syms_inj_frame h.2
   -- h_syms : e.syms = e'.syms
   have h_tc : e.typecode = e'.typecode := by
     cases he : e.typecode
@@ -1249,19 +1204,19 @@ theorem exprToFormula_eq_of_eq_frame {fr : Frame} {e e' : Expr}
   simp only at h_tc h_syms
   simp only [h_tc, h_syms]
 
-/-- Lift dvRel to dvListToMarioDJ: if v and w are disjoint via dvRel, and both
-    map to VRs via findVR, then the VRs are disjoint in dvListToMarioDJ.
+/-- Lift dvRel to dvListToDeclarativeDJ: if v and w are disjoint via dvRel, and both
+    map to VRs via findVR, then the VRs are disjoint in dvListToDeclarativeDJ.
     Requires variable-to-VR uniqueness: different variables map to different VRs. -/
-theorem dvRel_to_dvListToMarioDJ {vm : VarMap} {dv : List (Variable × Variable)}
-    {v w : Variable} {vr1 vr2 : MarioVR}
+theorem dvRel_to_dvListToDeclarativeDJ {vm : VarMap} {dv : List (Variable × Variable)}
+    {v w : Variable} {vr1 vr2 : DeclarativeVR}
     (h_unique : ∀ v' v'' vr', findVR vm v' = some vr' → findVR vm v'' = some vr' → v' = v'')
     (h_dvRel : Spec.dvRel dv v w)
     (h_v : findVR vm v = some vr1)
     (h_w : findVR vm w = some vr2) :
-    (dvListToMarioDJ vm dv).disj vr1 vr2 := by
+    (dvListToDeclarativeDJ vm dv).disj vr1 vr2 := by
   unfold Spec.dvRel at h_dvRel
   obtain ⟨h_neq, h_mem_or⟩ := h_dvRel
-  unfold dvListToMarioDJ
+  unfold dvListToDeclarativeDJ
   simp only [Metamath.DJ.mk']
   constructor
   · -- vr1 ≠ vr2 follows from v ≠ w and injectivity via h_unique
@@ -1282,20 +1237,20 @@ theorem dvRel_to_dvListToMarioDJ {vm : VarMap} {dv : List (Variable × Variable)
         apply List.mem_filterMap.mpr
         exact ⟨(w, v), h_rev, by simp only [h_w, h_v]⟩
 
-/-- Inverse of dvRel_to_dvListToMarioDJ: extract dvRel from dvListToMarioDJ membership.
-    If two VRs are disjoint in dvListToMarioDJ (constructed from a frame) and both map
+/-- Inverse of dvRel_to_dvListToDeclarativeDJ: extract dvRel from dvListToDeclarativeDJ membership.
+    If two VRs are disjoint in dvListToDeclarativeDJ (constructed from a frame) and both map
     back to variables via findVar, then those variables satisfy dvRel.
 
     This is parametrized by a Frame (not generic VarMap) to enable use of
     findVR_findVar_inverse_frame which provides the required uniqueness properties. -/
-theorem dvListToMarioDJ_to_dvRel {fr : Frame} {dv : List (Variable × Variable)}
-    {vr1 vr2 : MarioVR} {v1 v2 : Variable}
-    (h_disj : (dvListToMarioDJ (varMapOfFrame fr) dv).disj vr1 vr2)
+theorem dvListToDeclarativeDJ_to_dvRel {fr : Frame} {dv : List (Variable × Variable)}
+    {vr1 vr2 : DeclarativeVR} {v1 v2 : Variable}
+    (h_disj : (dvListToDeclarativeDJ (varMapOfFrame fr) dv).disj vr1 vr2)
     (h_v1 : findVar (varMapOfFrame fr) vr1 = some v1)
     (h_v2 : findVar (varMapOfFrame fr) vr2 = some v2) :
     Spec.dvRel dv v1 v2 := by
   let vm := varMapOfFrame fr
-  unfold dvListToMarioDJ at h_disj
+  unfold dvListToDeclarativeDJ at h_disj
   simp only [Metamath.DJ.mk'] at h_disj
   obtain ⟨h_vr_neq, h_mem_or⟩ := h_disj
   -- h_vr_neq : vr1 ≠ vr2
@@ -1424,27 +1379,27 @@ theorem dvListToMarioDJ_to_dvRel {fr : Frame} {dv : List (Variable × Variable)}
             rw [h_fv] at h_eq
             cases h_eq
 
-/-- Helper for fromMarioExpr membership: if a symbol x_s appears in fromMarioExpr vm me,
-    then there exists some MarioSym in me that maps to x_s via fromMarioSym. -/
-theorem fromMarioExpr_mem_exists_sym {vm : VarMap} {me : MarioExpr} {x_s : Sym}
-    (h_mem : x_s ∈ fromMarioExpr vm me) :
-    ∃ sym : MarioSym, sym ∈ me ∧ fromMarioSym vm sym = x_s := by
-  unfold fromMarioExpr at h_mem
+/-- Helper for fromDeclarativeExpr membership: if a symbol x_s appears in fromDeclarativeExpr vm me,
+    then there exists some DeclarativeSym in me that maps to x_s via fromDeclarativeSym. -/
+theorem fromDeclarativeExpr_mem_exists_sym {vm : VarMap} {me : DeclarativeExpr} {x_s : Sym}
+    (h_mem : x_s ∈ fromDeclarativeExpr vm me) :
+    ∃ sym : DeclarativeSym, sym ∈ me ∧ fromDeclarativeSym vm sym = x_s := by
+  unfold fromDeclarativeExpr at h_mem
   obtain ⟨sym, h_sym_in, h_eq⟩ := List.mem_map.mp h_mem
   exact ⟨sym, h_sym_in, h_eq⟩
 
 /-- Key lemma: if a variable v in varsInExpr (from a well-formed Mario expression)
     has a VR in the varMap, then .var vr appears in the expression.
 
-    **Hypothesis**: We work with exprToMarioExpr vm e, which ensures variables
+    **Hypothesis**: We work with exprToDeclarativeExpr vm e, which ensures variables
     are represented as .var, not .const.
 
     This is used in the dvOK inverse bridge where substitution results
-    come from exprToMarioExpr applied to database expressions. -/
-theorem exprToMarioExpr_varsInExpr_to_vr {fr : Frame} {e : Expr} {v : Variable} {vr : MarioVR}
+    come from exprToDeclarativeExpr applied to database expressions. -/
+theorem exprToDeclarativeExpr_varsInExpr_to_vr {fr : Frame} {e : Expr} {v : Variable} {vr : DeclarativeVR}
     (h_mem : v ∈ Spec.varsInExpr fr.vars e)
     (h_findVR : findVR (varMapOfFrame fr) v = some vr) :
-    vr ∈' exprToMarioExpr (varMapOfFrame fr) e := by
+    vr ∈' exprToDeclarativeExpr (varMapOfFrame fr) e := by
   let vm := varMapOfFrame fr
   unfold Spec.varsInExpr at h_mem
   simp only [List.mem_filterMap] at h_mem
@@ -1455,33 +1410,33 @@ theorem exprToMarioExpr_varsInExpr_to_vr {fr : Frame} {e : Expr} {v : Variable} 
   · -- Variable.mk s ∈ fr.vars, so h_v_eq gives Variable.mk s = v
     rw [if_pos h_cond] at h_v_eq
     have h_v_is_s : Variable.mk s = v := Option.some.inj h_v_eq
-    -- Goal: vr ∈' exprToMarioExpr vm e, which unfolds to Sym.var vr ∈ exprToMarioExpr vm e
-    -- Need to show: Sym.var vr ∈ e.syms.map (toMarioSym vm)
-    -- We have s ∈ e.syms and will show toMarioSym vm s = Sym.var vr
-    have h_toMario : toMarioSym (varMapOfFrame fr) s = Metamath.Sym.var vr := by
-      unfold toMarioSym
+    -- Goal: vr ∈' exprToDeclarativeExpr vm e, which unfolds to Sym.var vr ∈ exprToDeclarativeExpr vm e
+    -- Need to show: Sym.var vr ∈ e.syms.map (toDeclarativeSym vm)
+    -- We have s ∈ e.syms and will show toDeclarativeSym vm s = Sym.var vr
+    have h_toDeclarative : toDeclarativeSym (varMapOfFrame fr) s = Metamath.Sym.var vr := by
+      unfold toDeclarativeSym
       -- Goal: match findVR vm (Variable.mk s) with | some vr => .var vr | none => .const s = .var vr
       -- We have h_v_is_s : Variable.mk s = v, so findVR vm (Variable.mk s) = findVR vm v = some vr
       conv => lhs; rw [h_v_is_s]
       simp only [h_findVR]
-    rw [Metamath.Expr.mem, exprToMarioExpr]
-    -- Goal: Sym.var vr ∈ List.map (fun s => toMarioSym vm s) e.syms
-    -- We have s ∈ e.syms (h_s_in_syms) and toMarioSym vm s = .var vr (h_toMario)
-    exact List.mem_map.mpr ⟨s, h_s_in_syms, h_toMario⟩
+    rw [Metamath.Expr.mem, exprToDeclarativeExpr]
+    -- Goal: Sym.var vr ∈ List.map (fun s => toDeclarativeSym vm s) e.syms
+    -- We have s ∈ e.syms (h_s_in_syms) and toDeclarativeSym vm s = .var vr (h_toDeclarative)
+    exact List.mem_map.mpr ⟨s, h_s_in_syms, h_toDeclarative⟩
   · -- ¬(Variable.mk s ∈ fr.vars), so h_v_eq : none = some v (contradiction)
     rw [if_neg h_cond] at h_v_eq
     cases h_v_eq
 
-/-- If a variable v appears in varsInExpr from fromMarioFormula, and v is in fr.vars,
+/-- If a variable v appears in varsInExpr from fromDeclarativeFormula, and v is in fr.vars,
     then there exists a VR in the Mario expression that maps back to v.
 
     This is the key bridge for the dvOK inverse: we need to extract VRs from
     variables that appear in substitution results.
 
     Assumption: me contains no .const symbols whose names equal variable names in fr.vars.
-    This is a well-formedness assumption satisfied by expressions from toMarioSubst. -/
-theorem fromMarioFormula_varsInExpr_to_vr {fr : Frame} {me : MarioExpr} {v : Variable}
-    (h_mem : v ∈ Spec.varsInExpr fr.vars ⟨⟨""⟩, fromMarioExpr (varMapOfFrame fr) me⟩)
+    This is a well-formedness assumption satisfied by expressions from toDeclarativeSubst. -/
+theorem fromDeclarativeFormula_varsInExpr_to_vr {fr : Frame} {me : DeclarativeExpr} {v : Variable}
+    (h_mem : v ∈ Spec.varsInExpr fr.vars ⟨⟨""⟩, fromDeclarativeExpr (varMapOfFrame fr) me⟩)
     -- Well-formedness: constants in me don't have names in fr.vars
     (h_wf : ∀ c, Metamath.Sym.const c ∈ me → Variable.mk c ∉ fr.vars)
     -- Well-formedness: VRs in me are in the varmap (from well-formed provable expressions)
@@ -1491,18 +1446,18 @@ theorem fromMarioFormula_varsInExpr_to_vr {fr : Frame} {me : MarioExpr} {v : Var
   unfold Spec.varsInExpr at h_mem
   simp only [List.mem_filterMap] at h_mem
   obtain ⟨s, h_s_in_syms, h_v_eq⟩ := h_mem
-  -- h_s_in_syms : s ∈ fromMarioExpr vm me
+  -- h_s_in_syms : s ∈ fromDeclarativeExpr vm me
   -- h_v_eq : (if Variable.mk s ∈ fr.vars then some (Variable.mk s) else none) = some v
   by_cases h_cond : Variable.mk s ∈ fr.vars
   · rw [if_pos h_cond] at h_v_eq
     have h_v_is_s : Variable.mk s = v := Option.some.inj h_v_eq
-    -- s ∈ fromMarioExpr vm me
-    obtain ⟨sym, h_sym_in, h_sym_eq⟩ := fromMarioExpr_mem_exists_sym h_s_in_syms
-    -- sym ∈ me and fromMarioSym vm sym = s
+    -- s ∈ fromDeclarativeExpr vm me
+    obtain ⟨sym, h_sym_in, h_sym_eq⟩ := fromDeclarativeExpr_mem_exists_sym h_s_in_syms
+    -- sym ∈ me and fromDeclarativeSym vm sym = s
     cases sym with
     | const c =>
-        -- fromMarioSym vm (.const c) = c, so c = s
-        simp only [fromMarioSym] at h_sym_eq
+        -- fromDeclarativeSym vm (.const c) = c, so c = s
+        simp only [fromDeclarativeSym] at h_sym_eq
         -- h_sym_eq : c = s, so Variable.mk s = Variable.mk c
         -- h_cond : Variable.mk s ∈ fr.vars
         -- Rewrite s to c in h_cond
@@ -1511,7 +1466,7 @@ theorem fromMarioFormula_varsInExpr_to_vr {fr : Frame} {me : MarioExpr} {v : Var
         -- But h_wf says .const c ∈ me → Variable.mk c ∉ fr.vars
         exact absurd h_cond (h_wf c h_sym_in)
     | var vr' =>
-        simp only [fromMarioSym] at h_sym_eq
+        simp only [fromDeclarativeSym] at h_sym_eq
         -- h_sym_eq : (match findVar vm vr' with some v' => v'.v | none => "") = s
         refine ⟨vr', h_sym_in, ?_⟩
         -- findVar vm vr' = some v
@@ -1539,7 +1494,7 @@ theorem fromMarioFormula_varsInExpr_to_vr {fr : Frame} {me : MarioExpr} {v : Var
 
 /-- Mario's Expr.subst equals flatMap with the substitution function.
     This bridges the recursive definition to list operations. -/
-theorem marioExpr_subst_eq_flatMap (σ : MarioVR → MarioExpr) (e : MarioExpr) :
+theorem declarativeExpr_subst_eq_flatMap (σ : DeclarativeVR → DeclarativeExpr) (e : DeclarativeExpr) :
     Metamath.Expr.subst σ e = e.flatMap (fun sym =>
       match sym with
       | .var vr => σ vr
@@ -1555,21 +1510,21 @@ theorem marioExpr_subst_eq_flatMap (σ : MarioVR → MarioExpr) (e : MarioExpr) 
 
 /-- Auxiliary lemma for substitution correspondence on symbol lists.
     Works on a general list with the const-preservation hypothesis. -/
-theorem exprToMarioExpr_applySubst_eq_subst_aux
+theorem exprToDeclarativeExpr_applySubst_eq_subst_aux
     {frAx fr : Frame} {σ : Subst} (syms : List Sym)
     (h_const : ∀ s ∈ syms, Variable.mk s ∉ frAx.vars → Variable.mk s ∉ fr.vars) :
     let vmAx := varMapOfFrame frAx
     let vm := varMapOfFrame fr
-    let σ_mario := toMarioSubst vmAx vm σ
-    (syms.flatMap fun s => if Variable.mk s ∈ frAx.vars then (σ (Variable.mk s)).syms else [s]).map (toMarioSym vm) =
-    (syms.map (toMarioSym vmAx)).flatMap (fun sym =>
+    let σ_declarative := toDeclarativeSubst vmAx vm σ
+    (syms.flatMap fun s => if Variable.mk s ∈ frAx.vars then (σ (Variable.mk s)).syms else [s]).map (toDeclarativeSym vm) =
+    (syms.map (toDeclarativeSym vmAx)).flatMap (fun sym =>
       match sym with
-      | .var vr => σ_mario vr
+      | .var vr => σ_declarative vr
       | .const c => [.const c]) := by
   -- Define local abbreviations for clarity
   let vmAx := varMapOfFrame frAx
   let vm := varMapOfFrame fr
-  let σ_mario := toMarioSubst vmAx vm σ
+  let σ_declarative := toDeclarativeSubst vmAx vm σ
 
   induction syms with
   | nil =>
@@ -1586,9 +1541,9 @@ theorem exprToMarioExpr_applySubst_eq_subst_aux
       · -- Case: s is a variable in frAx.vars
         -- Get the VR for this variable from vmAx
         have ⟨vr, h_findVR⟩ := (varMapDomain_ofFrame frAx v).mp h_var
-        -- toMarioSym vmAx s = .var vr
-        have h_toMario : toMarioSym vmAx s = .var vr := by
-          unfold toMarioSym
+        -- toDeclarativeSym vmAx s = .var vr
+        have h_toDeclarative : toDeclarativeSym vmAx s = .var vr := by
+          unfold toDeclarativeSym
           simp only [vmAx]
           split
           · rename_i vr' h_eq
@@ -1601,9 +1556,9 @@ theorem exprToMarioExpr_applySubst_eq_subst_aux
             rw [h_findVR] at h_eq
             cases h_eq
 
-        -- σ_mario vr = exprToMarioExpr vm (σ v)
-        have h_sigma : σ_mario vr = exprToMarioExpr vm (σ v) := by
-          simp only [σ_mario, toMarioSubst]
+        -- σ_declarative vr = exprToDeclarativeExpr vm (σ v)
+        have h_sigma : σ_declarative vr = exprToDeclarativeExpr vm (σ v) := by
+          simp only [σ_declarative, toDeclarativeSubst]
           have h_findVar := findVR_findVar_inverse_frame h_findVR
           split
           · rename_i v' h_eq
@@ -1619,12 +1574,12 @@ theorem exprToMarioExpr_applySubst_eq_subst_aux
             cases h_eq
 
         simp only [v, h_var, ↓reduceIte]
-        rw [h_toMario]
+        rw [h_toDeclarative]
         -- Simplify the match on .var vr
         simp only []
-        simp only [σ_mario, vmAx, vm] at h_sigma
+        simp only [σ_declarative, vmAx, vm] at h_sigma
         rw [h_sigma]
-        simp only [exprToMarioExpr, v]
+        simp only [exprToDeclarativeExpr, v]
         congr 1
         exact ih h_const_rest
 
@@ -1637,8 +1592,8 @@ theorem exprToMarioExpr_applySubst_eq_subst_aux
               exact absurd h_in h_var
           | none => rfl
 
-        have h_toMario : toMarioSym vmAx s = .const s := by
-          unfold toMarioSym
+        have h_toDeclarative : toDeclarativeSym vmAx s = .const s := by
+          unfold toDeclarativeSym
           simp only [vmAx]
           split
           · rename_i vr h_eq
@@ -1648,9 +1603,9 @@ theorem exprToMarioExpr_applySubst_eq_subst_aux
           · rfl
 
         simp only [v, h_var, ↓reduceIte, List.map]
-        rw [h_toMario]
+        rw [h_toDeclarative]
 
-        -- Now we need toMarioSym vm s = .const s (constant in axiom is constant in caller)
+        -- Now we need toDeclarativeSym vm s = .const s (constant in axiom is constant in caller)
         -- Use h_const to show s is also not a variable in fr
         have h_s_in_syms : s ∈ s :: rest := by simp
         have h_var_fr : Variable.mk s ∉ fr.vars := h_const s h_s_in_syms h_var
@@ -1663,8 +1618,8 @@ theorem exprToMarioExpr_applySubst_eq_subst_aux
               exact absurd h_in h_var_fr
           | none => rfl
 
-        have h_toMario' : toMarioSym vm s = .const s := by
-          unfold toMarioSym
+        have h_toDeclarative' : toDeclarativeSym vm s = .const s := by
+          unfold toDeclarativeSym
           simp only [vm]
           split
           · rename_i vr h_eq
@@ -1673,7 +1628,7 @@ theorem exprToMarioExpr_applySubst_eq_subst_aux
             cases h_eq
           · rfl
 
-        rw [h_toMario']
+        rw [h_toDeclarative']
         simp only [List.singleton_append]
         congr 1
         exact ih h_const_rest
@@ -1684,30 +1639,30 @@ theorem exprToMarioExpr_applySubst_eq_subst_aux
     Requires database well-formedness, which ensures that constants are global:
     if a symbol appears in an expression and has no floating hypothesis in that
     frame, then it's a constant and cannot be a variable in any other frame. -/
-theorem exprToMarioExpr_applySubst_eq_subst
+theorem exprToDeclarativeExpr_applySubst_eq_subst
     {Γ : Database} {consts : ConstSet} {l : Label} {frAx fr : Frame} {σ : Subst} {eAx : Expr}
     (h_wf : Spec.WellFormedDatabase Γ consts)
     (h_lookup : Γ l = some (frAx, eAx))
     (h_fr_disjoint : Spec.FrameVarsDisjointConsts consts fr) :
-    exprToMarioExpr (varMapOfFrame fr) (Spec.applySubst frAx.vars σ eAx) =
-    Metamath.Expr.subst (toMarioSubst (varMapOfFrame frAx) (varMapOfFrame fr) σ)
-                        (exprToMarioExpr (varMapOfFrame frAx) eAx) := by
+    exprToDeclarativeExpr (varMapOfFrame fr) (Spec.applySubst frAx.vars σ eAx) =
+    Metamath.Expr.subst (toDeclarativeSubst (varMapOfFrame frAx) (varMapOfFrame fr) σ)
+                        (exprToDeclarativeExpr (varMapOfFrame frAx) eAx) := by
   -- Strategy:
   -- 1. Unfold LHS to get flatMap form
-  -- 2. Rewrite RHS using marioExpr_subst_eq_flatMap to get flatMap form
+  -- 2. Rewrite RHS using declarativeExpr_subst_eq_flatMap to get flatMap form
   -- 3. Apply aux lemma (with h_const from well-formedness)
 
   let vmAx := varMapOfFrame frAx
   let vm := varMapOfFrame fr
-  let σ_mario := toMarioSubst vmAx vm σ
+  let σ_declarative := toDeclarativeSubst vmAx vm σ
 
-  -- LHS unfolds to: (eAx.syms.flatMap ...).map (toMarioSym vm)
-  unfold exprToMarioExpr Spec.applySubst
+  -- LHS unfolds to: (eAx.syms.flatMap ...).map (toDeclarativeSym vm)
+  unfold exprToDeclarativeExpr Spec.applySubst
   simp only []
 
-  -- RHS is Expr.subst σ_mario (eAx.syms.map (toMarioSym vmAx))
-  -- Rewrite using marioExpr_subst_eq_flatMap
-  rw [marioExpr_subst_eq_flatMap]
+  -- RHS is Expr.subst σ_declarative (eAx.syms.map (toDeclarativeSym vmAx))
+  -- Rewrite using declarativeExpr_subst_eq_flatMap
+  rw [declarativeExpr_subst_eq_flatMap]
 
   -- Now apply aux lemma
   have h_const : ∀ s ∈ eAx.syms, Variable.mk s ∉ frAx.vars → Variable.mk s ∉ fr.vars := by
@@ -1716,91 +1671,138 @@ theorem exprToMarioExpr_applySubst_eq_subst
       Spec.const_global_of_wellFormed h_wf h_lookup s h_s_in h_not_var
     have h_disj := h_fr_disjoint (Variable.mk s) h_in_fr
     exact (h_disj h_const).elim
-  exact exprToMarioExpr_applySubst_eq_subst_aux eAx.syms h_const
+  exact exprToDeclarativeExpr_applySubst_eq_subst_aux eAx.syms h_const
 
 /-- Substitution correspondence for essential hypothesis expressions. -/
-theorem exprToMarioExpr_applySubst_eq_subst_hyp
+theorem exprToDeclarativeExpr_applySubst_eq_subst_hyp
     {Γ : Database} {consts : ConstSet} {l : Label} {frAx fr : Frame} {σ : Subst} {eAx e_hyp : Expr}
     (h_wf : Spec.WellFormedDatabase Γ consts)
     (h_lookup : Γ l = some (frAx, eAx))
     (h_hyp_in : Hyp.essential e_hyp ∈ frAx.hyps)
     (h_fr_disjoint : Spec.FrameVarsDisjointConsts consts fr) :
-    exprToMarioExpr (varMapOfFrame fr) (Spec.applySubst frAx.vars σ e_hyp) =
-    Metamath.Expr.subst (toMarioSubst (varMapOfFrame frAx) (varMapOfFrame fr) σ)
-                        (exprToMarioExpr (varMapOfFrame frAx) e_hyp) := by
+    exprToDeclarativeExpr (varMapOfFrame fr) (Spec.applySubst frAx.vars σ e_hyp) =
+    Metamath.Expr.subst (toDeclarativeSubst (varMapOfFrame frAx) (varMapOfFrame fr) σ)
+                        (exprToDeclarativeExpr (varMapOfFrame frAx) e_hyp) := by
   let vmAx := varMapOfFrame frAx
   let vm := varMapOfFrame fr
-  let σ_mario := toMarioSubst vmAx vm σ
-  unfold exprToMarioExpr Spec.applySubst
+  let σ_declarative := toDeclarativeSubst vmAx vm σ
+  unfold exprToDeclarativeExpr Spec.applySubst
   simp only []
-  rw [marioExpr_subst_eq_flatMap]
+  rw [declarativeExpr_subst_eq_flatMap]
   have h_const : ∀ s ∈ e_hyp.syms, Variable.mk s ∉ frAx.vars → Variable.mk s ∉ fr.vars := by
     intro s h_s_in h_not_var h_in_fr
     have h_const : consts s :=
       Spec.const_global_of_wellFormed_hyp h_wf h_lookup h_hyp_in s h_s_in h_not_var
     have h_disj := h_fr_disjoint (Variable.mk s) h_in_fr
     exact (h_disj h_const).elim
-  exact exprToMarioExpr_applySubst_eq_subst_aux e_hyp.syms h_const
+  exact exprToDeclarativeExpr_applySubst_eq_subst_aux e_hyp.syms h_const
 
-/-! ## Derivation-Local Semantic Support
+/-! ## Assertions of a database are reducts -/
 
-`SupportedProvable` is Mario's `Provable` relation strengthened at `var` leaves:
-each variable used in the derivation must appear in the frame's floating hypothesis
-map.  This is the exact condition needed for completeness — the operational verifier
-requires every variable to be explicitly typed in the frame — and it is checked
-locally per derivation rather than globally per frame. -/
+/-- Variables occurring in the hypotheses of a context. -/
+def hypVars (context : Metamath.Context) : List DeclarativeVR :=
+  context.hyps.flatMap fun h => h.2.vars
 
-/-- Mario's `Provable` with explicit frame-support witnesses on `var` leaves.
-    Every variable in the derivation must be found in `varMapOfFrame fr`. -/
-inductive SupportedProvable (Γ : Database) (fr : Frame) : MarioFormula → Prop
-  | hyp (h) : h ∈ (frameToContext fr).hyps → SupportedProvable Γ fr h
-  | var (v : MarioVR) :
-      (∃ v' : Variable, findVar (varMapOfFrame fr) v = some v') →
-      SupportedProvable Γ fr v
-  | ax (σ) {ax} :
-      dbToAxioms Γ ax →
-      ax.ctx.dj.subst σ (frameToContext fr).dj →
-      (∀ h ∈ ax.ctx.hyps, SupportedProvable Γ fr (h.subst σ)) →
-      (∀ v ∈ ax.vars, SupportedProvable Γ fr (v.type, σ v)) →
-      (∀ v ∈ ax.vars, MarioExprWellFormed fr (σ v)) →
-      SupportedProvable Γ fr (ax.fmla.subst σ)
+/-- A variable the frame map assigns to a floating hypothesis occurs in that
+hypothesis. -/
+theorem mem_hypVars_of_findVR {fr : Frame} {v : Variable} {x : DeclarativeVR}
+    (h : findVR (varMapOfFrame fr) v = some x) :
+    x ∈ hypVars (frameToContext fr) := by
+  obtain ⟨c, hfloat, _⟩ := mem_varMapOfFrame_sound_typed (findVR_mem_of_some h)
+  refine List.mem_flatMap.mpr ⟨_, hypToDeclarativeFormula_mem hfloat, ?_⟩
+  simp [hypToDeclarativeFormula, h, Metamath.Expr.vars]
 
-/-- Forget support witnesses and recover Mario's canonical declarative provability. -/
-theorem SupportedProvable.toSemantic {Γ : Database} {fr : Frame} {fmla : MarioFormula}
-    (h : SupportedProvable Γ fr fmla) :
-    Semantic.Provable (dbToAxioms Γ) (frameToContext fr) fmla := by
-  induction h with
-  | hyp h h_in => exact Metamath.Provable.hyp h h_in
-  | var v _ => exact Metamath.Provable.var v
-  | ax σ h_ax h_dj h_hyps h_hyps_var _ ih_h ih_var =>
-      exact Metamath.Provable.ax σ h_ax h_dj
-        (fun h hh => ih_h h hh) (fun v hv => ih_var v hv)
+/-- Both variables of a converted `$d` pair occur in the frame's hypotheses. -/
+theorem dj_mem_hypVars {fr : Frame} {a b : DeclarativeVR}
+    (hab : (frameToContext fr).dj a b) :
+    a ∈ hypVars (frameToContext fr) ∧ b ∈ hypVars (frameToContext fr) := by
+  have key : ∀ {x y : DeclarativeVR},
+      (x, y) ∈ (fr.dv.filterMap fun p =>
+        match findVR (varMapOfFrame fr) p.1, findVR (varMapOfFrame fr) p.2 with
+        | some a, some b => some (a, b)
+        | _, _ => none) →
+      x ∈ hypVars (frameToContext fr) ∧ y ∈ hypVars (frameToContext fr) := by
+    intro x y hxy
+    obtain ⟨p, _hp, hmatch⟩ := List.mem_filterMap.mp hxy
+    cases h1 : findVR (varMapOfFrame fr) p.1 with
+    | none => rw [h1] at hmatch; exact nomatch hmatch
+    | some a' =>
+        cases h2 : findVR (varMapOfFrame fr) p.2 with
+        | none => rw [h1, h2] at hmatch; exact nomatch hmatch
+        | some b' =>
+            rw [h1, h2] at hmatch
+            simp only [Option.some.injEq, Prod.mk.injEq] at hmatch
+            obtain ⟨rfl, rfl⟩ := hmatch
+            exact ⟨mem_hypVars_of_findVR h1, mem_hypVars_of_findVR h2⟩
+  obtain ⟨_, hor⟩ := hab
+  rcases hor with h | h
+  · exact key h
+  · exact (key h).symm
 
-/-- Supported semantic proofs are well-formed with respect to the target frame map. -/
-theorem supported_wellformed {Γ : Database} {fr : Frame} {fmla : MarioFormula}
-    (h_provable : SupportedProvable Γ fr fmla) :
-    MarioExprWellFormed fr fmla.2 := by
+/-- Every assertion of `dbToAxioms Γ` is trimmed (a reduct, in the Metamath
+book's Appendix C): a variable in its disjointness relation occurs in the
+assertion, through its floating hypothesis. -/
+theorem dbToAxioms_trimmed {Γ : Database} {ax : Metamath.Statement}
+    (hax : dbToAxioms Γ ax) : ax.trimmed := by
+  obtain ⟨_l, fr, _e, _hlookup, hctx, _hfmla⟩ := hax
+  intro a b hab
+  have hab' : (frameToContext fr).dj a b := by rw [← hctx]; exact hab
+  have hmem : ∀ x, x ∈ hypVars (frameToContext fr) → x ∈ ax.vars := by
+    intro x hx
+    obtain ⟨f, hf, hxf⟩ := List.mem_flatMap.mp hx
+    have hf' : f ∈ ax.ctx.hyps := by rw [hctx]; exact hf
+    exact List.mem_flatMap.mpr ⟨f, List.Mem.tail _ hf', hxf⟩
+  obtain ⟨ha, hb⟩ := dj_mem_hypVars hab'
+  exact ⟨hmem a ha, hmem b hb⟩
+
+/-! ## Frame derivability
+
+`FrameDerivable` is Mario's `Provable` restricted at `var` leaves: every
+variable used in the derivation must be a variable of the frame, found in its
+floating-hypothesis map. This is Metamath's own rule — the operational verifier
+requires every variable to be typed by an active `$f` hypothesis. -/
+
+/-- The variables of the frame `fr`: those its floating-hypothesis map assigns. -/
+def FrameDeclared (fr : Frame) (v : DeclarativeVR) : Prop :=
+  ∃ w : Variable, findVar (varMapOfFrame fr) v = some w
+
+/-- Derivability by Mario's rules in the frame `fr`: the closure (Metamath book C.2.5) of the
+pre-statement whose variable-type hypotheses are the frame's variables. -/
+abbrev FrameDerivable (Γ : Database) (fr : Frame) : DeclarativeFormula → Prop :=
+  Derivable (dbToAxioms Γ) (FrameDeclared fr) (frameToContext fr)
+
+/-- Forget the frame condition on `var` leaves: frame derivability implies Mario's
+declarative provability. -/
+theorem FrameDerivable.toDeclarative {Γ : Database} {fr : Frame} {fmla : DeclarativeFormula}
+    (h : FrameDerivable Γ fr fmla) :
+    Declarative.Provable (dbToAxioms Γ) (frameToContext fr) fmla :=
+  provable_iff_derivable.mpr (h.mono (fun _ h => h) (fun _ _ => trivial) (Metamath.Context.refl _))
+
+/-- Every variable of a frame-derivable formula is a variable of the frame. -/
+theorem frameDerivable_wellFormed {Γ : Database} {fr : Frame} {fmla : DeclarativeFormula}
+    (h_provable : FrameDerivable Γ fr fmla) :
+    DeclarativeExprWellFormed fr fmla.2 := by
   induction h_provable with
   | hyp h h_in =>
       intro vr h_vr_mem
       obtain ⟨hyp, hyp_in, hyp_eq⟩ := hyps_correspondence h_in
       cases hyp with
       | essential e_hyp =>
-          simp only [hypToMarioFormula_essential] at hyp_eq
-          have h_snd_eq : h.2 = exprToMarioExpr (varMapOfFrame fr) e_hyp := by
+          simp only [hypToDeclarativeFormula_essential] at hyp_eq
+          have h_snd_eq : h.2 = exprToDeclarativeExpr (varMapOfFrame fr) e_hyp := by
             rw [hyp_eq]; rfl
           rw [h_snd_eq] at h_vr_mem
-          obtain ⟨s, _, h_find⟩ := exprToMarioExpr_mem_extract h_vr_mem
+          obtain ⟨s, _, h_find⟩ := exprToDeclarativeExpr_mem_extract h_vr_mem
           exact ⟨⟨s⟩, findVR_findVar_inverse_frame h_find⟩
       | floating c v =>
           obtain ⟨vr', h_findVR⟩ := findVR_of_float (fr := fr) (c := c) (v := v) hyp_in
-          have h_float_eq := hypToMarioFormula_floating_expr (varMapOfFrame fr) c v h_findVR
+          have h_float_eq := hypToDeclarativeFormula_floating_expr (varMapOfFrame fr) c v h_findVR
           rw [h_float_eq] at hyp_eq
           have h_snd_eq : h.2 = [Metamath.Sym.var vr'] := by
             rw [hyp_eq]
-            unfold exprToFormula exprToMarioExpr
+            unfold exprToFormula exprToDeclarativeExpr
             simp only [List.map_cons, List.map_nil]
-            unfold toMarioSym
+            unfold toDeclarativeSym
             simp only [h_findVR]
           rw [h_snd_eq] at h_vr_mem
           unfold Metamath.Expr.mem at h_vr_mem
@@ -1815,18 +1817,18 @@ theorem supported_wellformed {Γ : Database} {fr : Frame} {fmla : MarioFormula}
       have h_vr_eq' := Metamath.Sym.var.inj h_vr_eq
       subst h_vr_eq'
       exact h_find
-  | ax σ h_axs _ _ _ h_hyps_wf _ _ =>
+  | ax σ h_axs _ _ _ _ ih_var =>
       intro vr h_vr_mem
       obtain ⟨l, frAx, eAx, h_lookup, _h_ctx_eq, h_fmla_eq⟩ := dbToAxioms_inverse h_axs
       let vmAx := varMapOfFrame frAx
       have h_subst_snd : (Metamath.Formula.subst σ (exprToFormula vmAx eAx)).snd =
-                         (exprToMarioExpr vmAx eAx).subst σ := rfl
+                         (exprToDeclarativeExpr vmAx eAx).subst σ := rfl
       rw [h_fmla_eq, h_subst_snd] at h_vr_mem
       obtain ⟨vr', h_vr'_mem, h_vr_in_sigma⟩ := Metamath.Expr.mem_subst h_vr_mem
-      have h_vr'_in_fmla_expr : vr' ∈ (exprToMarioExpr vmAx eAx).vars := Expr_vars_iff_mem.mpr h_vr'_mem
-      have h_fmla_snd_eq : (exprToFormula vmAx eAx).snd = exprToMarioExpr vmAx eAx := rfl
+      have h_vr'_in_fmla_expr : vr' ∈ (exprToDeclarativeExpr vmAx eAx).vars := Metamath.Expr.mem_vars_iff.mpr h_vr'_mem
+      have h_fmla_snd_eq : (exprToFormula vmAx eAx).snd = exprToDeclarativeExpr vmAx eAx := rfl
       have h_vr'_in_ax_fmla_vars : vr' ∈ (exprToFormula vmAx eAx).snd.vars := h_fmla_snd_eq ▸ h_vr'_in_fmla_expr
-      have h_wf_sigma_vr' : MarioExprWellFormed fr (σ vr') := h_hyps_wf vr' (by
+      have h_wf_sigma_vr' : DeclarativeExprWellFormed fr (σ vr') := ih_var vr' (by
         simp only [Metamath.Statement.vars, List.flatMap_cons, List.mem_append]
         left
         rw [h_fmla_eq]
@@ -1839,15 +1841,15 @@ We first show that every element on a valid proof stack is Mario-provable,
 then derive the singleton-stack case as a corollary.
 -/
 
-/-- Any element on a valid proof stack has a derivation-local supported
-semantic proof. Requires database well-formedness for substitution correspondence. -/
-theorem proofValid_stack_supported {Γ : Database} {consts : ConstSet} {fr : Frame}
+/-- Every element of a valid proof stack is frame derivable. Requires database
+well-formedness for substitution correspondence. -/
+theorem proofValid_stack_frameDerivable {Γ : Database} {consts : ConstSet} {fr : Frame}
     {stack : List Expr} {steps : List ProofStep}
     (h_wf : Spec.WellFormedDatabase Γ consts)
     (h_fr_disjoint : Spec.FrameVarsDisjointConsts consts fr) :
     ProofValid Γ fr stack steps →
     ∀ e ∈ stack,
-      SupportedProvable Γ fr
+      FrameDerivable Γ fr
         (exprToFormula (varMapOfFrame fr) e) := by
   intro h
   induction h with
@@ -1858,21 +1860,21 @@ theorem proofValid_stack_supported {Γ : Database} {consts : ConstSet} {fr : Fra
       intro e' h_mem
       cases h_mem with
       | head =>
-          apply SupportedProvable.hyp
-          have h_mem' : hypToMarioFormula (varMapOfFrame fr) (Hyp.essential e) ∈
-              (frameToContext fr).hyps := hypToMarioFormula_mem (fr := fr) (h := Hyp.essential e) h_in
-          simpa [hypToMarioFormula_essential] using h_mem'
+          apply Derivable.hyp
+          have h_mem' : hypToDeclarativeFormula (varMapOfFrame fr) (Hyp.essential e) ∈
+              (frameToContext fr).hyps := hypToDeclarativeFormula_mem (fr := fr) (h := Hyp.essential e) h_in
+          simpa [hypToDeclarativeFormula_essential] using h_mem'
       | tail _ h_tail =>
           exact ih e' h_tail
   | useFloating stack steps c v h_in h_prev ih =>
       intro e' h_mem
       cases h_mem with
       | head =>
-          apply SupportedProvable.hyp
-          have h_mem' : hypToMarioFormula (varMapOfFrame fr) (Hyp.floating c v) ∈
-              (frameToContext fr).hyps := hypToMarioFormula_mem (fr := fr) (h := Hyp.floating c v) h_in
+          apply Derivable.hyp
+          have h_mem' : hypToDeclarativeFormula (varMapOfFrame fr) (Hyp.floating c v) ∈
+              (frameToContext fr).hyps := hypToDeclarativeFormula_mem (fr := fr) (h := Hyp.floating c v) h_in
           obtain ⟨vr, h_find⟩ := findVR_of_float (fr := fr) (c := c) (v := v) h_in
-          have h_eq := hypToMarioFormula_floating_expr (vm := varMapOfFrame fr) (c := c)
+          have h_eq := hypToDeclarativeFormula_floating_expr (vm := varMapOfFrame fr) (c := c)
             (v := v) (vr := vr) h_find
           simpa [h_eq] using h_mem'
       | tail _ h_tail =>
@@ -1885,10 +1887,10 @@ theorem proofValid_stack_supported {Γ : Database} {consts : ConstSet} {fr : Fra
           -- e' = applySubst frAx.vars σ eAx (the result of applying the axiom)
           --
           -- We need to prove:
-          --   Semantic.Provable (dbToAxioms Γ) (frameToContext fr)
+          --   Declarative.Provable (dbToAxioms Γ) (frameToContext fr)
           --     (exprToFormula (varMapOfFrame fr) (applySubst frAx.vars σ eAx))
           --
-          -- Strategy: Apply Semantic.Provable.ax with:
+          -- Strategy: Apply Declarative.Provable.ax with:
           -- 1. The statement from (frAx, eAx)
           -- 2. A Mario substitution built from σ
           -- 3. DV constraint satisfaction via dvOK_implies_DJ_subst
@@ -1896,45 +1898,45 @@ theorem proofValid_stack_supported {Γ : Database} {consts : ConstSet} {fr : Fra
 
           -- Step 1: Construct the axiom Statement
           let vmAx := varMapOfFrame frAx
-          let ax : Semantic.Statement := ⟨frameToContext frAx, exprToFormula vmAx eAx⟩
+          let ax : Declarative.Statement := ⟨frameToContext frAx, exprToFormula vmAx eAx⟩
 
           -- Step 2: Show ax is in dbToAxioms
           have h_ax_in : dbToAxioms Γ ax := ⟨l, frAx, eAx, h_ax, rfl, rfl⟩
 
           -- Step 3: Build Mario substitution
           let vm := varMapOfFrame fr
-          let σ_mario : MarioVR → MarioExpr := toMarioSubst vmAx vm σ
+          let σ_declarative : DeclarativeVR → DeclarativeExpr := toDeclarativeSubst vmAx vm σ
 
           -- At this point we need:
-          -- a) ax.ctx.dj.subst σ_mario (frameToContext fr).dj
+          -- a) ax.ctx.dj.subst σ_declarative (frameToContext fr).dj
           -- b) All hypotheses provable after substitution
           -- c) Show the result formula matches
 
-          -- Apply Provable.ax with substitution σ_mario
+          -- Apply Provable.ax with substitution σ_declarative
           -- Goal: Provable (dbToAxioms Γ) (frameToContext fr)
           --         (exprToFormula vm (applySubst frAx.vars σ eAx))
 
-          -- The result formula needs to match ax.fmla.subst σ_mario
+          -- The result formula needs to match ax.fmla.subst σ_declarative
           -- We'll prove this via a rewrite at the end
 
           -- Sub-goal 1: DV constraint satisfaction
-          -- ax.ctx.dj.subst σ_mario (frameToContext fr).dj
-          have h_dv_mario : ax.ctx.dj.subst σ_mario (frameToContext fr).dj := by
+          -- ax.ctx.dj.subst σ_declarative (frameToContext fr).dj
+          have h_dv_declarative : ax.ctx.dj.subst σ_declarative (frameToContext fr).dj := by
             -- ax.ctx = frameToContext frAx, so ax.ctx.dj = (frameToContext frAx).dj
-            -- = dvListToMarioDJ (varMapOfFrame frAx) frAx.dv = dvListToMarioDJ vmAx frAx.dv
-            -- Similarly (frameToContext fr).dj = dvListToMarioDJ vm fr.dv
-            show (dvListToMarioDJ vmAx frAx.dv).subst σ_mario (dvListToMarioDJ vm fr.dv)
+            -- = dvListToDeclarativeDJ (varMapOfFrame frAx) frAx.dv = dvListToDeclarativeDJ vmAx frAx.dv
+            -- Similarly (frameToContext fr).dj = dvListToDeclarativeDJ vm fr.dv
+            show (dvListToDeclarativeDJ vmAx frAx.dv).subst σ_declarative (dvListToDeclarativeDJ vm fr.dv)
 
             -- h_dv : Spec.dvOK fr.vars frAx.dv fr.dv σ
             unfold Metamath.DJ.subst
             intro vr1 vr2 h_dj
-            -- h_dj : (dvListToMarioDJ vmAx frAx.dv).disj vr1 vr2
+            -- h_dj : (dvListToDeclarativeDJ vmAx frAx.dv).disj vr1 vr2
             unfold Metamath.Expr.disjoint
             intro x y h_x_in h_y_in
-            -- Need: (dvListToMarioDJ vm fr.dv).disj x y
+            -- Need: (dvListToDeclarativeDJ vm fr.dv).disj x y
 
             -- Step 1: Get the source variable pair from h_dj
-            unfold dvListToMarioDJ at h_dj
+            unfold dvListToDeclarativeDJ at h_dj
             simp only [Metamath.DJ.mk'] at h_dj
             obtain ⟨h_neq, h_mem_or⟩ := h_dj
             -- h_mem_or : (vr1, vr2) or (vr2, vr1) is in the filterMap result
@@ -1966,19 +1968,19 @@ theorem proofValid_stack_supported {Γ : Database} {consts : ConstSet} {fr : Fra
                   have h_findVar_w : findVar vmAx vr2 = some w :=
                     findVR_findVar_inverse_frame h_w
 
-                  -- Step 4: x ∈' σ_mario vr1 = x ∈' toMarioSubst vmAx vm σ vr1
-                  --       = x ∈' exprToMarioExpr vm (σ v) (by h_findVar_v)
-                  change x ∈' (toMarioSubst vmAx vm σ vr1) at h_x_in
-                  change y ∈' (toMarioSubst vmAx vm σ vr2) at h_y_in
-                  simp only [toMarioSubst, h_findVar_v] at h_x_in
-                  simp only [toMarioSubst, h_findVar_w] at h_y_in
-                  -- Now h_x_in : x ∈' exprToMarioExpr vm (σ v)
-                  -- and h_y_in : y ∈' exprToMarioExpr vm (σ w)
+                  -- Step 4: x ∈' σ_declarative vr1 = x ∈' toDeclarativeSubst vmAx vm σ vr1
+                  --       = x ∈' exprToDeclarativeExpr vm (σ v) (by h_findVar_v)
+                  change x ∈' (toDeclarativeSubst vmAx vm σ vr1) at h_x_in
+                  change y ∈' (toDeclarativeSubst vmAx vm σ vr2) at h_y_in
+                  simp only [toDeclarativeSubst, h_findVar_v] at h_x_in
+                  simp only [toDeclarativeSubst, h_findVar_w] at h_y_in
+                  -- Now h_x_in : x ∈' exprToDeclarativeExpr vm (σ v)
+                  -- and h_y_in : y ∈' exprToDeclarativeExpr vm (σ w)
 
                   -- Step 5: Extract source variables from x and y membership
-                  -- Use exprToMarioExpr_mem_extract to get the source symbols
-                  obtain ⟨x_s, h_x_s_in, h_x_findVR⟩ := exprToMarioExpr_mem_extract h_x_in
-                  obtain ⟨y_s, h_y_s_in, h_y_findVR⟩ := exprToMarioExpr_mem_extract h_y_in
+                  -- Use exprToDeclarativeExpr_mem_extract to get the source symbols
+                  obtain ⟨x_s, h_x_s_in, h_x_findVR⟩ := exprToDeclarativeExpr_mem_extract h_x_in
+                  obtain ⟨y_s, h_y_s_in, h_y_findVR⟩ := exprToDeclarativeExpr_mem_extract h_y_in
                   let x_var := Variable.mk x_s
                   let y_var := Variable.mk y_s
                   -- x_var ∈ fr.vars (by findVR_in_vars)
@@ -1999,10 +2001,10 @@ theorem proofValid_stack_supported {Γ : Database} {consts : ConstSet} {fr : Fra
                   have h_dvRel : Spec.dvRel fr.dv x_var y_var := by
                     unfold Spec.dvOK at h_dv
                     exact h_dv v w h_vw_in x_var h_x_varsInExpr y_var h_y_varsInExpr
-                  -- Lift dvRel to dvListToMarioDJ
+                  -- Lift dvRel to dvListToDeclarativeDJ
                   have h_unique : ∀ v' v'' vr', findVR vm v' = some vr' → findVR vm v'' = some vr' → v' = v'' :=
                     fun _ _ _ h1 h2 => findVR_injective_frame h1 h2
-                  exact dvRel_to_dvListToMarioDJ h_unique h_dvRel h_x_findVR h_y_findVR
+                  exact dvRel_to_dvListToDeclarativeDJ h_unique h_dvRel h_x_findVR h_y_findVR
                 | some _, none =>
                   simp only [h_v, h_w] at h_find
                   -- h_find : none = some (vr1, vr2), contradiction
@@ -2026,16 +2028,16 @@ theorem proofValid_stack_supported {Γ : Database} {consts : ConstSet} {fr : Fra
                     -- vr2 came from v, vr1 came from w
                     have h_findVar_v : findVar vmAx vr2 = some v := findVR_findVar_inverse_frame h_v
                     have h_findVar_w : findVar vmAx vr1 = some w := findVR_findVar_inverse_frame h_w
-                    -- Get the membership in exprToMarioExpr
-                    change x ∈' (toMarioSubst vmAx vm σ vr1) at h_x_in
-                    change y ∈' (toMarioSubst vmAx vm σ vr2) at h_y_in
-                    simp only [toMarioSubst, h_findVar_w] at h_x_in  -- x from σ w
-                    simp only [toMarioSubst, h_findVar_v] at h_y_in  -- y from σ v
-                    -- Now h_x_in : x ∈' exprToMarioExpr vm (σ w)
-                    -- and h_y_in : y ∈' exprToMarioExpr vm (σ v)
+                    -- Get the membership in exprToDeclarativeExpr
+                    change x ∈' (toDeclarativeSubst vmAx vm σ vr1) at h_x_in
+                    change y ∈' (toDeclarativeSubst vmAx vm σ vr2) at h_y_in
+                    simp only [toDeclarativeSubst, h_findVar_w] at h_x_in  -- x from σ w
+                    simp only [toDeclarativeSubst, h_findVar_v] at h_y_in  -- y from σ v
+                    -- Now h_x_in : x ∈' exprToDeclarativeExpr vm (σ w)
+                    -- and h_y_in : y ∈' exprToDeclarativeExpr vm (σ v)
                     -- Extract source variables
-                    obtain ⟨x_s, h_x_s_in, h_x_findVR⟩ := exprToMarioExpr_mem_extract h_x_in
-                    obtain ⟨y_s, h_y_s_in, h_y_findVR⟩ := exprToMarioExpr_mem_extract h_y_in
+                    obtain ⟨x_s, h_x_s_in, h_x_findVR⟩ := exprToDeclarativeExpr_mem_extract h_x_in
+                    obtain ⟨y_s, h_y_s_in, h_y_findVR⟩ := exprToDeclarativeExpr_mem_extract h_y_in
                     let x_var := Variable.mk x_s
                     let y_var := Variable.mk y_s
                     have h_x_in_vars : x_var ∈ fr.vars := findVR_in_vars h_x_findVR
@@ -2064,10 +2066,10 @@ theorem proofValid_stack_supported {Γ : Database} {consts : ConstSet} {fr : Fra
                       · cases h_dvRel.2 with
                         | inl h => right; exact h
                         | inr h => left; exact h
-                    -- Lift to dvListToMarioDJ
+                    -- Lift to dvListToDeclarativeDJ
                     have h_unique : ∀ v' v'' vr', findVR vm v' = some vr' → findVR vm v'' = some vr' → v' = v'' :=
                       fun _ _ _ h1 h2 => findVR_injective_frame h1 h2
-                    exact dvRel_to_dvListToMarioDJ h_unique h_dvRel_sym h_x_findVR h_y_findVR
+                    exact dvRel_to_dvListToDeclarativeDJ h_unique h_dvRel_sym h_x_findVR h_y_findVR
                 | some _, none =>
                     simp only [h_v, h_w] at h_find
                     cases h_find
@@ -2077,39 +2079,39 @@ theorem proofValid_stack_supported {Γ : Database} {consts : ConstSet} {fr : Fra
 
           -- Sub-goal 2a: Essential hypotheses are provable after substitution
           have h_hyps_ess : ∀ h ∈ ax.ctx.hyps,
-              SupportedProvable Γ fr (h.subst σ_mario) := by
+              FrameDerivable Γ fr (h.subst σ_declarative) := by
             intro h h_in_hyps
             -- h is a hypothesis from the axiom's frame (essential or floating)
-            -- ax.ctx.hyps = frAx.hyps.map (hypToMarioFormula vmAx)
-            -- So there exists hyp ∈ frAx.hyps with h = hypToMarioFormula vmAx hyp
+            -- ax.ctx.hyps = frAx.hyps.map (hypToDeclarativeFormula vmAx)
+            -- So there exists hyp ∈ frAx.hyps with h = hypToDeclarativeFormula vmAx hyp
             have h_ax_ctx : ax.ctx = frameToContext frAx := rfl
             rw [h_ax_ctx] at h_in_hyps
             unfold frameToContext at h_in_hyps
             simp only [] at h_in_hyps
-            -- h_in_hyps : h ∈ frAx.hyps.map (hypToMarioFormula vmAx)
+            -- h_in_hyps : h ∈ frAx.hyps.map (hypToDeclarativeFormula vmAx)
             obtain ⟨hyp, h_hyp_in, h_hyp_eq⟩ := List.mem_map.mp h_in_hyps
-            -- hyp ∈ frAx.hyps and h = hypToMarioFormula vmAx hyp
+            -- hyp ∈ frAx.hyps and h = hypToDeclarativeFormula vmAx hyp
             cases hyp with
             | essential e_hyp =>
                 -- h = exprToFormula vmAx e_hyp
-                -- h.subst σ_mario should equal exprToFormula vm (applySubst frAx.vars σ e_hyp)
+                -- h.subst σ_declarative should equal exprToFormula vm (applySubst frAx.vars σ e_hyp)
                 -- And applySubst frAx.vars σ e_hyp is in needed (hence on stack)
-                rw [← h_hyp_eq, hypToMarioFormula_essential]
-                -- Goal: Provable ... ((exprToFormula vmAx e_hyp).subst σ_mario)
+                rw [← h_hyp_eq, hypToDeclarativeFormula_essential]
+                -- Goal: Provable ... ((exprToFormula vmAx e_hyp).subst σ_declarative)
                 -- Rewrite using our substitution correspondence
-                have h_subst_eq : (exprToFormula vmAx e_hyp).subst σ_mario =
+                have h_subst_eq : (exprToFormula vmAx e_hyp).subst σ_declarative =
                     exprToFormula vm (Spec.applySubst frAx.vars σ e_hyp) := by
                   unfold exprToFormula Metamath.Formula.subst
                   simp only []
-                  -- Goal: (e_hyp.typecode.c, Expr.subst σ_mario (exprToMarioExpr vmAx e_hyp)) =
-                  --       ((applySubst frAx.vars σ e_hyp).typecode.c, exprToMarioExpr vm (applySubst frAx.vars σ e_hyp))
+                  -- Goal: (e_hyp.typecode.c, Expr.subst σ_declarative (exprToDeclarativeExpr vmAx e_hyp)) =
+                  --       ((applySubst frAx.vars σ e_hyp).typecode.c, exprToDeclarativeExpr vm (applySubst frAx.vars σ e_hyp))
                   -- applySubst preserves typecode
                   have h_tc : (Spec.applySubst frAx.vars σ e_hyp).typecode = e_hyp.typecode := by
                     unfold Spec.applySubst; rfl
                   rw [h_tc]
                   congr 1
                   -- Now just need the expression part (need to swap sides)
-                  exact (exprToMarioExpr_applySubst_eq_subst_hyp h_wf h_ax h_hyp_in h_fr_disjoint).symm
+                  exact (exprToDeclarativeExpr_applySubst_eq_subst_hyp h_wf h_ax h_hyp_in h_fr_disjoint).symm
                 rw [h_subst_eq]
                 -- Now need to show applySubst frAx.vars σ e_hyp is on stack
                 have h_in_needed : Spec.applySubst frAx.vars σ e_hyp ∈ needed := by
@@ -2122,8 +2124,8 @@ theorem proofValid_stack_supported {Γ : Database} {consts : ConstSet} {fr : Fra
                   exact List.mem_append_left _ (List.mem_reverse.mpr h_in_needed)
                 exact ih (Spec.applySubst frAx.vars σ e_hyp) h_in_stack
             | floating c_hyp v_hyp =>
-                -- h = hypToMarioFormula vmAx (Hyp.floating c_hyp v_hyp) = (c_hyp.c, [.var vr])
-                -- h.subst σ_mario = (c_hyp.c, σ_mario vr)
+                -- h = hypToDeclarativeFormula vmAx (Hyp.floating c_hyp v_hyp) = (c_hyp.c, [.var vr])
+                -- h.subst σ_declarative = (c_hyp.c, σ_declarative vr)
                 -- σ v_hyp is in needed (hence on stack)
                 -- Type preservation: h_typed gives us (σ v_hyp).typecode = c_hyp
                 have h_type_pres := h_typed c_hyp v_hyp h_hyp_in
@@ -2132,24 +2134,24 @@ theorem proofValid_stack_supported {Γ : Database} {consts : ConstSet} {fr : Fra
                 have ⟨vr, h_findVR⟩ := findVR_of_float (fr := frAx) (c := c_hyp) (v := v_hyp) h_hyp_in
                 -- h = (c_hyp.c, [.var vr])
                 rw [← h_hyp_eq]
-                have h_float_eq := hypToMarioFormula_floating_expr (vm := vmAx)
+                have h_float_eq := hypToDeclarativeFormula_floating_expr (vm := vmAx)
                   (c := c_hyp) (v := v_hyp) (vr := vr) h_findVR
                 rw [h_float_eq]
-                -- Goal: Provable ... ((exprToFormula vmAx ⟨c_hyp, [v_hyp.v]⟩).subst σ_mario)
+                -- Goal: Provable ... ((exprToFormula vmAx ⟨c_hyp, [v_hyp.v]⟩).subst σ_declarative)
                 -- exprToFormula vmAx ⟨c_hyp, [v_hyp.v]⟩ = (c_hyp.c, [.var vr])
-                unfold exprToFormula exprToMarioExpr
+                unfold exprToFormula exprToDeclarativeExpr
                 simp only [List.map_cons, List.map_nil]
-                -- Goal: Provable ... ((c_hyp.c, [toMarioSym vmAx v_hyp.v]).subst σ_mario)
+                -- Goal: Provable ... ((c_hyp.c, [toDeclarativeSym vmAx v_hyp.v]).subst σ_declarative)
                 simp only [Metamath.Formula.subst]
-                -- Goal: Provable ... (c_hyp.c, Expr.subst σ_mario [toMarioSym vmAx v_hyp.v])
-                -- toMarioSym vmAx v_hyp.v = .var vr since h_findVR
-                have h_sym : toMarioSym vmAx v_hyp.v = .var vr := toMarioSym_var h_findVR
+                -- Goal: Provable ... (c_hyp.c, Expr.subst σ_declarative [toDeclarativeSym vmAx v_hyp.v])
+                -- toDeclarativeSym vmAx v_hyp.v = .var vr since h_findVR
+                have h_sym : toDeclarativeSym vmAx v_hyp.v = .var vr := toDeclarativeSym_var h_findVR
                 simp [h_sym, Metamath.Expr.subst]
-                -- Goal: Provable ... (c_hyp.c, σ_mario vr)
-                -- σ_mario vr = exprToMarioExpr vm (σ v_hyp)
-                have h_sigma_eq : σ_mario vr = exprToMarioExpr vm (σ v_hyp) := by
+                -- Goal: Provable ... (c_hyp.c, σ_declarative vr)
+                -- σ_declarative vr = exprToDeclarativeExpr vm (σ v_hyp)
+                have h_sigma_eq : σ_declarative vr = exprToDeclarativeExpr vm (σ v_hyp) := by
                   have h_findVar := findVR_findVar_inverse_frame h_findVR
-                  exact toMarioSubst_findVar h_findVar
+                  exact toDeclarativeSubst_findVar h_findVar
                 rw [h_sigma_eq]
                 -- σ v_hyp is on the stack, so by IH it's provable
                 have h_in_needed : σ v_hyp ∈ needed := by
@@ -2164,11 +2166,11 @@ theorem proofValid_stack_supported {Γ : Database} {consts : ConstSet} {fr : Fra
                 simpa [vm, exprToFormula, List.append_nil] using
                   ih (σ v_hyp) h_in_stack
 
-          -- Sub-goal 2b: Variable typing - for each VR in axiom, prove (v.type, σ_mario v)
-          -- ax.vars contains MarioVRs from the axiom's formula and hypotheses
+          -- Sub-goal 2b: Variable typing - for each VR in axiom, prove (v.type, σ_declarative v)
+          -- ax.vars contains DeclarativeVRs from the axiom's formula and hypotheses
           -- Each corresponds to a floating hypothesis in frAx.hyps
           have h_hyps_var : ∀ v ∈ ax.vars,
-              SupportedProvable Γ fr (v.type, σ_mario v) := by
+              FrameDerivable Γ fr (v.type, σ_declarative v) := by
             intro v v_in_vars
             -- v ∈ ax.vars means v appears in the axiom statement
             -- ax.vars is computed from Statement.vars which collects VRs from formulas
@@ -2178,8 +2180,8 @@ theorem proofValid_stack_supported {Γ : Database} {consts : ConstSet} {fr : Fra
             obtain ⟨f, h_f_in, h_v_in_f⟩ := v_in_vars
             -- f is a formula containing v, and f ∈ (ax.fmla :: ax.ctx.hyps)
             -- f.2 is the expression part, and v ∈ f.2.vars
-            -- By Expr_vars_iff_mem, v ∈' f.2
-            have h_v_mem : v ∈' f.2 := Expr_vars_iff_mem.mp h_v_in_f
+            -- By Metamath.Expr.mem_vars_iff, v ∈' f.2
+            have h_v_mem : v ∈' f.2 := Metamath.Expr.mem_vars_iff.mp h_v_in_f
             -- Step 2: Find the Variable corresponding to v
             -- The formula f came from exprToFormula vmAx applied to some Metamath expression
             -- Using a helper to extract the variable
@@ -2187,8 +2189,8 @@ theorem proofValid_stack_supported {Γ : Database} {consts : ConstSet} {fr : Fra
               cases h_f_in with
               | head =>
                   -- f = ax.fmla = exprToFormula vmAx eAx
-                  -- h_v_mem : v ∈' f.2 = v ∈' ax.fmla.2 = v ∈' exprToMarioExpr vmAx eAx
-                  obtain ⟨s, _, h_findVR⟩ := exprToMarioExpr_mem_extract h_v_mem
+                  -- h_v_mem : v ∈' f.2 = v ∈' ax.fmla.2 = v ∈' exprToDeclarativeExpr vmAx eAx
+                  obtain ⟨s, _, h_findVR⟩ := exprToDeclarativeExpr_mem_extract h_v_mem
                   have h_findVar_eq := findVR_findVar_inverse_frame h_findVR
                   exact ⟨⟨s⟩, h_findVar_eq⟩
               | tail _ h_in_hyps =>
@@ -2198,15 +2200,15 @@ theorem proofValid_stack_supported {Γ : Database} {consts : ConstSet} {fr : Fra
                   subst h_hyp_eq
                   cases hyp with
                   | essential e_hyp =>
-                      simp only [hypToMarioFormula] at h_v_mem
-                      obtain ⟨s, _, h_findVR⟩ := exprToMarioExpr_mem_extract h_v_mem
+                      simp only [hypToDeclarativeFormula] at h_v_mem
+                      obtain ⟨s, _, h_findVR⟩ := exprToDeclarativeExpr_mem_extract h_v_mem
                       have h_findVar_eq := findVR_findVar_inverse_frame h_findVR
                       exact ⟨⟨s⟩, h_findVar_eq⟩
                   | floating c_hyp v_hyp =>
-                      -- hypToMarioFormula for floating directly creates (c.c, [Sym.var vr])
+                      -- hypToDeclarativeFormula for floating directly creates (c.c, [Sym.var vr])
                       -- where vr = findVR vmAx v_hyp (or a default if none)
                       -- v ∈' [Sym.var vr] means Sym.var v ∈ [Sym.var vr], so v = vr
-                      unfold hypToMarioFormula at h_v_mem
+                      unfold hypToDeclarativeFormula at h_v_mem
                       -- h_v_mem : v ∈' [Sym.var (match findVR vmAx v_hyp with ...)]
                       -- v_hyp ∈ frAx.hyps, so findVR vmAx v_hyp should succeed
                       have ⟨vr', h_findVR⟩ := findVR_of_float (fr := frAx) (c := c_hyp)
@@ -2251,15 +2253,15 @@ theorem proofValid_stack_supported {Γ : Database} {consts : ConstSet} {fr : Fra
             -- By IH, exprToFormula vm (σ var_spec) is provable
             have h_prov := ih (σ var_spec) h_in_stack
             -- h_prov : Provable axs Γ (exprToFormula vm (σ var_spec))
-            -- σ_mario v = exprToMarioExpr vm (σ var_spec)
-            -- toMarioSubst_findVar: when findVar vmAx v = some var_spec,
-            -- toMarioSubst vmAx vm σ v = exprToMarioExpr vm (σ var_spec)
-            have h_sigma_eq : σ_mario v = exprToMarioExpr vm (σ var_spec) :=
-              toMarioSubst_findVar h_findVar_eq
+            -- σ_declarative v = exprToDeclarativeExpr vm (σ var_spec)
+            -- toDeclarativeSubst_findVar: when findVar vmAx v = some var_spec,
+            -- toDeclarativeSubst vmAx vm σ v = exprToDeclarativeExpr vm (σ var_spec)
+            have h_sigma_eq : σ_declarative v = exprToDeclarativeExpr vm (σ var_spec) :=
+              toDeclarativeSubst_findVar h_findVar_eq
             rw [h_sigma_eq]
-            -- Goal: Provable ... (v.type, exprToMarioExpr vm (σ var_spec))
-            -- exprToFormula vm (σ var_spec) = ((σ var_spec).typecode.c, exprToMarioExpr vm (σ var_spec))
-            have h_formula_eq : (v.type, exprToMarioExpr vm (σ var_spec)) =
+            -- Goal: Provable ... (v.type, exprToDeclarativeExpr vm (σ var_spec))
+            -- exprToFormula vm (σ var_spec) = ((σ var_spec).typecode.c, exprToDeclarativeExpr vm (σ var_spec))
+            have h_formula_eq : (v.type, exprToDeclarativeExpr vm (σ var_spec)) =
                 exprToFormula vm (σ var_spec) := by
               unfold exprToFormula
               rw [h_type_connect]
@@ -2267,23 +2269,22 @@ theorem proofValid_stack_supported {Γ : Database} {consts : ConstSet} {fr : Fra
             exact h_prov
 
           -- Sub-goal 3: Show the result formula matches
-          -- We need: exprToFormula vm (applySubst frAx.vars σ eAx) = ax.fmla.subst σ_mario
+          -- We need: exprToFormula vm (applySubst frAx.vars σ eAx) = ax.fmla.subst σ_declarative
           -- where ax.fmla = exprToFormula vmAx eAx
           have h_result : exprToFormula vm (Spec.applySubst frAx.vars σ eAx) =
-                          (exprToFormula vmAx eAx).subst σ_mario := by
+                          (exprToFormula vmAx eAx).subst σ_declarative := by
             -- Typecodes match: applySubst preserves typecode
-            -- Expressions match: by exprToMarioExpr_applySubst_eq_subst
+            -- Expressions match: by exprToDeclarativeExpr_applySubst_eq_subst
             unfold exprToFormula Metamath.Formula.subst
-            -- Goal: (typecode, exprToMarioExpr vm (applySubst ...)) =
-            --       (typecode, (exprToMarioExpr vmAx eAx).subst σ_mario)
+            -- Goal: (typecode, exprToDeclarativeExpr vm (applySubst ...)) =
+            --       (typecode, (exprToDeclarativeExpr vmAx eAx).subst σ_declarative)
             congr 1
             -- Now just the expression part
-            exact exprToMarioExpr_applySubst_eq_subst h_wf h_ax h_fr_disjoint
+            exact exprToDeclarativeExpr_applySubst_eq_subst h_wf h_ax h_fr_disjoint
 
           -- Apply Provable.ax and rewrite goal
           rw [h_result]
-          exact SupportedProvable.ax σ_mario h_ax_in h_dv_mario h_hyps_ess h_hyps_var
-            (fun v hv => supported_wellformed (h_hyps_var v hv))
+          exact Derivable.ax σ_declarative h_ax_in h_dv_declarative h_hyps_ess h_hyps_var
       | tail _ h_tail =>
           have h_mem' : e' ∈ needed.reverse ++ remaining :=
             (List.mem_append).2 (Or.inr h_tail)
@@ -2298,19 +2299,19 @@ theorem proofValid_stack_provable {Γ : Database} {consts : ConstSet} {fr : Fram
     (h_fr_disjoint : Spec.FrameVarsDisjointConsts consts fr) :
     ProofValid Γ fr stack steps →
     ∀ e ∈ stack,
-      Semantic.Provable (dbToAxioms Γ) (frameToContext fr)
+      Declarative.Provable (dbToAxioms Γ) (frameToContext fr)
         (exprToFormula (varMapOfFrame fr) e) := by
   intro h e h_mem
-  exact (proofValid_stack_supported h_wf h_fr_disjoint h e h_mem).toSemantic
+  exact (proofValid_stack_frameDerivable h_wf h_fr_disjoint h e h_mem).toDeclarative
 
 /-- Forward direction: If we have a valid operational proof ending with [e],
     then e is provable in Mario's semantic system. -/
-theorem proofValid_to_mario {Γ : Database} {consts : ConstSet} {fr : Frame} {e : Expr}
+theorem proofValid_to_declarative {Γ : Database} {consts : ConstSet} {fr : Frame} {e : Expr}
     {steps : List ProofStep}
     (h_wf : Spec.WellFormedDatabase Γ consts)
     (h_fr_disjoint : Spec.FrameVarsDisjointConsts consts fr) :
     ProofValid Γ fr [e] steps →
-    Semantic.Provable (dbToAxioms Γ) (frameToContext fr)
+    Declarative.Provable (dbToAxioms Γ) (frameToContext fr)
       (exprToFormula (varMapOfFrame fr) e) := by
   intro h
   have h_all := proofValid_stack_provable h_wf h_fr_disjoint h
@@ -2325,9 +2326,9 @@ THEN we can construct SOME operational proof (may not be the same steps).
 This is the **completeness** direction - showing our verifier is complete with
 respect to Mario's semantic specification.
 
-**Status**: COMPLETE. The backward direction (`mario_to_proofValid`) is fully proven
+**Status**: COMPLETE. The backward direction (`frameDerivable_to_proofValid`) is fully proven
 at line 3498 below. The implementation-level completeness theorem
-`verify_impl_complete` in KernelClean.lean establishes the full biconditional.
+`verify_impl_complete` in KernelCorrectness.lean establishes the full biconditional.
 -/
 
 /-! ### Completeness: Mario → Operational
@@ -2345,7 +2346,7 @@ case requires recursive proof construction.
 
 /-- Helper: Convert a Mario formula back to our Expr (partial inverse of exprToFormula).
     Returns None if the formula doesn't correspond to a valid Expr structure. -/
-noncomputable def marioFormulaToExpr (vm : VarMap) (f : Semantic.Formula) : Option Expr :=
+noncomputable def declarativeFormulaToExpr (vm : VarMap) (f : Declarative.Formula) : Option Expr :=
   let (tc, syms) := f
   -- Convert Mario symbols back to our symbols
   let spec_syms := syms.filterMap fun s =>
@@ -2363,21 +2364,21 @@ noncomputable def marioFormulaToExpr (vm : VarMap) (f : Semantic.Formula) : Opti
 
 /-- A formula in the context (hypothesis) corresponds to some Expr or variable formula.
     Requires FloatUnique to ensure floating hypothesis formulas have matching types. -/
-theorem hyp_formula_is_expr {fr : Frame} {h : Semantic.Formula}
+theorem hyp_formula_is_expr {fr : Frame} {h : Declarative.Formula}
     (h_unique : FloatUnique fr)
     (h_mem : h ∈ (frameToContext fr).hyps) :
     (∃ e : Expr, h = exprToFormula (varMapOfFrame fr) e) ∨
-    (∃ v : MarioVR, h = (v.type, [Metamath.Sym.var v])) := by
+    (∃ v : DeclarativeVR, h = (v.type, [Metamath.Sym.var v])) := by
   obtain ⟨hyp, h_in, h_eq⟩ := hyps_correspondence h_mem
   cases hyp with
   | essential e =>
       left
-      rw [h_eq, hypToMarioFormula_essential]
+      rw [h_eq, hypToDeclarativeFormula_essential]
       exact ⟨e, rfl⟩
   | floating c v =>
       right
       rw [h_eq]
-      unfold hypToMarioFormula
+      unfold hypToDeclarativeFormula
       -- Get the VR for this variable with type information
       obtain ⟨vr, h_findVR, h_type_eq⟩ := findVR_of_float_typed h_unique h_in
       simp only [h_findVR]
@@ -2391,9 +2392,9 @@ theorem hyp_formula_is_expr {fr : Frame} {h : Semantic.Formula}
 /-- Helper: If two expressions have equal formulas, their components match. -/
 theorem exprToFormula_inj {vm : VarMap} {e e' : Expr}
     (h_eq : exprToFormula vm e = exprToFormula vm e') :
-    e.typecode.c = e'.typecode.c ∧ exprToMarioExpr vm e = exprToMarioExpr vm e' := by
+    e.typecode.c = e'.typecode.c ∧ exprToDeclarativeExpr vm e = exprToDeclarativeExpr vm e' := by
   unfold exprToFormula at h_eq
-  -- h_eq : (e.typecode.c, exprToMarioExpr vm e) = (e'.typecode.c, exprToMarioExpr vm e')
+  -- h_eq : (e.typecode.c, exprToDeclarativeExpr vm e) = (e'.typecode.c, exprToDeclarativeExpr vm e')
   have h := Prod.mk.inj h_eq
   exact ⟨h.1, h.2⟩
 
@@ -2448,7 +2449,7 @@ theorem mem_const_subst {σ : Metamath.VR → Metamath.Expr} {c : Metamath.CN} :
 
 /-- Constants in a Mario expression are not variable names in the frame.
     This is the key property needed for the DV constraint proof. -/
-def MarioExprConstSep (fr : Frame) (me : MarioExpr) : Prop :=
+def DeclarativeExprConstSep (fr : Frame) (me : DeclarativeExpr) : Prop :=
   ∀ c, Metamath.Sym.const c ∈ me → Variable.mk c ∉ fr.vars
 
 /-- Provable formulas maintain const/var separation.
@@ -2462,15 +2463,15 @@ def MarioExprConstSep (fr : Frame) (me : MarioExpr) : Prop :=
     - var case: formula is (v.type, [.var v]) with no constants
     - ax case: axiom formulas come from database, substitution preserves the property
 -/
-theorem provable_const_separation {Γ : Database} {consts : ConstSet} {fr : Frame} {fmla : MarioFormula}
+theorem provable_const_separation {Γ : Database} {consts : ConstSet} {fr : Frame} {fmla : DeclarativeFormula}
     (h_wf : WellFormedDatabaseStrong Γ consts)
     (h_fr_disjoint : Spec.FrameVarsDisjointConsts consts fr)
-    (h_provable : Semantic.Provable (dbToAxioms Γ) (frameToContext fr) fmla) :
-    MarioExprConstSep fr fmla.2 := by
+    (h_provable : Declarative.Provable (dbToAxioms Γ) (frameToContext fr) fmla) :
+    DeclarativeExprConstSep fr fmla.2 := by
   induction h_provable with
   | hyp h h_in =>
       -- h ∈ (frameToContext fr).hyps
-      -- h comes from fr.hyps via hypToMarioFormula
+      -- h comes from fr.hyps via hypToDeclarativeFormula
       -- By construction, constants in h are from the database
       intro c h_c_mem
       -- h is a hypothesis formula from the frame
@@ -2479,23 +2480,23 @@ theorem provable_const_separation {Γ : Database} {consts : ConstSet} {fr : Fram
       cases hyp with
       | essential e_hyp =>
           -- Essential hypothesis formula: exprToFormula vm e_hyp
-          simp only [hypToMarioFormula_essential] at hyp_eq
+          simp only [hypToDeclarativeFormula_essential] at hyp_eq
           -- hyp_eq : h = exprToFormula vm e_hyp
-          -- h.2 = exprToMarioExpr vm e_hyp = e_hyp.syms.map (toMarioSym vm)
+          -- h.2 = exprToDeclarativeExpr vm e_hyp = e_hyp.syms.map (toDeclarativeSym vm)
           -- h_c_mem : Metamath.Sym.const c ∈ h.2
-          have h_snd_eq : h.2 = exprToMarioExpr (varMapOfFrame fr) e_hyp := by
+          have h_snd_eq : h.2 = exprToDeclarativeExpr (varMapOfFrame fr) e_hyp := by
             rw [hyp_eq]; rfl
           rw [h_snd_eq] at h_c_mem
-          unfold exprToMarioExpr at h_c_mem
-          -- h_c_mem : .const c ∈ e_hyp.syms.map (toMarioSym vm)
+          unfold exprToDeclarativeExpr at h_c_mem
+          -- h_c_mem : .const c ∈ e_hyp.syms.map (toDeclarativeSym vm)
           obtain ⟨s, _, h_s_eq⟩ := List.mem_map.mp h_c_mem
-          -- h_s_eq : toMarioSym vm s = .const c
-          -- toMarioSym checks findVR and returns either .const or .var
+          -- h_s_eq : toDeclarativeSym vm s = .const c
+          -- toDeclarativeSym checks findVR and returns either .const or .var
           cases h_find : findVR (varMapOfFrame fr) ⟨s⟩ with
           | none =>
-              -- toMarioSym returns .const s when findVR = none
-              have h_reduce : toMarioSym (varMapOfFrame fr) s = Metamath.Sym.const s := by
-                unfold toMarioSym
+              -- toDeclarativeSym returns .const s when findVR = none
+              have h_reduce : toDeclarativeSym (varMapOfFrame fr) s = Metamath.Sym.const s := by
+                unfold toDeclarativeSym
                 simp only [h_find]
               rw [h_reduce] at h_s_eq
               have h_c_eq_s : s = c := Metamath.Sym.const.inj h_s_eq
@@ -2510,24 +2511,24 @@ theorem provable_const_separation {Γ : Database} {consts : ConstSet} {fr : Fram
               rw [h_find] at h_vr
               cases h_vr
           | some vr =>
-              -- toMarioSym returns .var vr, contradicts h_s_eq = .const c
-              have h_reduce : toMarioSym (varMapOfFrame fr) s = Metamath.Sym.var vr := by
-                unfold toMarioSym
+              -- toDeclarativeSym returns .var vr, contradicts h_s_eq = .const c
+              have h_reduce : toDeclarativeSym (varMapOfFrame fr) s = Metamath.Sym.var vr := by
+                unfold toDeclarativeSym
                 simp only [h_find]
               rw [h_reduce] at h_s_eq
               cases h_s_eq  -- .var vr ≠ .const c
       | floating tc v =>
           -- Floating hypothesis formula: (tc.c, [.var vr])
-          -- hypToMarioFormula always produces (tc.c, [.var vr]) for floating
+          -- hypToDeclarativeFormula always produces (tc.c, [.var vr]) for floating
           -- where vr is either found via findVR or a default ⟨tc.c, 0⟩
           -- In either case, h.2 = [.var vr], which contains no constants
           have h_snd_form : ∃ vr', h.2 = [Metamath.Sym.var vr'] := by
             cases h_findVR : findVR (varMapOfFrame fr) v with
             | none =>
-                simp only [hypToMarioFormula, h_findVR] at hyp_eq
+                simp only [hypToDeclarativeFormula, h_findVR] at hyp_eq
                 exact ⟨⟨tc.c, 0⟩, by rw [hyp_eq]⟩
             | some vr =>
-                simp only [hypToMarioFormula, h_findVR] at hyp_eq
+                simp only [hypToDeclarativeFormula, h_findVR] at hyp_eq
                 exact ⟨vr, by rw [hyp_eq]⟩
           obtain ⟨vr', h_snd_eq⟩ := h_snd_form
           rw [h_snd_eq] at h_c_mem
@@ -2561,30 +2562,30 @@ theorem provable_const_separation {Γ : Database} {consts : ConstSet} {fr : Fram
       -- So ax.vars = (ax.fmla :: ax.ctx.hyps).flatMap (·.snd.vars)
 
       -- h_fmla_eq : ax.fmla = exprToFormula vmAx eAx
-      -- The goal is MarioExprConstSep fr fmla.2 where fmla = ax.fmla.subst σ
-      -- So fmla.2 = ax.fmla.2.subst σ = (exprToFormula vmAx eAx).2.subst σ = (exprToMarioExpr vmAx eAx).subst σ
+      -- The goal is DeclarativeExprConstSep fr fmla.2 where fmla = ax.fmla.subst σ
+      -- So fmla.2 = ax.fmla.2.subst σ = (exprToFormula vmAx eAx).2.subst σ = (exprToDeclarativeExpr vmAx eAx).subst σ
 
-      -- h_c_mem : .const c ∈ fmla.2 = (exprToMarioExpr vmAx eAx).subst σ
-      have h_c_in_subst : Metamath.Sym.const c ∈ (exprToMarioExpr vmAx eAx).subst σ := by
+      -- h_c_mem : .const c ∈ fmla.2 = (exprToDeclarativeExpr vmAx eAx).subst σ
+      have h_c_in_subst : Metamath.Sym.const c ∈ (exprToDeclarativeExpr vmAx eAx).subst σ := by
         simp only [Metamath.Formula.subst] at h_c_mem
         -- Need to rewrite using h_fmla_eq
-        have h_fmla_snd : exprToMarioExpr vmAx eAx = (exprToFormula vmAx eAx).2 := rfl
+        have h_fmla_snd : exprToDeclarativeExpr vmAx eAx = (exprToFormula vmAx eAx).2 := rfl
         rw [h_fmla_snd, ← h_fmla_eq]
         exact h_c_mem
 
       -- Use mem_const_subst to trace where .const c came from
       match mem_const_subst h_c_in_subst with
       | Or.inl h_in_orig =>
-          -- Case 1: .const c was in exprToMarioExpr vmAx eAx originally
+          -- Case 1: .const c was in exprToDeclarativeExpr vmAx eAx originally
           -- By WellFormedDatabase, c is a global constant (not in any frame's vars)
-          unfold exprToMarioExpr at h_in_orig
+          unfold exprToDeclarativeExpr at h_in_orig
           obtain ⟨s, h_s_in, h_s_eq⟩ := List.mem_map.mp h_in_orig
-          -- s ∈ eAx.syms, toMarioSym vmAx s = .const c
+          -- s ∈ eAx.syms, toDeclarativeSym vmAx s = .const c
           match h_find : findVR vmAx ⟨s⟩ with
           | none =>
-              -- s is not a variable, so toMarioSym returns .const s
-              have h_const : toMarioSym vmAx s = Metamath.Sym.const s := by
-                unfold toMarioSym; simp only [h_find]
+              -- s is not a variable, so toDeclarativeSym returns .const s
+              have h_const : toDeclarativeSym vmAx s = Metamath.Sym.const s := by
+                unfold toDeclarativeSym; simp only [h_find]
               rw [h_const] at h_s_eq
               have h_c_eq : s = c := Metamath.Sym.const.inj h_s_eq
               subst h_c_eq
@@ -2605,25 +2606,25 @@ theorem provable_const_separation {Γ : Database} {consts : ConstSet} {fr : Fram
               have h_disj := h_fr_disjoint (Variable.mk s) h_in_vars
               exact (h_disj h_const).elim
           | some vr =>
-              -- s is a variable, so toMarioSym returns .var vr
+              -- s is a variable, so toDeclarativeSym returns .var vr
               -- But h_s_eq says it equals .const c - contradiction
-              have h_var : toMarioSym vmAx s = Metamath.Sym.var vr := by
-                unfold toMarioSym; simp only [h_find]
+              have h_var : toDeclarativeSym vmAx s = Metamath.Sym.var vr := by
+                unfold toDeclarativeSym; simp only [h_find]
               rw [h_var] at h_s_eq
               cases h_s_eq  -- .var vr ≠ .const c
       | Or.inr ⟨vr, h_vr_in, h_c_in_sigma⟩ =>
           -- Case 2: .const c came from σ vr for some variable vr in the axiom formula
-          -- h_vr_in : vr ∈' (exprToMarioExpr vmAx eAx)
+          -- h_vr_in : vr ∈' (exprToDeclarativeExpr vmAx eAx)
           -- Need to show vr ∈ ax.vars to use ih_var
           -- ax.vars = (ax.fmla :: ax.ctx.hyps).flatMap Formula.vars
-          -- Since ax.fmla = exprToFormula vmAx eAx, we have ax.fmla.snd = exprToMarioExpr vmAx eAx
+          -- Since ax.fmla = exprToFormula vmAx eAx, we have ax.fmla.snd = exprToDeclarativeExpr vmAx eAx
           -- vr ∈' ax.fmla.snd implies vr ∈ ax.fmla.snd.vars implies vr ∈ ax.vars
-          have h_vr_in_fmla_expr : vr ∈ (exprToMarioExpr vmAx eAx).vars := Expr_vars_iff_mem.mpr h_vr_in
-          have h_fmla_snd_eq : (exprToFormula vmAx eAx).snd = exprToMarioExpr vmAx eAx := rfl
+          have h_vr_in_fmla_expr : vr ∈ (exprToDeclarativeExpr vmAx eAx).vars := Metamath.Expr.mem_vars_iff.mpr h_vr_in
+          have h_fmla_snd_eq : (exprToFormula vmAx eAx).snd = exprToDeclarativeExpr vmAx eAx := rfl
           have h_vr_in_ax_fmla_vars : vr ∈ (exprToFormula vmAx eAx).snd.vars := h_fmla_snd_eq ▸ h_vr_in_fmla_expr
           -- The implicit ax has ax.vars, and ih_var expects vr ∈ ax.vars
           -- We pass the membership proof directly to ih_var (Lean infers the target set)
-          have h_ih : MarioExprConstSep fr (σ vr) := ih_var vr (by
+          have h_ih : DeclarativeExprConstSep fr (σ vr) := ih_var vr (by
             simp only [Metamath.Statement.vars, List.flatMap_cons, List.mem_append]
             left
             rw [h_fmla_eq]
@@ -2631,42 +2632,13 @@ theorem provable_const_separation {Γ : Database} {consts : ConstSet} {fr : Fram
           -- h_ih says: ∀ c', .const c' ∈ σ vr → Variable.mk c' ∉ fr.vars
           exact h_ih c h_c_in_sigma
 
-/-- Supported proofs satisfy const/var separation via the canonical theorem. -/
-theorem supported_const_separation {Γ : Database} {consts : ConstSet} {fr : Frame} {fmla : MarioFormula}
+/-- Frame-derivable formulas satisfy const/var separation. -/
+theorem frameDerivable_const_separation {Γ : Database} {consts : ConstSet} {fr : Frame} {fmla : DeclarativeFormula}
     (h_wf : WellFormedDatabaseStrong Γ consts)
     (h_fr_disjoint : Spec.FrameVarsDisjointConsts consts fr)
-    (h_provable : SupportedProvable Γ fr fmla) :
-    MarioExprConstSep fr fmla.2 :=
-  provable_const_separation h_wf h_fr_disjoint h_provable.toSemantic
-
-/-- Global support condition: every semantic variable in the frame can be
-read back from the floating hypothesis map.
-
-Stronger than needed for the split theorems (`operational_to_semantic` /
-`mario_to_proofValid`), which use the derivation-local `SupportedProvable`
-instead. Used here to produce `operational_iff_semantic` as a single biconditional. -/
-def SemanticFrameSupported (Γ : Database) (fr : Frame) : Prop :=
-  ∀ v : MarioVR, ∃ v' : Variable, findVar (varMapOfFrame fr) v = some v'
-
-/-- Lift canonical `Semantic.Provable` to `SupportedProvable` using the global
-support assumption on `var` leaves. -/
-theorem semantic_to_supported {Γ : Database} {fr : Frame} {fmla : MarioFormula}
-    (h_supported : SemanticFrameSupported Γ fr)
-    (h_sem : Semantic.Provable (dbToAxioms Γ) (frameToContext fr) fmla) :
-    SupportedProvable Γ fr fmla := by
-  induction h_sem with
-  | hyp h h_in =>
-      exact SupportedProvable.hyp h h_in
-  | var v =>
-      exact SupportedProvable.var v (h_supported v)
-  | ax σ h_ax h_dj h_hyps h_hyps_var ih_h ih_var =>
-      refine SupportedProvable.ax σ h_ax h_dj ?_ ?_ ?_
-      · intro h hh
-        exact ih_h h hh
-      · intro v hv
-        exact ih_var v hv
-      · intro v hv
-        exact supported_wellformed (ih_var v hv)
+    (h_provable : FrameDerivable Γ fr fmla) :
+    DeclarativeExprConstSep fr fmla.2 :=
+  provable_const_separation h_wf h_fr_disjoint h_provable.toDeclarative
 
 /-- Generalized completeness: any provable formula can be operationally proved.
 
@@ -2679,19 +2651,19 @@ Requires WellFormedDatabaseStrong to ensure:
 
 Also requires FloatVarNoDup fr for the target frame (needed for substitution roundtrip).
 -/
-theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
+theorem frameDerivable_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
     (h_wf_strong : WellFormedDatabaseStrong Γ consts)
     (h_fr_nodup : FloatVarNoDup fr)
     (h_fr_disjoint : Spec.FrameVarsDisjointConsts consts fr)
-    {fmla : Semantic.Formula}
-    (h_mario : SupportedProvable Γ fr fmla)
+    {fmla : Declarative.Formula}
+    (h_declarative : FrameDerivable Γ fr fmla)
     {e : Expr}
     (h_eq : fmla = exprToFormula (varMapOfFrame fr) e) :
     Provable Γ fr e := by
   -- Extract the basic well-formedness
   have h_wf : Spec.WellFormedDatabase Γ consts := h_wf_strong.1
   -- Induct on the Mario proof structure
-  induction h_mario generalizing e with
+  induction h_declarative generalizing e with
   | hyp h h_in =>
       -- Case 1: The formula h is a hypothesis in the context
       -- h_in : h ∈ (frameToContext fr).hyps
@@ -2700,12 +2672,12 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
       -- Now h_in : exprToFormula vm e ∈ (frameToContext fr).hyps
       -- By hyps_correspondence, get the Hyp that produced this formula
       obtain ⟨hyp, hyp_in, hyp_eq⟩ := hyps_correspondence h_in
-      -- hyp_eq : exprToFormula vm e = hypToMarioFormula vm hyp
+      -- hyp_eq : exprToFormula vm e = hypToDeclarativeFormula vm hyp
       cases hyp with
       | essential e' =>
-          -- hypToMarioFormula vm (Hyp.essential e') = exprToFormula vm e'
+          -- hypToDeclarativeFormula vm (Hyp.essential e') = exprToFormula vm e'
           -- So exprToFormula vm e = exprToFormula vm e'
-          simp only [hypToMarioFormula_essential] at hyp_eq
+          simp only [hypToDeclarativeFormula_essential] at hyp_eq
           -- hyp_eq : exprToFormula vm e = exprToFormula vm e'
           -- By injectivity, e' = e
           have h_eq_expr := exprToFormula_eq_of_eq_frame hyp_eq.symm
@@ -2717,12 +2689,12 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
           exact ⟨[ProofStep.useHyp (Hyp.essential e')], [e'],
                  ProofValid.useEssential fr [] [] e' hyp_in (ProofValid.nil fr), rfl⟩
       | floating c v =>
-          -- hypToMarioFormula vm (Hyp.floating c v) = (c.c, [.var vr])
-          -- Use hypToMarioFormula_floating_expr to relate to exprToFormula
+          -- hypToDeclarativeFormula vm (Hyp.floating c v) = (c.c, [.var vr])
+          -- Use hypToDeclarativeFormula_floating_expr to relate to exprToFormula
           let vm := varMapOfFrame fr
           obtain ⟨vr, h_findVR⟩ := findVR_of_float (fr := fr) (c := c) (v := v) hyp_in
-          have h_float_eq := hypToMarioFormula_floating_expr vm c v h_findVR
-          -- h_float_eq : hypToMarioFormula vm (Hyp.floating c v) = exprToFormula vm ⟨c, [v.v]⟩
+          have h_float_eq := hypToDeclarativeFormula_floating_expr vm c v h_findVR
+          -- h_float_eq : hypToDeclarativeFormula vm (Hyp.floating c v) = exprToFormula vm ⟨c, [v.v]⟩
           rw [h_float_eq] at hyp_eq
           -- hyp_eq : exprToFormula vm e = exprToFormula vm ⟨c, [v.v]⟩
           have h_eq_expr := exprToFormula_eq_of_eq_frame hyp_eq.symm
@@ -2738,34 +2710,34 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
       -- Unpack the formula equality
       let vm := varMapOfFrame fr
       have h_eq' : exprToFormula vm e = (v.type, [Metamath.Sym.var v]) := h_eq.symm
-      unfold exprToFormula exprToMarioExpr at h_eq'
+      unfold exprToFormula exprToDeclarativeExpr at h_eq'
       have h_parts := Prod.mk.inj h_eq'
       -- h_parts.1 : e.typecode.c = v.type
-      -- h_parts.2 : e.syms.map toMarioSym = [.var v]
-      -- From h_parts.2, e.syms is a singleton [s] with toMarioSym vm s = .var v
+      -- h_parts.2 : e.syms.map toDeclarativeSym = [.var v]
+      -- From h_parts.2, e.syms is a singleton [s] with toDeclarativeSym vm s = .var v
       match h_syms : e.syms with
       | [] =>
-          -- Contradiction: [].map toMarioSym = [] ≠ [.var v]
+          -- Contradiction: [].map toDeclarativeSym = [] ≠ [.var v]
           simp only [h_syms, List.map_nil] at h_parts
           cases h_parts.2
       | [s] =>
-          -- e.syms = [s] and [toMarioSym vm s] = [.var v]
+          -- e.syms = [s] and [toDeclarativeSym vm s] = [.var v]
           simp only [h_syms, List.map_cons, List.map_nil] at h_parts
           -- h_parts.1 : e.typecode.c = v.type
-          -- h_parts.2 : [toMarioSym vm s] = [.var v]
+          -- h_parts.2 : [toDeclarativeSym vm s] = [.var v]
           -- Extract the element equality
-          have h_toMario : toMarioSym vm s = Metamath.Sym.var v := by
+          have h_toDeclarative : toDeclarativeSym vm s = Metamath.Sym.var v := by
             have := List.cons.inj h_parts.2
             exact this.1
           have h_findVR : findVR vm ⟨s⟩ = some v := by
-            unfold toMarioSym at h_toMario
+            unfold toDeclarativeSym at h_toDeclarative
             match h_find : findVR vm ⟨s⟩ with
             | none =>
-                simp only [h_find] at h_toMario
-                cases h_toMario  -- .const s ≠ .var v
+                simp only [h_find] at h_toDeclarative
+                cases h_toDeclarative  -- .const s ≠ .var v
             | some vr =>
-                simp only [h_find] at h_toMario
-                have h_vr_eq := Metamath.Sym.var.inj h_toMario
+                simp only [h_find] at h_toDeclarative
+                have h_vr_eq := Metamath.Sym.var.inj h_toDeclarative
                 rw [h_vr_eq]
           -- Get the floating hypothesis for this variable
           have h_mem := findVR_mem_of_some h_findVR
@@ -2796,13 +2768,13 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
       | s :: s' :: rest =>
           -- Contradiction: list length mismatch
           simp only [h_syms, List.map_cons] at h_parts
-          -- h_parts.2 : [toMarioSym s, ...] = [.var v], length mismatch
+          -- h_parts.2 : [toDeclarativeSym s, ...] = [.var v], length mismatch
           have := List.cons.inj h_parts.2
           cases this.2
-  | ax σ h_axs h_dj h_hyps h_hyps_var h_hyps_wf ih_h ih_var =>
+  | ax σ h_axs h_dj h_hyps h_hyps_var ih_h ih_var =>
       -- Case 3: The formula comes from applying an axiom with substitution
       -- The implicit ax is a Statement such that dbToAxioms Γ ax
-      -- σ : MarioVR → MarioExpr
+      -- σ : DeclarativeVR → DeclarativeExpr
       -- h_dj : DJ.subst σ ax.ctx.dj (frameToContext fr).dj
       -- h_hyps : ∀ h ∈ ax.ctx.hyps, Provable (dbToAxioms Γ) (frameToContext fr) (h.subst σ)
       -- h_hyps_var : ∀ v ∈ ax.vars, Provable (dbToAxioms Γ) (frameToContext fr) (v.type, σ v)
@@ -2820,7 +2792,7 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
       let vmAx := varMapOfFrame frAx
 
       -- Step 2: Define our substitution σ'
-      let σ' := marioSubstToSpec vmAx vm σ
+      let σ' := declarativeSubstToSpec vmAx vm σ
 
       -- Step 3: Build Provable for the goal expression
       -- The key is that:
@@ -2828,7 +2800,7 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
       -- - h_fmla_eq : ax.fmla = exprToFormula vmAx eAx
       -- We need to connect these via the substitution correspondence
 
-      -- For now, use the direct structure from fromMarioFormula
+      -- For now, use the direct structure from fromDeclarativeFormula
       -- The goal e is given by h_eq, so we just need to prove Provable Γ fr e
 
       -- The structure for ProofValid.useAxiom:
@@ -2848,17 +2820,17 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
       -- PART B: Typecode preservation for floating hypotheses
       have h_typecode : ∀ c v, Hyp.floating c v ∈ frAx.hyps → (σ' v).typecode = c := by
         intro c v h_float
-        exact marioSubstToSpec_float_typecode h_floatUnique h_float
+        exact declarativeSubstToSpec_float_typecode h_floatUnique h_float
 
       -- PART C: DV constraint preservation (DJ.subst → dvOK)
       -- h_dj ensures variables in substituted expressions from disjoint axiom
       -- variables are disjoint in the theorem's context.
       have h_dvOK : Spec.dvOK fr.vars frAx.dv fr.dv σ' := by
-        -- Rewrite h_dj using h_ctx_eq to work with dvListToMarioDJ
-        have h_ctx_dj : (frameToContext frAx).dj = dvListToMarioDJ vmAx frAx.dv := rfl
-        have h_fr_dj : (frameToContext fr).dj = dvListToMarioDJ vm fr.dv := rfl
+        -- Rewrite h_dj using h_ctx_eq to work with dvListToDeclarativeDJ
+        have h_ctx_dj : (frameToContext frAx).dj = dvListToDeclarativeDJ vmAx frAx.dv := rfl
+        have h_fr_dj : (frameToContext fr).dj = dvListToDeclarativeDJ vm fr.dv := rfl
         rw [h_ctx_eq, h_ctx_dj, h_fr_dj] at h_dj
-        -- Now h_dj : DJ.subst σ (dvListToMarioDJ vmAx frAx.dv) (dvListToMarioDJ vm fr.dv)
+        -- Now h_dj : DJ.subst σ (dvListToDeclarativeDJ vmAx frAx.dv) (dvListToDeclarativeDJ vm fr.dv)
 
         -- Unfold dvOK goal and introduce variables
         unfold Spec.dvOK
@@ -2910,8 +2882,8 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
                   exact h_dvWf.2 v' h_vw_mem
 
                 -- Step 2: Construct DJ.disj using vr_v' ≠ vr_w'
-                have h_dj_vr : (dvListToMarioDJ vmAx frAx.dv).disj vr_v' vr_w' := by
-                  simp only [dvListToMarioDJ, Metamath.DJ.mk']
+                have h_dj_vr : (dvListToDeclarativeDJ vmAx frAx.dv).disj vr_v' vr_w' := by
+                  simp only [dvListToDeclarativeDJ, Metamath.DJ.mk']
                   constructor
                   · exact h_vr_neq
                   · left
@@ -2920,14 +2892,14 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
 
                 -- Step 3: Apply h_dj to get Expr.disjoint
                 have h_expr_disj := h_dj vr_v' vr_w' h_dj_vr
-                -- h_expr_disj : (σ vr_v').disjoint (dvListToMarioDJ vm fr.dv) (σ vr_w')
+                -- h_expr_disj : (σ vr_v').disjoint (dvListToDeclarativeDJ vm fr.dv) (σ vr_w')
                 unfold Metamath.Expr.disjoint at h_expr_disj
 
-                -- Step 3: Connect σ' to σ via marioSubstToSpec
-                have h_sigma_v' : σ' v' = ⟨⟨vr_v'.type⟩, fromMarioExpr vm (σ vr_v')⟩ :=
-                  marioSubstToSpec_findVR h_findVR_v'
-                have h_sigma_w' : σ' w' = ⟨⟨vr_w'.type⟩, fromMarioExpr vm (σ vr_w')⟩ :=
-                  marioSubstToSpec_findVR h_findVR_w'
+                -- Step 3: Connect σ' to σ via declarativeSubstToSpec
+                have h_sigma_v' : σ' v' = ⟨⟨vr_v'.type⟩, fromDeclarativeExpr vm (σ vr_v')⟩ :=
+                  declarativeSubstToSpec_findVR h_findVR_v'
+                have h_sigma_w' : σ' w' = ⟨⟨vr_w'.type⟩, fromDeclarativeExpr vm (σ vr_w')⟩ :=
+                  declarativeSubstToSpec_findVR h_findVR_w'
 
                 -- Step 4: Show vr_v' ∈ ax.vars via floating hypothesis membership,
                 -- then use h_hyps_var to get Provable for the substituted expression.
@@ -2938,26 +2910,26 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
                   -- 2. By var_mem_iff_float, there's a floating hypothesis for v'
                   obtain ⟨c_float, h_float_in⟩ := var_mem_iff_float.mp h_v'_in_vars
                   -- 3. This hypothesis maps into (frameToContext frAx).hyps
-                  have h_hyp_in_ctx : hypToMarioFormula vmAx (Hyp.floating c_float v') ∈
-                      (frameToContext frAx).hyps := hypToMarioFormula_mem h_float_in
+                  have h_hyp_in_ctx : hypToDeclarativeFormula vmAx (Hyp.floating c_float v') ∈
+                      (frameToContext frAx).hyps := hypToDeclarativeFormula_mem h_float_in
                   -- 4. The floating formula's .2 is [Sym.var vr_v']
-                  have h_float_eq := hypToMarioFormula_floating_expr vmAx c_float v' h_findVR_v'
-                  have h_snd_eq : (hypToMarioFormula vmAx (Hyp.floating c_float v')).2 =
+                  have h_float_eq := hypToDeclarativeFormula_floating_expr vmAx c_float v' h_findVR_v'
+                  have h_snd_eq : (hypToDeclarativeFormula vmAx (Hyp.floating c_float v')).2 =
                       [Metamath.Sym.var vr_v'] := by
                     rw [h_float_eq]
-                    unfold exprToFormula exprToMarioExpr
+                    unfold exprToFormula exprToDeclarativeExpr
                     simp only [List.map_cons, List.map_nil]
-                    exact congrArg (fun x => [x]) (toMarioSym_var h_findVR_v')
+                    exact congrArg (fun x => [x]) (toDeclarativeSym_var h_findVR_v')
                   -- 5. vr_v' ∈ [Sym.var vr_v'].vars
                   have h_vr_in_snd : vr_v' ∈ Metamath.Expr.vars [Metamath.Sym.var vr_v'] := by
                     simp only [Metamath.Expr.vars, List.filterMap_cons, List.filterMap_nil]
                     exact List.mem_singleton_self _
                   -- 6. Therefore vr_v' ∈ ax.vars (via h_ctx_eq rewriting ax.ctx)
                   simp only [Metamath.Statement.vars, List.mem_flatMap, h_ctx_eq]
-                  refine ⟨hypToMarioFormula vmAx (Hyp.floating c_float v'), ?_, ?_⟩
+                  refine ⟨hypToDeclarativeFormula vmAx (Hyp.floating c_float v'), ?_, ?_⟩
                   · right; exact h_hyp_in_ctx
                   · rw [h_snd_eq]; exact h_vr_in_snd)
-                have h_sep_v := supported_const_separation h_wf_strong h_fr_disjoint h_vr_v'_prov
+                have h_sep_v := frameDerivable_const_separation h_wf_strong h_fr_disjoint h_vr_v'_prov
                 have h_wf_v : ∀ c, Metamath.Sym.const c ∈ (σ vr_v') → Variable.mk c ∉ fr.vars := h_sep_v
 
                 have h_vr_w'_prov := h_hyps_var vr_w' (by
@@ -2967,26 +2939,26 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
                   -- 2. By var_mem_iff_float, there's a floating hypothesis for w'
                   obtain ⟨c_float, h_float_in⟩ := var_mem_iff_float.mp h_w'_in_vars
                   -- 3. This hypothesis maps into (frameToContext frAx).hyps
-                  have h_hyp_in_ctx : hypToMarioFormula vmAx (Hyp.floating c_float w') ∈
-                      (frameToContext frAx).hyps := hypToMarioFormula_mem h_float_in
+                  have h_hyp_in_ctx : hypToDeclarativeFormula vmAx (Hyp.floating c_float w') ∈
+                      (frameToContext frAx).hyps := hypToDeclarativeFormula_mem h_float_in
                   -- 4. The floating formula's .2 is [Sym.var vr_w']
-                  have h_float_eq := hypToMarioFormula_floating_expr vmAx c_float w' h_findVR_w'
-                  have h_snd_eq : (hypToMarioFormula vmAx (Hyp.floating c_float w')).2 =
+                  have h_float_eq := hypToDeclarativeFormula_floating_expr vmAx c_float w' h_findVR_w'
+                  have h_snd_eq : (hypToDeclarativeFormula vmAx (Hyp.floating c_float w')).2 =
                       [Metamath.Sym.var vr_w'] := by
                     rw [h_float_eq]
-                    unfold exprToFormula exprToMarioExpr
+                    unfold exprToFormula exprToDeclarativeExpr
                     simp only [List.map_cons, List.map_nil]
-                    exact congrArg (fun x => [x]) (toMarioSym_var h_findVR_w')
+                    exact congrArg (fun x => [x]) (toDeclarativeSym_var h_findVR_w')
                   -- 5. vr_w' ∈ [Sym.var vr_w'].vars
                   have h_vr_in_snd : vr_w' ∈ Metamath.Expr.vars [Metamath.Sym.var vr_w'] := by
                     simp only [Metamath.Expr.vars, List.filterMap_cons, List.filterMap_nil]
                     exact List.mem_singleton_self _
                   -- 6. Therefore vr_w' ∈ ax.vars (via h_ctx_eq rewriting ax.ctx)
                   simp only [Metamath.Statement.vars, List.mem_flatMap, h_ctx_eq]
-                  refine ⟨hypToMarioFormula vmAx (Hyp.floating c_float w'), ?_, ?_⟩
+                  refine ⟨hypToDeclarativeFormula vmAx (Hyp.floating c_float w'), ?_, ?_⟩
                   · right; exact h_hyp_in_ctx
                   · rw [h_snd_eq]; exact h_vr_in_snd)
-                have h_sep_w := supported_const_separation h_wf_strong h_fr_disjoint h_vr_w'_prov
+                have h_sep_w := frameDerivable_const_separation h_wf_strong h_fr_disjoint h_vr_w'_prov
                 have h_wf_w : ∀ c, Metamath.Sym.const c ∈ (σ vr_w') → Variable.mk c ∉ fr.vars := h_sep_w
 
                 -- Step 5: Extract VRs from memberships
@@ -2994,17 +2966,17 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
                 simp only [h_sigma_w', Spec.varsInExpr] at h_y'_mem
 
                 -- VR well-formedness from provable_wellformed
-                have h_vr_wf_v' : MarioExprWellFormed fr (σ vr_v') :=
-                  supported_wellformed h_vr_v'_prov
-                have h_vr_wf_w' : MarioExprWellFormed fr (σ vr_w') :=
-                  supported_wellformed h_vr_w'_prov
+                have h_vr_wf_v' : DeclarativeExprWellFormed fr (σ vr_v') :=
+                  frameDerivable_wellFormed h_vr_v'_prov
+                have h_vr_wf_w' : DeclarativeExprWellFormed fr (σ vr_w') :=
+                  frameDerivable_wellFormed h_vr_w'_prov
 
-                obtain ⟨x_vr, h_x_vr_in, h_x_vr_findVar⟩ := fromMarioFormula_varsInExpr_to_vr h_x'_mem h_wf_v h_vr_wf_v'
-                obtain ⟨y_vr, h_y_vr_in, h_y_vr_findVar⟩ := fromMarioFormula_varsInExpr_to_vr h_y'_mem h_wf_w h_vr_wf_w'
+                obtain ⟨x_vr, h_x_vr_in, h_x_vr_findVar⟩ := fromDeclarativeFormula_varsInExpr_to_vr h_x'_mem h_wf_v h_vr_wf_v'
+                obtain ⟨y_vr, h_y_vr_in, h_y_vr_findVar⟩ := fromDeclarativeFormula_varsInExpr_to_vr h_y'_mem h_wf_w h_vr_wf_w'
 
                 -- Step 6: Apply disjointness and convert back
                 have h_xy_dj := h_expr_disj x_vr y_vr h_x_vr_in h_y_vr_in
-                exact dvListToMarioDJ_to_dvRel h_xy_dj h_x_vr_findVar h_y_vr_findVar
+                exact dvListToDeclarativeDJ_to_dvRel h_xy_dj h_x_vr_findVar h_y_vr_findVar
 
       -- PART D: The result expression
       -- From h_eq : ax.fmla.subst σ = exprToFormula vm e
@@ -3025,11 +2997,11 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
 
         -- Extract components from h_subst_eq
         -- Formula.subst σ (c, me) = (c, me.subst σ)
-        -- So h_subst_eq : (eAx.typecode.c, (exprToMarioExpr vmAx eAx).subst σ) = (e.typecode.c, exprToMarioExpr vm e)
+        -- So h_subst_eq : (eAx.typecode.c, (exprToDeclarativeExpr vmAx eAx).subst σ) = (e.typecode.c, exprToDeclarativeExpr vm e)
         unfold exprToFormula at h_subst_eq
         have h_pair := Prod.mk.inj h_subst_eq
         -- h_pair.1 : eAx.typecode.c = e.typecode.c
-        -- h_pair.2 : (exprToMarioExpr vmAx eAx).subst σ = exprToMarioExpr vm e
+        -- h_pair.2 : (exprToDeclarativeExpr vmAx eAx).subst σ = exprToDeclarativeExpr vm e
 
         -- Goal: applySubst frAx.vars σ' eAx = e
         -- Show via Expr.ext (typecode match + syms match)
@@ -3042,51 +3014,51 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
           rw [h_tc_apply]
           exact h_pair.1
 
-        -- Symbols: use exprToMarioExpr_applySubst_eq_subst
-        have h_apply_subst : exprToMarioExpr vm (Spec.applySubst frAx.vars σ' eAx) =
-            (exprToMarioExpr vmAx eAx).subst (toMarioSubst vmAx vm σ') :=
-          exprToMarioExpr_applySubst_eq_subst h_wf h_lookup h_fr_disjoint
+        -- Symbols: use exprToDeclarativeExpr_applySubst_eq_subst
+        have h_apply_subst : exprToDeclarativeExpr vm (Spec.applySubst frAx.vars σ' eAx) =
+            (exprToDeclarativeExpr vmAx eAx).subst (toDeclarativeSubst vmAx vm σ') :=
+          exprToDeclarativeExpr_applySubst_eq_subst h_wf h_lookup h_fr_disjoint
 
-        -- Need to show: toMarioSubst vmAx vm σ' = σ on VRs in exprToMarioExpr vmAx eAx
+        -- Need to show: toDeclarativeSubst vmAx vm σ' = σ on VRs in exprToDeclarativeExpr vmAx eAx
         -- This requires the roundtrip theorem with well-formedness
-        have h_subst_ext : (exprToMarioExpr vmAx eAx).subst (toMarioSubst vmAx vm σ') =
-                           (exprToMarioExpr vmAx eAx).subst σ := by
+        have h_subst_ext : (exprToDeclarativeExpr vmAx eAx).subst (toDeclarativeSubst vmAx vm σ') =
+                           (exprToDeclarativeExpr vmAx eAx).subst σ := by
           -- Use Expr_subst_ext to reduce to pointwise equality on VRs
           apply Expr_subst_ext
           intro vr h_vr_mem
-          -- vr ∈' exprToMarioExpr vmAx eAx
-          -- VRs in exprToMarioExpr come from variables in eAx that are in frAx.vars
+          -- vr ∈' exprToDeclarativeExpr vmAx eAx
+          -- VRs in exprToDeclarativeExpr come from variables in eAx that are in frAx.vars
           -- For such VRs, findVar vmAx vr = some v for some v
 
           -- Get findVar for vr from membership in axiom expression
           have h_vr_in_varmap : ∃ v, findVar vmAx vr = some v := by
-            obtain ⟨s, _, h_find⟩ := exprToMarioExpr_mem_extract h_vr_mem
+            obtain ⟨s, _, h_find⟩ := exprToDeclarativeExpr_mem_extract h_vr_mem
             exact ⟨⟨s⟩, findVR_findVar_inverse_frame h_find⟩
 
           obtain ⟨v, h_findVar⟩ := h_vr_in_varmap
 
           -- Get well-formedness for σ vr from IH
-          -- vr is in ax.vars (implicit) because it appears in exprToMarioExpr vmAx eAx = ax.fmla.snd
+          -- vr is in ax.vars (implicit) because it appears in exprToDeclarativeExpr vmAx eAx = ax.fmla.snd
           -- Pass membership proof directly to h_hyps_var (Lean infers the target set)
           have h_vr_prov := h_hyps_var vr (by
             simp only [Metamath.Statement.vars, List.flatMap_cons, List.mem_append]
             left
             -- vr ∈' ax.fmla.snd where ax.fmla = exprToFormula vmAx eAx (from h_fmla_eq)
-            have h_fmla_snd_eq : (exprToFormula vmAx eAx).snd = exprToMarioExpr vmAx eAx := rfl
+            have h_fmla_snd_eq : (exprToFormula vmAx eAx).snd = exprToDeclarativeExpr vmAx eAx := rfl
             rw [h_fmla_eq, h_fmla_snd_eq]
-            exact Expr_vars_iff_mem.mpr h_vr_mem)
+            exact Metamath.Expr.mem_vars_iff.mpr h_vr_mem)
 
-          -- MarioExprWellFormed: VRs in σ vr are in target frame
-          have h_wf_vr : MarioExprWellFormed fr (σ vr) :=
-            supported_wellformed h_vr_prov
+          -- DeclarativeExprWellFormed: VRs in σ vr are in target frame
+          have h_wf_vr : DeclarativeExprWellFormed fr (σ vr) :=
+            frameDerivable_wellFormed h_vr_prov
 
-          -- MarioExprConstSeparated: constants in σ vr aren't variable names
-          -- Convert MarioExprConstSep to MarioExprConstSeparated via varMapDomain_ofFrame
-          have h_sep_vr : MarioExprConstSeparated fr (σ vr) := by
-            have h_constSep : MarioExprConstSep fr (σ vr) :=
-              supported_const_separation h_wf_strong h_fr_disjoint h_vr_prov
-            -- MarioExprConstSep says: Variable.mk c ∉ fr.vars
-            -- MarioExprConstSeparated says: findVR vm ⟨c⟩ = none
+          -- DeclarativeExprConstSeparated: constants in σ vr aren't variable names
+          -- Convert DeclarativeExprConstSep to DeclarativeExprConstSeparated via varMapDomain_ofFrame
+          have h_sep_vr : DeclarativeExprConstSeparated fr (σ vr) := by
+            have h_constSep : DeclarativeExprConstSep fr (σ vr) :=
+              frameDerivable_const_separation h_wf_strong h_fr_disjoint h_vr_prov
+            -- DeclarativeExprConstSep says: Variable.mk c ∉ fr.vars
+            -- DeclarativeExprConstSeparated says: findVR vm ⟨c⟩ = none
             -- These are equivalent by varMapDomain_ofFrame
             intro c h_c_mem
             have h_not_in_vars := h_constSep c h_c_mem
@@ -3100,16 +3072,16 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
                 exact absurd h_in_vars h_not_in_vars
 
           -- Apply roundtrip theorem
-          exact toMarioSubst_marioSubstToSpec_roundtrip
+          exact toDeclarativeSubst_declarativeSubstToSpec_roundtrip
             h_floatVarNoDup h_fr_nodup h_findVar h_wf_vr h_sep_vr
 
-        -- Combine: exprToMarioExpr vm (applySubst ...) = exprToMarioExpr vm e
-        have h_expr_eq : exprToMarioExpr vm (Spec.applySubst frAx.vars σ' eAx) = exprToMarioExpr vm e := by
+        -- Combine: exprToDeclarativeExpr vm (applySubst ...) = exprToDeclarativeExpr vm e
+        have h_expr_eq : exprToDeclarativeExpr vm (Spec.applySubst frAx.vars σ' eAx) = exprToDeclarativeExpr vm e := by
           rw [h_apply_subst, h_subst_ext, h_pair.2]
 
         -- By injectivity, get symbol equality
         have h_syms_eq : (Spec.applySubst frAx.vars σ' eAx).syms = e.syms :=
-          exprToMarioExpr_syms_inj_frame h_expr_eq
+          exprToDeclarativeExpr_syms_inj_frame h_expr_eq
 
         -- Construct the expression equality
         have h_tc_full : (Spec.applySubst frAx.vars σ' eAx).typecode = e.typecode := by
@@ -3225,36 +3197,36 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
         cases hyp with
         | essential e_hyp =>
             -- ih gives Provable after formula conversion
-            -- ax.ctx.hyps = (frameToContext frAx).hyps = frAx.hyps.map (hypToMarioFormula vmAx)
-            have h_formula_in : hypToMarioFormula vmAx (Hyp.essential e_hyp) ∈
-                (frameToContext frAx).hyps := hypToMarioFormula_mem h_in
+            -- ax.ctx.hyps = (frameToContext frAx).hyps = frAx.hyps.map (hypToDeclarativeFormula vmAx)
+            have h_formula_in : hypToDeclarativeFormula vmAx (Hyp.essential e_hyp) ∈
+                (frameToContext frAx).hyps := hypToDeclarativeFormula_mem h_in
             rw [← h_ctx_eq] at h_formula_in
 
             -- Prove formula equality using substitution correspondence
-            have h_formula_eq : (hypToMarioFormula vmAx (Hyp.essential e_hyp)).subst σ =
+            have h_formula_eq : (hypToDeclarativeFormula vmAx (Hyp.essential e_hyp)).subst σ =
                 exprToFormula vm (Spec.applySubst frAx.vars σ' e_hyp) := by
-              unfold hypToMarioFormula exprToFormula
+              unfold hypToDeclarativeFormula exprToFormula
               simp only [Metamath.Formula.subst]
               apply Prod.ext
               · -- Typecode equality: applySubst preserves typecode
                 simp only [Spec.applySubst]
               · -- Expression equality via roundtrip
-                -- Step 1: exprToMarioExpr_applySubst_eq_subst_hyp gives direction with toMarioSubst
-                have h_apply_subst : exprToMarioExpr vm (Spec.applySubst frAx.vars σ' e_hyp) =
-                    Metamath.Expr.subst (toMarioSubst vmAx vm σ') (exprToMarioExpr vmAx e_hyp) :=
-                  exprToMarioExpr_applySubst_eq_subst_hyp h_wf h_lookup h_in h_fr_disjoint
+                -- Step 1: exprToDeclarativeExpr_applySubst_eq_subst_hyp gives direction with toDeclarativeSubst
+                have h_apply_subst : exprToDeclarativeExpr vm (Spec.applySubst frAx.vars σ' e_hyp) =
+                    Metamath.Expr.subst (toDeclarativeSubst vmAx vm σ') (exprToDeclarativeExpr vmAx e_hyp) :=
+                  exprToDeclarativeExpr_applySubst_eq_subst_hyp h_wf h_lookup h_in h_fr_disjoint
 
-                -- Step 2: Show toMarioSubst vmAx vm σ' = σ extensionally on vars in e_hyp
-                have h_subst_ext : Metamath.Expr.subst (toMarioSubst vmAx vm σ') (exprToMarioExpr vmAx e_hyp) =
-                    Metamath.Expr.subst σ (exprToMarioExpr vmAx e_hyp) := by
+                -- Step 2: Show toDeclarativeSubst vmAx vm σ' = σ extensionally on vars in e_hyp
+                have h_subst_ext : Metamath.Expr.subst (toDeclarativeSubst vmAx vm σ') (exprToDeclarativeExpr vmAx e_hyp) =
+                    Metamath.Expr.subst σ (exprToDeclarativeExpr vmAx e_hyp) := by
                   apply Expr_subst_ext
                   intro vr h_vr_mem
-                  -- vr appears in exprToMarioExpr vmAx e_hyp
+                  -- vr appears in exprToDeclarativeExpr vmAx e_hyp
                   -- Need: findVar vmAx vr = some v, WF, and constSep for roundtrip
 
                   -- Get findVar for vr from membership in hypothesis expression
                   have h_vr_in_varmap : ∃ v, findVar vmAx vr = some v := by
-                    obtain ⟨s, _, h_find⟩ := exprToMarioExpr_mem_extract h_vr_mem
+                    obtain ⟨s, _, h_find⟩ := exprToDeclarativeExpr_mem_extract h_vr_mem
                     exact ⟨⟨s⟩, findVR_findVar_inverse_frame h_find⟩
                   obtain ⟨v, h_findVar⟩ := h_vr_in_varmap
 
@@ -3262,20 +3234,20 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
                   -- Use h_hyps_var directly with an inline membership proof
                   have h_vr_prov := h_hyps_var vr (by
                     simp only [Metamath.Statement.vars, List.mem_flatMap, h_ctx_eq, h_fmla_eq]
-                    have h_hyp_in_ctx : hypToMarioFormula vmAx (Hyp.essential e_hyp) ∈
-                        (frameToContext frAx).hyps := hypToMarioFormula_mem h_in
-                    have h_snd_eq : (hypToMarioFormula vmAx (Hyp.essential e_hyp)).snd =
-                        exprToMarioExpr vmAx e_hyp := rfl
-                    refine ⟨hypToMarioFormula vmAx (Hyp.essential e_hyp), List.mem_cons_of_mem _ h_hyp_in_ctx, ?_⟩
+                    have h_hyp_in_ctx : hypToDeclarativeFormula vmAx (Hyp.essential e_hyp) ∈
+                        (frameToContext frAx).hyps := hypToDeclarativeFormula_mem h_in
+                    have h_snd_eq : (hypToDeclarativeFormula vmAx (Hyp.essential e_hyp)).snd =
+                        exprToDeclarativeExpr vmAx e_hyp := rfl
+                    refine ⟨hypToDeclarativeFormula vmAx (Hyp.essential e_hyp), List.mem_cons_of_mem _ h_hyp_in_ctx, ?_⟩
                     rw [h_snd_eq]
-                    exact Expr_vars_iff_mem.mpr h_vr_mem)
+                    exact Metamath.Expr.mem_vars_iff.mpr h_vr_mem)
 
                   -- Get well-formedness and const-separation from h_vr_prov
-                  have h_wf_vr : MarioExprWellFormed fr (σ vr) :=
-                    supported_wellformed h_vr_prov
-                  have h_sep_vr : MarioExprConstSeparated fr (σ vr) := by
-                    have h_constSep : MarioExprConstSep fr (σ vr) :=
-                      supported_const_separation h_wf_strong h_fr_disjoint h_vr_prov
+                  have h_wf_vr : DeclarativeExprWellFormed fr (σ vr) :=
+                    frameDerivable_wellFormed h_vr_prov
+                  have h_sep_vr : DeclarativeExprConstSeparated fr (σ vr) := by
+                    have h_constSep : DeclarativeExprConstSep fr (σ vr) :=
+                      frameDerivable_const_separation h_wf_strong h_fr_disjoint h_vr_prov
                     intro c h_c_mem
                     have h_not_in_vars := h_constSep c h_c_mem
                     cases h_find : findVR vm ⟨c⟩ with
@@ -3284,16 +3256,16 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
                         have h_in_vars := (varMapDomain_ofFrame fr ⟨c⟩).2 ⟨vr', h_find⟩
                         exact absurd h_in_vars h_not_in_vars
 
-                  -- Apply roundtrip (goal is toMarioSubst vmAx vm σ' vr = σ vr)
-                  exact toMarioSubst_marioSubstToSpec_roundtrip
+                  -- Apply roundtrip (goal is toDeclarativeSubst vmAx vm σ' vr = σ vr)
+                  exact toDeclarativeSubst_declarativeSubstToSpec_roundtrip
                     h_floatVarNoDup h_fr_nodup h_findVar h_wf_vr h_sep_vr
 
                 -- Combine: LHS = RHS (Prod.snd reduces to the second component)
-                show Metamath.Expr.subst σ (exprToMarioExpr vmAx e_hyp) =
-                     exprToMarioExpr vm (Spec.applySubst frAx.vars σ' e_hyp)
+                show Metamath.Expr.subst σ (exprToDeclarativeExpr vmAx e_hyp) =
+                     exprToDeclarativeExpr vm (Spec.applySubst frAx.vars σ' e_hyp)
                 exact (h_apply_subst.trans h_subst_ext).symm
 
-            exact ih_h (hypToMarioFormula vmAx (Hyp.essential e_hyp)) h_formula_in h_formula_eq
+            exact ih_h (hypToDeclarativeFormula vmAx (Hyp.essential e_hyp)) h_formula_in h_formula_eq
         | floating c v =>
             -- ih_var gives Provable for σ' v
             -- Get the VR for v
@@ -3304,44 +3276,44 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
                 (fun f => Metamath.Expr.vars f.2)
                 ((exprToFormula vmAx eAx) :: (frameToContext frAx).hyps)) := by
               simp only [List.mem_flatMap]
-              have h_hyp_in_ctx : hypToMarioFormula vmAx (Hyp.floating c v) ∈
-                  (frameToContext frAx).hyps := hypToMarioFormula_mem h_in
-              have h_float_eq := hypToMarioFormula_floating_expr vmAx c v h_findVR
-              have h_snd_eq : (hypToMarioFormula vmAx (Hyp.floating c v)).2 =
+              have h_hyp_in_ctx : hypToDeclarativeFormula vmAx (Hyp.floating c v) ∈
+                  (frameToContext frAx).hyps := hypToDeclarativeFormula_mem h_in
+              have h_float_eq := hypToDeclarativeFormula_floating_expr vmAx c v h_findVR
+              have h_snd_eq : (hypToDeclarativeFormula vmAx (Hyp.floating c v)).2 =
                   [Metamath.Sym.var vr] := by
                 rw [h_float_eq]
-                unfold exprToFormula exprToMarioExpr
+                unfold exprToFormula exprToDeclarativeExpr
                 simp only [List.map_cons, List.map_nil]
-                exact congrArg (fun x => [x]) (toMarioSym_var h_findVR)
+                exact congrArg (fun x => [x]) (toDeclarativeSym_var h_findVR)
               have h_vr_in_snd : vr ∈ Metamath.Expr.vars [Metamath.Sym.var vr] := by
                 simp only [Metamath.Expr.vars, List.filterMap_cons, List.filterMap_nil]
                 exact List.mem_singleton_self _
-              exact ⟨hypToMarioFormula vmAx (Hyp.floating c v), List.mem_cons_of_mem _ h_hyp_in_ctx, h_snd_eq ▸ h_vr_in_snd⟩
+              exact ⟨hypToDeclarativeFormula vmAx (Hyp.floating c v), List.mem_cons_of_mem _ h_hyp_in_ctx, h_snd_eq ▸ h_vr_in_snd⟩
 
             -- Use rewriting to match h_hyps_var and ih_var expected type
             have h_vr_in_ax_vars : vr ∈ ((exprToFormula vmAx eAx) :: (frameToContext frAx).hyps).flatMap (·.2.vars) :=
               h_vr_mem_proof
 
             -- Get Mario provability
-            have h_prov_mario := h_hyps_var vr (by
+            have h_prov_declarative := h_hyps_var vr (by
               simp only [Metamath.Statement.vars, h_fmla_eq, h_ctx_eq]
               exact h_vr_in_ax_vars)
 
             -- Build formula equality: (vr.type, σ vr) = exprToFormula vm (σ' v)
-            have h_sigma_eq := marioSubstToSpec_findVR (vm := vm) (σ := σ) h_findVR
+            have h_sigma_eq := declarativeSubstToSpec_findVR (vm := vm) (σ := σ) h_findVR
             have h_formula_eq : (vr.type, σ vr) = exprToFormula vm (σ' v) := by
               -- Unfold σ' to match h_sigma_eq
-              show (vr.type, σ vr) = exprToFormula vm (marioSubstToSpec vmAx vm σ v)
+              show (vr.type, σ vr) = exprToFormula vm (declarativeSubstToSpec vmAx vm σ v)
               rw [h_sigma_eq]
               unfold exprToFormula
               apply Prod.ext
               · rfl
-              · -- fromMarioExpr/exprToMarioExpr roundtrip
-                simp only [exprToMarioExpr]
-                have h_wf_sigma := supported_wellformed h_prov_mario
-                have h_constSep := supported_const_separation h_wf_strong h_fr_disjoint h_prov_mario
-                -- Convert MarioExprConstSep to MarioExprConstSeparated
-                have h_sep_sigma : MarioExprConstSeparated fr (σ vr) := by
+              · -- fromDeclarativeExpr/exprToDeclarativeExpr roundtrip
+                simp only [exprToDeclarativeExpr]
+                have h_wf_sigma := frameDerivable_wellFormed h_prov_declarative
+                have h_constSep := frameDerivable_const_separation h_wf_strong h_fr_disjoint h_prov_declarative
+                -- Convert DeclarativeExprConstSep to DeclarativeExprConstSeparated
+                have h_sep_sigma : DeclarativeExprConstSeparated fr (σ vr) := by
                   intro s h_s_mem
                   have h_not_in_vars := h_constSep s h_s_mem
                   cases h_find : findVR vm ⟨s⟩ with
@@ -3349,7 +3321,7 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
                   | some vr' =>
                       have h_in_vars := (varMapDomain_ofFrame fr ⟨s⟩).2 ⟨vr', h_find⟩
                       exact absurd h_in_vars h_not_in_vars
-                exact (exprToMarioExpr_fromMarioExpr_wellFormed h_fr_nodup h_wf_sigma h_sep_sigma).symm
+                exact (exprToDeclarativeExpr_fromDeclarativeExpr_wellFormed h_fr_nodup h_wf_sigma h_sep_sigma).symm
 
             -- Use ih_var to get operational provability
             exact ih_var vr (by simp only [Metamath.Statement.vars, h_fmla_eq, h_ctx_eq]; exact h_vr_in_ax_vars) h_formula_eq
@@ -3403,80 +3375,37 @@ theorem mario_to_proofValid_aux {Γ : Database} {consts : ConstSet} {fr : Frame}
       exact ProofValid.useAxiom fr (needed.reverse) hyp_steps l frAx eAx σ'
         h_lookup h_dvOK h_typecode h_hyp_valid needed rfl [] (by simp)
 
-theorem mario_to_proofValid {Γ : Database} {consts : ConstSet} {fr : Frame} {e : Expr}
+theorem frameDerivable_to_proofValid {Γ : Database} {consts : ConstSet} {fr : Frame} {e : Expr}
     (h_wf : WellFormedDatabaseStrong Γ consts)
     (h_fr_nodup : FloatVarNoDup fr)
     (h_fr_disjoint : Spec.FrameVarsDisjointConsts consts fr)
-    (h_mario : SupportedProvable Γ fr (exprToFormula (varMapOfFrame fr) e)) :
+    (h_declarative : FrameDerivable Γ fr (exprToFormula (varMapOfFrame fr) e)) :
     Provable Γ fr e :=
-  mario_to_proofValid_aux h_wf h_fr_nodup h_fr_disjoint h_mario rfl
+  frameDerivable_to_proofValid_aux h_wf h_fr_nodup h_fr_disjoint h_declarative rfl
 
-/-- Completeness to canonical semantic provability, via derivation-local support. -/
-theorem semantic_to_proofValid {Γ : Database} {consts : ConstSet} {fr : Frame} {e : Expr}
-    (h_wf : WellFormedDatabaseStrong Γ consts)
-    (h_fr_nodup : FloatVarNoDup fr)
-    (h_fr_disjoint : Spec.FrameVarsDisjointConsts consts fr)
-    (h_supported : SemanticFrameSupported Γ fr)
-    (h_mario : Semantic.Provable (dbToAxioms Γ) (frameToContext fr)
-                                   (exprToFormula (varMapOfFrame fr) e)) :
-    Provable Γ fr e :=
-  mario_to_proofValid h_wf h_fr_nodup h_fr_disjoint
-    (semantic_to_supported h_supported h_mario)
-
-/-- Unconditional operational -> derivation-local supported semantic bridge. -/
-theorem operational_to_supported {Γ : Database} {consts : ConstSet} {fr : Frame} {e : Expr}
+/-- Operational provability implies frame derivability. -/
+theorem operational_to_frameDerivable {Γ : Database} {consts : ConstSet} {fr : Frame} {e : Expr}
     (h_wf : WellFormedDatabaseStrong Γ consts)
     (h_fr_disjoint : Spec.FrameVarsDisjointConsts consts fr) :
     Provable Γ fr e →
-    SupportedProvable Γ fr (exprToFormula (varMapOfFrame fr) e) := by
+    FrameDerivable Γ fr (exprToFormula (varMapOfFrame fr) e) := by
   intro h_prov
   rcases h_prov with ⟨steps, finalStack, h_valid, h_stack⟩
   rw [h_stack] at h_valid
-  exact proofValid_stack_supported h_wf.1 h_fr_disjoint h_valid e (by simp)
+  exact proofValid_stack_frameDerivable h_wf.1 h_fr_disjoint h_valid e (by simp)
 
-/-- Unconditional soundness: operational provability implies canonical semantic
-provability (no support bridge premise needed). -/
-theorem operational_to_semantic {Γ : Database} {consts : ConstSet} {fr : Frame} {e : Expr}
+/-- Soundness: operational provability implies Mario's declarative provability
+in the frame context. -/
+theorem operational_to_declarative {Γ : Database} {consts : ConstSet} {fr : Frame} {e : Expr}
     (h_wf : WellFormedDatabaseStrong Γ consts)
     (h_fr_disjoint : Spec.FrameVarsDisjointConsts consts fr) :
     Provable Γ fr e →
-    Semantic.Provable (dbToAxioms Γ) (frameToContext fr)
+    Declarative.Provable (dbToAxioms Γ) (frameToContext fr)
       (exprToFormula (varMapOfFrame fr) e) := by
   intro h_prov
   rcases h_prov with ⟨steps, finalStack, h_valid, h_stack⟩
   rw [h_stack] at h_valid
-  exact proofValid_to_mario h_wf.1 h_fr_disjoint h_valid
-
-/-! ## Main Equivalence Theorem
-
-Combines both directions to show operational ↔ semantic equivalence.
--/
-
-/-- Operational and semantic provability are equivalent under the global support assumption.
-
-    Combines `operational_to_semantic` (soundness) and `semantic_to_supported` +
-    `mario_to_proofValid` (completeness) into a single biconditional.
-
-    The extra hypothesis `h_supported : SemanticFrameSupported Γ fr` — absent from
-    the split theorems — is what `SemanticFrameSupported` buys: it lets us go from
-    `Semantic.Provable` to `SupportedProvable` without a derivation-specific witness.
-
-    For call sites that already have a `SupportedProvable` in hand, use
-    `mario_to_proofValid` directly.
--/
-theorem operational_iff_semantic {Γ : Database} {consts : ConstSet} {fr : Frame} {e : Expr}
-    (h_wf : WellFormedDatabaseStrong Γ consts)
-    (h_fr_nodup : FloatVarNoDup fr)
-    (h_fr_disjoint : Spec.FrameVarsDisjointConsts consts fr)
-    (h_supported : SemanticFrameSupported Γ fr) :
-    Provable Γ fr e ↔
-    Semantic.Provable (dbToAxioms Γ) (frameToContext fr)
-      (exprToFormula (varMapOfFrame fr) e) := by
-  constructor
-  · -- Forward: Operational → Semantic
-    exact operational_to_semantic h_wf h_fr_disjoint
-  · -- Backward: Semantic → Operational
-    exact semantic_to_proofValid h_wf h_fr_nodup h_fr_disjoint h_supported
+  exact proofValid_to_declarative h_wf.1 h_fr_disjoint h_valid
 
 /-! ## Design Notes
 
@@ -3492,9 +3421,9 @@ theorem operational_iff_semantic {Γ : Database} {consts : ConstSet} {fr : Frame
 3. Show each ProofValid constructor corresponds to Mario.Provable
 4. For backward direction, reconstruct proof steps from Mario's derivation
 
-**Status**: COMPLETE (zero sorries)
-- Forward: `proofValid_to_mario` proven
-- Backward: `mario_to_proofValid` proven
+**Status** (no sorries): `proofValid_to_declarative` (soundness);
+`operational_to_frameDerivable` and `frameDerivable_to_proofValid` (operational
+provability is frame derivability).
 -/
 
 end Metamath.Spec.Equivalence

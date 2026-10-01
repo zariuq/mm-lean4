@@ -412,32 +412,13 @@ end ArrayListExt
 
 end List
 
-/-! ### Namespaced List.mapM axioms
+/-! ### Namespaced List.mapM properties
 
 These live in a separate namespace to avoid clutter in the List namespace.
 They represent more specialized mapM properties.
 -/
 
 namespace KernelExtras.List
-
-/-- Head of `drop`: the element at index `i` is exactly the head of `xs.drop i`. -/
-private theorem drop_eq_head_tail'
-  {α} (xs : List α) (i : Nat) (h : i < xs.length) :
-  xs.drop i = xs.get ⟨i, h⟩ :: xs.drop (i+1) := by
-  revert xs
-  induction i with
-  | zero =>
-      intro xs h
-      cases xs with
-      | nil => cases h
-      | cons x xs => rfl
-  | succ i ih =>
-      intro xs h
-      cases xs with
-      | nil => cases h
-      | cons hd tl =>
-        have : i < tl.length := Nat.lt_of_succ_lt_succ h
-        exact ih tl this
 
 /-- Option `bind` deconstruction: a convenience fact. -/
 @[simp] private theorem Option.bind_eq_some {α β} {x : Option α} {f : α → Option β} {y : β} :
@@ -744,9 +725,6 @@ original array) gives the same element. This is because push appends to the end,
 and earlier indices remain unchanged.
 
 **Batteries provides**: Array.getElem_push_lt (bounded getElem version)
-  From ParserProofs.lean line 589:
-    have h : (hyps.push l)[i] = hyps[i] := by simp only [Array.getElem_push_lt hi_old]
-
 **We need to prove**: The unsafe getElem! version.
   The connection is via the definition: getElem! i = if h : i < size then getElem i ⟨h⟩ else default
 

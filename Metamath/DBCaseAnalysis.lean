@@ -1002,47 +1002,6 @@ theorem floatCheckLoopAux_eq_foldl (db : DB) (pos : Pos) (v : String) (hyps : Li
                 exact ih db
           | _ => exact ih db
 
-open ForInStep in
-/-- Body equality: the `do`-block in the for-loop matches `yield (floatStep ...)`. -/
-private theorem loop_body_equiv (pos : Pos) (v : String) (h : String) (r : DB) :
-    (match r.find? h with
-     | some (.hyp false prevF _) =>
-       if floatVarMatches prevF v then
-         (do
-           -- the assignment `db' := ...` becomes `yield newAcc` in `forIn`
-           pure PUnit.unit
-           pure (ForInStep.yield (r.mkError pos s!"variable {v} already has $f hypothesis"))
-           : Id (ForInStep DB))
-       else
-         (do
-           pure PUnit.unit
-           pure (ForInStep.yield r) : Id (ForInStep DB))
-     | _ =>
-       (do
-         pure PUnit.unit
-         pure (ForInStep.yield r) : Id (ForInStep DB))) =
-    (match r.find? h with
-     | some (.hyp false prevF _) =>
-       if floatVarMatches prevF v then
-         ForInStep.yield (r.mkError pos s!"variable {v} already has $f hypothesis")
-       else
-         ForInStep.yield r
-     | _ => ForInStep.yield r) := by
-  -- In Id, `do pure (); pure x` is definitionally `x`. Split on `find?`.
-  cases r.find? h with
-  | none => rfl
-  | some obj =>
-      cases obj with
-      | hyp ess prevF lbl =>
-          cases ess
-          · -- non-essential hyp
-            by_cases hc : floatVarMatches prevF v
-            · simp [hc]; rfl
-            · simp [hc]; rfl
-          · -- essential hyp: body is just `yield r`
-            rfl
-      | _ => rfl
-
 /-- The forM loop in floatCheckLoop equals the tail-recursive floatCheckLoopAux on toList
 
 PROOF: We normalize the loop body and show both sides equal the same foldl.
@@ -1104,9 +1063,7 @@ theorem float_check_skipped (db : DB) (pos : Pos) (ess : Bool) (f : Formula)
 /-!
 ### Float Check Loop Lemmas
 
-**Mario's insight**: Instead of fighting with forM induction, characterize the loop result directly!
-
-Key observation: The loop either finds a duplicate or doesn't.
+The loop either finds a duplicate or doesn't.
 - If hasFloatBinding = false: no match → returns db unchanged
 - If hasFloatBinding = true: match found → returns db with error set
 
@@ -1116,7 +1073,6 @@ Strategy:
 1. Prove floatCheckLoop_spec: loop result = if hasFloatBinding then mkError else db
 2. The three lemmas follow immediately from this spec
 
-For now: Accept as axioms, prove the spec later via forM induction.
 -/
 
 /-- mkError preserves error when already set (local copy for this module) -/
@@ -1125,29 +1081,6 @@ private theorem mkError_preserves_error_local (db : DB) (pos : Pos) (msg : Strin
     (db.mkError pos msg).error = true := by
   unfold DB.mkError DB.error
   simp
-
-/-- insert preserves error when already set (local copy for this module) -/
-private theorem insert_preserves_error_local (db : DB) (pos : Pos) (label : String) (obj : String → Object)
-    (h : db.error = true) :
-    (db.insert pos label obj).error = true := by
-  simp only [Verify.DB.insert, Verify.DB.error] at h ⊢
-  -- h : db.error?.isSome = true
-  split
-  · -- Case: obj label is .const
-    split
-    · -- mkError case - always has error
-      simp [Verify.DB.mkError]
-    · -- no mkError, but error was already set
-      simp [h]
-  · -- non-const cases
-    simp [h]
-
-/-- withHyps preserves error (local copy for this module) -/
-private theorem withHyps_preserves_error_local (db : DB) (f : Array String → Array String)
-    (h : db.error = true) :
-    (db.withHyps f).error = true := by
-  unfold DB.withHyps DB.withFrame DB.error
-  exact h
 
 /-- floatStep preserves error when already set -/
 theorem floatStep_preserves_error_when_set (pos : Pos) (v : String) (db : DB) (h : String)

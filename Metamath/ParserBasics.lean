@@ -6,7 +6,7 @@ These establish basic facts about DB operations that are useful building blocks.
 -/
 
 import Metamath.Verify
-import Metamath.VerifyDBThms
+import Metamath.Verify.DB
 
 namespace Metamath.ParserBasics
 

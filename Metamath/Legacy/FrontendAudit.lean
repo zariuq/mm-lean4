@@ -1,4 +1,4 @@
-import Metamath.FrontendAudit
+import Metamath.Tests.FrontendSummary
 import Metamath.Legacy.FrontendBridgeExpanded
 
 namespace Metamath.Legacy.FrontendAudit

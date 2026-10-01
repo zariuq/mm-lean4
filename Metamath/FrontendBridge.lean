@@ -1,7 +1,7 @@
 import Metamath.Verify
-import Metamath.VerifyIncludeThms
-import Metamath.VerifyDBPredicateThms
-import Metamath.VerifyScopeThms
+import Metamath.Verify.Include
+import Metamath.Verify.DBPredicate
+import Metamath.Verify.Scope
 import Metamath.Spec.Frontend
 import Metamath.FrontendCertified
 
@@ -389,19 +389,19 @@ theorem includePreprocessErrorDB_insideStatement_implies_frontendGateFacts_of_ga
 
 /-- Single-pass bridge: include in-inner-scope result binds output DB and
 front-end inadmissibility. -/
-theorem checkSinglePass_inInnerScope_error_implies_frontendNotAdmissible
+theorem check_inInnerScope_error_implies_frontendNotAdmissible
     (fname : String) (config : ModeConfig) (pos depth : Nat) (inStatement : Bool)
     (h_run :
       singlePassInitialResult fname config =
         pure (.error (.inInnerScope pos depth inStatement config.allowIncludeInnerScope)))
     (h_allow : config.allowIncludeInnerScope = false)
     (h_depth : depth ≠ 0) :
-    checkSinglePass fname config =
+    check fname config =
       pure (includePreprocessErrorDB config
         (.inInnerScope pos depth inStatement config.allowIncludeInnerScope)) ∧
     ¬ IncludeDirectiveAdmissible (ModeConfig.toIncludePolicy config) depth inStatement := by
   constructor
-  · unfold checkSinglePass
+  · unfold check
     rw [h_run]
     rfl
   · have h_code :
@@ -422,19 +422,19 @@ theorem checkSinglePass_inInnerScope_error_implies_frontendNotAdmissible
 
 /-- Single-pass bridge: include inside-statement result binds output DB and
 front-end inadmissibility. -/
-theorem checkSinglePass_insideStatement_error_implies_frontendNotAdmissible
+theorem check_insideStatement_error_implies_frontendNotAdmissible
     (fname : String) (config : ModeConfig) (pos scopeDepth : Nat) (inStatement : Bool)
     (h_run :
       singlePassInitialResult fname config =
         pure (.error (.insideStatement pos scopeDepth inStatement config.allowTokenSplicing)))
     (h_allow : config.allowTokenSplicing = false)
     (h_stmt : inStatement = true) :
-    checkSinglePass fname config =
+    check fname config =
       pure (includePreprocessErrorDB config
         (.insideStatement pos scopeDepth inStatement config.allowTokenSplicing)) ∧
     ¬ IncludeDirectiveAdmissible (ModeConfig.toIncludePolicy config) scopeDepth inStatement := by
   constructor
-  · unfold checkSinglePass
+  · unfold check
     rw [h_run]
     rfl
   · have h_code :
@@ -451,10 +451,6 @@ theorem checkSinglePass_insideStatement_error_implies_frontendNotAdmissible
     have h_rhs_true : (!config.allowTokenSplicing && inStatement) = true := by
       simp [h_allow', h_stmt']
     simp [h_rhs_true] at h_rhs_false
-
-/-- Default IO checker aliases the single-pass include driver. -/
-@[simp] theorem check_eq_checkSinglePass (fname : String) (config : ModeConfig) :
-    check fname config = checkSinglePass fname config := rfl
 
 end Metamath.Verify.FrontendBridge
 
@@ -492,8 +488,7 @@ export Metamath.Verify.FrontendBridge
    includePreprocessErrorDB_inInnerScope_implies_frontendGateFacts_of_gate
    includePreprocessErrorDB_insideStatement_implies_frontendGateFacts
    includePreprocessErrorDB_insideStatement_implies_frontendGateFacts_of_gate
-   checkSinglePass_inInnerScope_error_implies_frontendNotAdmissible
-   checkSinglePass_insideStatement_error_implies_frontendNotAdmissible
-   check_eq_checkSinglePass)
+   check_inInnerScope_error_implies_frontendNotAdmissible
+   check_insideStatement_error_implies_frontendNotAdmissible)
 
 end Metamath.FrontendBridge

@@ -1,6 +1,6 @@
 import Metamath.Verify
-import Metamath.VerifyIncludeThms
-import Metamath.VerifyScopeThms
+import Metamath.Verify.Include
+import Metamath.Verify.Scope
 
 namespace Metamath.Verify.FrontendCertified
 

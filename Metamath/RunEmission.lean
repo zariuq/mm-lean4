@@ -1,7 +1,7 @@
 /-
 Execution-indexed emission chronology for the single-pass driver.
 
-`RunTrace` (PrefixWitnessCheckBytes) chains recorded `feedToken` transitions
+`RunTrace` (PrefixProvability.Checker) chains recorded `feedToken` transitions
 through `db.objects` seams only, so it certifies registry continuity — not
 that each recorded parser state belongs to one particular IO execution.
 
@@ -17,7 +17,7 @@ executable's own step functions).  Together with:
 - a *determinism theorem* — the relation admits at most one step list per
   input (and per world at the IO layers),
 
-the step list obtained from a successful `checkSinglePass` invocation is THE
+the step list obtained from a successful `check` invocation is THE
 emission chronology of that invocation: every recorded state is a state the
 run itself produced, in the order the run produced them.
 -/
@@ -30,7 +30,7 @@ namespace Metamath.RunEmission
 
 open Std (HashSet)
 open Metamath.Verify
-open Metamath.PrefixWitnessCheckBytes
+open Metamath.PrefixProvability.Checker
 open Metamath.ParserOps (ParserStateInv feedToken_maintains_stateInv)
 
 /-! ## Byte-loop emission
@@ -49,13 +49,13 @@ inductive FeedEmission (base : Nat) (arr : ByteArray) :
       FeedEmission base arr i rs s []
   /-- Whitespace while between tokens: line bookkeeping only. -/
   | wsSkip (i : Nat) (s : ParserState) (steps : List RunStep)
-      (h : i < arr.size) (h_ws : isWhitespace (arr[i]'h) = true)
+      (h : i < arr.size) (h_ws : s.db.config.isWhitespace (arr[i]'h) = true)
       (h_rest : FeedEmission base arr (i + 1) .ws
         (s.updateLine (base + i) (arr[i]'h)) steps) :
       FeedEmission base arr i .ws s steps
   /-- Whitespace terminating a token of this chunk: flush it and continue. -/
   | flushThis (i off : Nat) (s : ParserState) (steps : List RunStep)
-      (h : i < arr.size) (h_ws : isWhitespace (arr[i]'h) = true)
+      (h : i < arr.size) (h_ws : s.db.config.isWhitespace (arr[i]'h) = true)
       (h_ok : ((s.feedToken (base + off)
           (ByteSlice.mk arr off (i - off))).updateLine
             (base + i) (arr[i]'h)).db.error? = none)
@@ -67,7 +67,7 @@ inductive FeedEmission (base : Nat) (arr : ByteArray) :
   /-- Whitespace terminating a token of this chunk whose flush errors: the
   loop freezes with that flush as the final recorded transition. -/
   | flushThisFreeze (i off : Nat) (s : ParserState)
-      (h : i < arr.size) (h_ws : isWhitespace (arr[i]'h) = true)
+      (h : i < arr.size) (h_ws : s.db.config.isWhitespace (arr[i]'h) = true)
       (h_err : ((s.feedToken (base + off)
           (ByteSlice.mk arr off (i - off))).updateLine
             (base + i) (arr[i]'h)).db.error? ≠ none) :
@@ -76,7 +76,7 @@ inductive FeedEmission (base : Nat) (arr : ByteArray) :
   /-- Whitespace terminating a token spliced from the previous chunk. -/
   | flushOld (i off base' : Nat) (arrOld : ByteArray) (s : ParserState)
       (steps : List RunStep)
-      (h : i < arr.size) (h_ws : isWhitespace (arr[i]'h) = true)
+      (h : i < arr.size) (h_ws : s.db.config.isWhitespace (arr[i]'h) = true)
       (h_ok : ((s.feedToken (base' + off)
           (ByteSlice.mk (arr.copySlice 0 arrOld arrOld.size i false) off
             (arrOld.size - off + i))).updateLine
@@ -92,7 +92,7 @@ inductive FeedEmission (base : Nat) (arr : ByteArray) :
             (arrOld.size - off + i)⟩ :: steps)
   /-- Spliced-token flush whose result errors: freeze after recording it. -/
   | flushOldFreeze (i off base' : Nat) (arrOld : ByteArray) (s : ParserState)
-      (h : i < arr.size) (h_ws : isWhitespace (arr[i]'h) = true)
+      (h : i < arr.size) (h_ws : s.db.config.isWhitespace (arr[i]'h) = true)
       (h_err : ((s.feedToken (base' + off)
           (ByteSlice.mk (arr.copySlice 0 arrOld arrOld.size i false) off
             (arrOld.size - off + i))).updateLine
@@ -103,13 +103,13 @@ inductive FeedEmission (base : Nat) (arr : ByteArray) :
             (arrOld.size - off + i)⟩]
   /-- Non-whitespace while between tokens: begin a token at this index. -/
   | accumWs (i : Nat) (s : ParserState) (steps : List RunStep)
-      (h : i < arr.size) (h_ws : ¬ isWhitespace (arr[i]'h) = true)
+      (h : i < arr.size) (h_ws : ¬ s.db.config.isWhitespace (arr[i]'h) = true)
       (h_rest : FeedEmission base arr (i + 1) (.token (.this i)) s steps) :
       FeedEmission base arr i .ws s steps
   /-- Non-whitespace inside a token: extend it. -/
   | accumTok (i : Nat) (ot : ParserState.OldToken) (s : ParserState)
       (steps : List RunStep)
-      (h : i < arr.size) (h_ws : ¬ isWhitespace (arr[i]'h) = true)
+      (h : i < arr.size) (h_ws : ¬ s.db.config.isWhitespace (arr[i]'h) = true)
       (h_rest : FeedEmission base arr (i + 1) (.token ot) s steps) :
       FeedEmission base arr i (.token ot) s steps
 
@@ -149,7 +149,7 @@ theorem feed_emission_trace (base : Nat) (arr : ByteArray) (i : Nat)
     by_cases hi : i < arr.size
     · have hs' : arr.size - (i + 1) = m := by
         simp only [Nat.add_one, Nat.sub_succ, hs, Nat.pred_succ]
-      by_cases h_ws : isWhitespace arr[i] = true
+      by_cases h_ws : s.db.config.isWhitespace arr[i] = true
       · cases rs with
         | ws =>
             obtain ⟨steps, h_em, h_tr, h_si⟩ := ih (i + 1) .ws
@@ -1044,7 +1044,7 @@ theorem done_emission_seam (s : ParserState) (base : Nat)
 /-! ## Entrypoint emission
 
 `SinglePassEmission fname config w steps p w'` states that the actual
-`checkSinglePass` invocation on world `w` drives its include-aware recursion
+`check` invocation on world `w` drives its include-aware recursion
 so that `steps` is the recorded chronology, `p` the pre-`done` parser state,
 and `w'` the returned world.  Constructor premises are equations about the
 entrypoint's own IO actions applied to `w`, so the relation is single-valued
@@ -1089,17 +1089,17 @@ inductive SinglePassEmission (fname : String) (config : ModeConfig)
 list that simultaneously carries the invariant-bearing registry chronology
 from the canonical initial state to a state pointwise equal to the returned
 database. -/
-theorem checkSinglePass_emission_chronology
-    (fname : String) (config : ModeConfig) (h_cfg : config.prefixCertified)
+theorem check_emission_insertionHistory
+    (fname : String) (config : ModeConfig) (h_cfg : config.IsSound)
     (w w' : Void IO.RealWorld) (db : DB)
-    (h_run : checkSinglePass fname config w = .ok db w')
+    (h_run : check fname config w = .ok db w')
     (h_success : db.error? = none) :
     ∃ (steps : List RunStep) (p : ParserState) (q : ParserState),
       SinglePassEmission fname config w steps p w' ∧
       RunTrace (singlePassInitialState config) steps q ∧
       StepsInv steps ∧
       (∀ n, q.db.find? n = db.find? n) := by
-  unfold checkSinglePass at h_run
+  unfold check at h_run
   rw [io_bind_apply] at h_run
   split at h_run
   case h_2 e w₂ heq => exact absurd h_run (by simp)
@@ -1263,11 +1263,11 @@ open Metamath.StoredStatementSoundness.Runtime (AxiomEventOfTrace
   assertion_projection_of_find finishProof_storedStatement_prefixProvable
   toFrame_stable_of_find_mono)
 
-/-- The execution-indexed strengthening of `CertifiedRegistryChronology`:
+/-- The execution-indexed strengthening of `InsertionHistory`:
 the same subdatabase / exactly-one / payload clauses, now over a step list
 that the actual invocation emits (`SinglePassEmission`) and that is the only
 list any invocation-emission can produce (single-valuedness). -/
-def ExecutionChronology (fname : String) (config : ModeConfig)
+def ExecutionInsertionHistory (fname : String) (config : ModeConfig)
     (w w' : Void IO.RealWorld) (db : DB) : Prop :=
   ∃ (steps : List RunStep) (p q : ParserState),
     SinglePassEmission fname config w steps p w' ∧
@@ -1314,14 +1314,14 @@ def ExecutionChronology (fname : String) (config : ModeConfig)
 /-- Every accepted certified run carries its execution-indexed chronology:
 the emitted step list is the run's own, unique to the invocation, with the
 subdatabase, exactly-one creation, and bound-payload clauses over it. -/
-theorem checkSinglePass_execution_chronology_exactly_one
-    (fname : String) (config : ModeConfig) (h_cfg : config.prefixCertified)
+theorem check_execution_insertionHistory_exactly_one
+    (fname : String) (config : ModeConfig) (h_cfg : config.IsSound)
     (w w' : Void IO.RealWorld) (db : DB)
-    (h_run : checkSinglePass fname config w = .ok db w')
+    (h_run : check fname config w = .ok db w')
     (h_success : db.error? = none) :
-    ExecutionChronology fname config w w' db := by
+    ExecutionInsertionHistory fname config w w' db := by
   obtain ⟨steps, p, q, h_em, tr, si, h_pt⟩ :=
-    checkSinglePass_emission_chronology fname config h_cfg w w' db h_run
+    check_emission_insertionHistory fname config h_cfg w w' db h_run
       h_success
   have h_init_none : ∀ n,
       (singlePassInitialState config).db.find? n = none := by
@@ -1352,7 +1352,7 @@ theorem checkSinglePass_execution_chronology_exactly_one
       h_inv h_ghost h_err0 h_c
 
 /-- **Execution-indexed derived-rule elimination.**  The trace-relative
-theorem `checkSinglePass_every_theorem_provable_from_trace_axiom_events`
+theorem `check_every_theorem_provable_from_trace_axiom_events`
 strengthened to THE run's chronology: the step list is emitted by the actual
 invocation and is the only list any emission of this invocation can produce.
 Every stored `$p` statement is declaratively provable from the run-wide
@@ -1360,10 +1360,10 @@ Every stored `$p` statement is declaratively provable from the run-wide
 dependencies by cut along strict creation order, obtaining dependency
 witnesses only from earlier registry entries and interpreting each written
 proof against its pre-insertion database. -/
-theorem checkSinglePass_every_theorem_provable_from_run_axiom_events
-    (fname : String) (config : ModeConfig) (h_cfg : config.prefixCertified)
+theorem check_every_theorem_provable_from_run_axiom_events
+    (fname : String) (config : ModeConfig) (h_cfg : config.IsSound)
     (w w' : Void IO.RealWorld) (db : DB)
-    (h_run : checkSinglePass fname config w = .ok db w')
+    (h_run : check fname config w = .ok db w')
     (h_success : db.error? = none) :
     ∃ (Γ : Spec.Database) (steps : List RunStep) (p q : ParserState),
       Kernel.toDatabase db = some Γ ∧
@@ -1384,15 +1384,15 @@ theorem checkSinglePass_every_theorem_provable_from_run_axiom_events
                 (steps[idx]!).tk arr p ∧
               p.label = n ∧ f = arr ∧ lbl = n ∧
               AxiomEventOfTrace steps Γ
-                (Semantic.statementOfFrame target (Kernel.toExpr f)))
+                (StoredStatement.statementOfFrame target (Kernel.toExpr f)))
             ∨ (∃ pr : ProofState,
               FinishProofEvent (steps[idx]!).state (steps[idx]!).pos
                 (steps[idx]!).tk pr ∧
               pr.label = n ∧ pr.fmla = f ∧ pr.frame = fr ∧ lbl = n ∧
-              (Semantic.statementOfFrame target (Kernel.toExpr f)).Provable
+              (StoredStatement.statementOfFrame target (Kernel.toExpr f)).Provable
                 (AxiomEventOfTrace steps Γ))) := by
   have h_final :=
-    checkSinglePass_database_wellFormed_strong fname config h_cfg w w' db
+    check_database_wellFormed_strong fname config h_cfg w w' db
       h_run h_success
   let Γ := Classical.choose h_final
   have h_final_tail := Classical.choose_spec h_final
@@ -1403,7 +1403,7 @@ theorem checkSinglePass_every_theorem_provable_from_run_axiom_events
   have h_final_wf : WF.WellFormedDB db := h_final_tail.2.2.1
   obtain ⟨steps, p, q, h_em, h_unique, h_trace, h_steps_inv, h_pointwise,
       h_member_mono, h_origin, h_payload⟩ :=
-    checkSinglePass_execution_chronology_exactly_one fname config h_cfg w w'
+    check_execution_insertionHistory_exactly_one fname config h_cfg w w'
       db h_run h_success
   let A := AxiomEventOfTrace steps Γ
   have h_created : ∀ idx : Nat, idx < steps.length →
@@ -1413,8 +1413,8 @@ theorem checkSinglePass_every_theorem_provable_from_run_axiom_events
         ∃ target : Spec.Frame,
           Kernel.toFrame db fr = some target ∧
           Γ n = some (target, Kernel.toExpr f) ∧
-          (A (Semantic.statementOfFrame target (Kernel.toExpr f)) ∨
-            (Semantic.statementOfFrame target (Kernel.toExpr f)).Provable A) := by
+          (A (StoredStatement.statementOfFrame target (Kernel.toExpr f)) ∨
+            (StoredStatement.statementOfFrame target (Kernel.toExpr f)).Provable A) := by
     intro idx
     induction idx using Nat.strongRecOn with
     | ind idx ih =>
@@ -1436,7 +1436,7 @@ theorem checkSinglePass_every_theorem_provable_from_run_axiom_events
           _h_fresh, _h_insert, _h_trim⟩ := h_axiom
         refine ⟨target, h_target_final, h_lookup_final, Or.inl ?_⟩
         change AxiomEventOfTrace steps Γ
-          (Semantic.statementOfFrame target (Kernel.toExpr f))
+          (StoredStatement.statementOfFrame target (Kernel.toExpr f))
         exact ⟨idx, n, f, fr, lbl, target, arr, p2, h_idx, h_creates,
           h_event, h_label, h_fmla, h_lbl, h_lookup_final, rfl⟩
       · obtain ⟨pr, prefixΓ, source, h_event, h_label, h_fmla, h_frame,
@@ -1457,9 +1457,9 @@ theorem checkSinglePass_every_theorem_provable_from_run_axiom_events
               rw [h_fmla]
               exact h_prefix_provable)
         have h_source_exact :
-            (Semantic.statementOfFrame storedTarget
+            (StoredStatement.statementOfFrame storedTarget
               (Kernel.toExpr pr.fmla)).Provable A := by
-          apply Semantic.replaceDerivedAxioms h_prefix_exact
+          apply StoredStatement.replaceDerivedAxioms h_prefix_exact
           intro a ha
           obtain ⟨l, specFr, e, h_lookup_prefix, h_ctx, h_afmla⟩ := ha
           obtain ⟨f₀, fr₀, lbl₀, h_find_prefix, h_toFrame_prefix,
@@ -1483,16 +1483,16 @@ theorem checkSinglePass_every_theorem_provable_from_run_axiom_events
             rw [h_target_final₀] at h_target_from_prefix
             exact Option.some.inj h_target_from_prefix
           have h_stmt_eq :
-              a = Semantic.statementOfFrame target₀ (Kernel.toExpr f₀) := by
+              a = StoredStatement.statementOfFrame target₀ (Kernel.toExpr f₀) := by
             rw [h_target_eq, h_toExpr]
             cases a with
             | mk actx afmla =>
                 dsimp only at h_ctx h_afmla ⊢
-                unfold Semantic.statementOfFrame
+                unfold StoredStatement.statementOfFrame
                 rw [h_ctx, h_afmla]
           rw [h_stmt_eq]
           rcases h_old with h_ax | h_th
-          · exact Semantic.sourceAxiom_self_provable h_ax
+          · exact StoredStatement.sourceAxiom_self_provable h_ax
           · exact h_th
         have h_stored_eq : storedTarget = target := by
           have h_target_final' : Kernel.toFrame db pr.frame = some target := by
@@ -1515,7 +1515,7 @@ theorem checkSinglePass_every_theorem_provable_from_run_axiom_events
     apply Or.inl
     refine ⟨arr, p2, h_event, h_label, h_fmla, h_lbl, ?_⟩
     change AxiomEventOfTrace steps Γ
-      (Semantic.statementOfFrame target (Kernel.toExpr f))
+      (StoredStatement.statementOfFrame target (Kernel.toExpr f))
     exact ⟨idx, n, f, fr, lbl, target, arr, p2, h_idx, h_creates,
       h_event, h_label, h_fmla, h_lbl, h_lookup, rfl⟩
   · obtain ⟨pr, _prefixΓ, _source, h_event, h_label, h_fmla, h_frame,
@@ -1524,26 +1524,26 @@ theorem checkSinglePass_every_theorem_provable_from_run_axiom_events
     apply Or.inr
     refine ⟨pr, h_event, h_label, h_fmla, h_frame, h_lbl, ?_⟩
     rcases h_result with h_ax | h_th
-    · exact Semantic.sourceAxiom_self_provable h_ax
+    · exact StoredStatement.sourceAxiom_self_provable h_ax
     · exact h_th
 
 /-- Execution-indexed chronology for the actual `--mode=sound` invocation. -/
-theorem checkSinglePass_soundDefault_execution_chronology
+theorem check_sound_execution_insertionHistory
     (fname : String) (w w' : Void IO.RealWorld) (db : DB)
-    (h_run : checkSinglePass fname ModeConfig.soundDefault w = .ok db w')
+    (h_run : check fname ModeConfig.sound w = .ok db w')
     (h_success : db.error? = none) :
-    ExecutionChronology fname ModeConfig.soundDefault w w' db :=
-  checkSinglePass_execution_chronology_exactly_one fname
-    ModeConfig.soundDefault ModeConfig.soundDefault_prefixCertified w w' db
+    ExecutionInsertionHistory fname ModeConfig.sound w w' db :=
+  check_execution_insertionHistory_exactly_one fname
+    ModeConfig.sound ModeConfig.isSound_sound w w' db
     h_run h_success
 
 /-- Execution-indexed chronology for the actual `--mode=knife` invocation. -/
-theorem checkSinglePass_knife_execution_chronology
+theorem check_knife_execution_insertionHistory
     (fname : String) (w w' : Void IO.RealWorld) (db : DB)
-    (h_run : checkSinglePass fname ModeConfig.knife w = .ok db w')
+    (h_run : check fname ModeConfig.knife w = .ok db w')
     (h_success : db.error? = none) :
-    ExecutionChronology fname ModeConfig.knife w w' db :=
-  checkSinglePass_execution_chronology_exactly_one fname ModeConfig.knife
-    ModeConfig.knife_prefixCertified w w' db h_run h_success
+    ExecutionInsertionHistory fname ModeConfig.knife w w' db :=
+  check_execution_insertionHistory_exactly_one fname ModeConfig.knife
+    ModeConfig.isSound_knife w w' db h_run h_success
 
 end Metamath.RunEmission

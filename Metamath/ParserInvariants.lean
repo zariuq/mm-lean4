@@ -22,12 +22,12 @@ For each well-formedness property:
 1. Reference the exact parser code implementing the check (e.g., Verify.lean:611-613)
 2. State the theorem: `WellFormedDB db → property holds`
 3. Document the proof strategy with specific code line references
-4. Use theorems to eliminate project-specific axioms in KernelClean.lean
+4. Use theorems to eliminate project-specific axioms in KernelCorrectness.lean
 
 ## Trust Boundary
 
 - **Trusted**: Lean kernel + the ByteArray input presented to `checkBytes`
-  (produced by the default single-pass include driver `check`/`checkSinglePass`;
+  (produced by the default single-pass include driver `check`/`check`;
   legacy two-pass compatibility is isolated behind `Metamath.Legacy.FrontendBridge`)
 - **Verified by theorem**: Everything else (parser ops, DB updates, invariants)
 - **No axioms**: Parser properties are theorems about `feed`/`insertHyp`/`done`
@@ -284,7 +284,7 @@ If parsing succeeds (db.error? = none), then no frame has duplicate float variab
 3. Parser starts with empty frame (invariant trivially holds)
 4. By induction on parsing steps, final DB satisfies invariant
 
-**Impact**: Eliminates `float_key_not_rebound` axiom in KernelClean.lean!
+**Impact**: Eliminates `float_key_not_rebound` axiom in KernelCorrectness.lean!
 -/
 theorem parser_enforces_float_uniqueness
   (db : DB)
@@ -568,7 +568,7 @@ theorem parser_enforces_frame_hyp_resolution
 
 /-! ## Summary: Impact on Axiom Elimination
 
-These parser invariant theorems enable eliminating axioms in KernelClean.lean:
+These parser invariant theorems enable eliminating axioms in KernelCorrectness.lean:
 
 1. **float_key_not_rebound** → Use `parser_enforces_float_uniqueness`
 2. **float_hyp_size** → Use `parser_enforces_float_size`
@@ -580,7 +580,7 @@ These parser invariant theorems enable eliminating axioms in KernelClean.lean:
 ## Status
 
 All theorems in this file are sorry-free. The parser theorems replace the old
-KernelClean axioms. The active `Metamath/` Lean code has no project-declared
+KernelCorrectness axioms. The active `Metamath/` Lean code has no project-declared
 axioms; the headline soundness theorems still depend on Lean's standard axioms
 (`propext`, `Classical.choice`, `Quot.sound`).
 -/

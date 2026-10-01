@@ -33,11 +33,6 @@ def dbShape (db : DB) : DBShape :=
     interrupt := db.interrupt
   }
 
-/-- Shape respects definitional equality. Useful when wiring wrapper lemmas. -/
-theorem dbShape_congr {db1 db2 : DB} (h : db1 = db2) : dbShape db1 = dbShape db2 := by
-  cases h
-  rfl
-
 private def assertShapeEq (label : String) (legacy single : DBShape) : IO Unit := do
   if legacy != single then
     throw <| IO.userError s!"{label}: shape mismatch\nlegacy={repr legacy}\nsingle={repr single}"
@@ -54,17 +49,11 @@ private def assertErrorShapeEq
     throw <| IO.userError
       s!"{label}: rejection mismatch\nlegacy={repr legacy}\nsingle={repr single}"
 
-private def runParityCase (label path : String) (config : ModeConfig := {}) : IO Unit := do
-  let dbLegacy ← checkTwoPassLegacy path config
-  let dbSingle ← checkSinglePass path config
-  assertShapeEq label (dbShape dbLegacy) (dbShape dbSingle)
-  IO.println s!"✓ {label}"
-
 private def runParityCaseExpectCode
     (label path : String) (expected : ParseErrorCode)
     (config : ModeConfig := {}) : IO Unit := do
   let dbLegacy ← checkTwoPassLegacy path config
-  let dbSingle ← checkSinglePass path config
+  let dbSingle ← check path config
   assertErrorShapeEq label (dbShape dbLegacy) (dbShape dbSingle)
   if dbLegacy.parseErrorCode? != some expected then
     throw <| IO.userError
@@ -77,7 +66,7 @@ private def runParityCaseExpectCode
 private def runParityCaseExpectAccept
     (label path : String) (config : ModeConfig := {}) : IO Unit := do
   let dbLegacy ← checkTwoPassLegacy path config
-  let dbSingle ← checkSinglePass path config
+  let dbSingle ← check path config
   assertShapeEq label (dbShape dbLegacy) (dbShape dbSingle)
   if dbLegacy.error then
     throw <| IO.userError
@@ -93,7 +82,7 @@ def runIncludeDepthOverflowRegression : IO Unit := do
   let path := "test_databases/include_depth/root_depth.mm"
   let cfg : ModeConfig := { maxIncludeDepth := 2 }
   let dbLegacy ← checkTwoPassLegacy path cfg
-  let dbSingle ← checkSinglePass path cfg
+  let dbSingle ← check path cfg
   assertShapeEq "include-depth-overflow" (dbShape dbLegacy) (dbShape dbSingle)
   match dbSingle.parseErrorCode? with
   | some .includeDepthExceeded =>
@@ -107,7 +96,7 @@ computed during the streaming pass.  Re-encoding it as a driver error would
 collapse this position to the generic preprocessing location. -/
 def runSinglePassIncludePositionRegression : IO Unit := do
   let path := "test_databases/include_splicing/djvars_accept_main.mm"
-  let db ← checkSinglePass path VerifierMode.zar.toConfig
+  let db ← check path VerifierMode.zar.toConfig
   match db.error? with
   | some ⟨.error pos _, _⟩ =>
       if pos.line != 2 || pos.col != 5 then
@@ -176,9 +165,11 @@ def runNoTrailingWhitespaceNestedIncludeRegression : IO Unit := do
 
 /-- End-to-end parity checks between two-pass legacy and single-pass checker. -/
 def runCheckSinglePassParitySuite : IO Unit := do
-  IO.println "=== checkTwoPassLegacy vs checkSinglePass parity ==="
-  runParityCase "invalid_duplicate_floats" "test_databases/invalid_duplicate_floats.mm"
-  runParityCase "include_depth_ok" "test_databases/include_depth/root_ok.mm"
+  IO.println "=== checkTwoPassLegacy vs check parity ==="
+  runParityCaseExpectCode
+    "invalid_duplicate_floats" "test_databases/invalid_duplicate_floats.mm"
+    .variableAlreadyHasFloatHyp
+  runParityCaseExpectAccept "include_depth_ok" "test_databases/include_depth/root_ok.mm"
   runParityCaseExpectCode
     "include_in_inner_scope_violation"
     "test_databases/include_policy/inner_scope_violation.mm"
@@ -199,7 +190,7 @@ def runCheckSinglePassParitySuite : IO Unit := do
   for (path, config) in
       [("test_databases/include_cycle/root_cycle.mm", VerifierMode.zar.toConfig),
        ("test_databases/include_cycle/literal_root.mm", VerifierMode.exe.toConfig)] do
-    let db ← checkSinglePass path config
+    let db ← check path config
     if db.error || db.parseErrorCode?.isSome then
       throw <| IO.userError s!"single-pass include cycle should be skipped in shipped modes: {repr (dbShape db)}"
   IO.println "✓ shipped modes skip recursive includes"

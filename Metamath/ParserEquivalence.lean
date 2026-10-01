@@ -1,48 +1,55 @@
 /-
 ParserEquivalence — Canonical API Surface
 
-This module is the single entry point for the MM-Lean4 verification results.
-Import this module to access all top-level theorems.
+This module collects the results about proof runs in a parsed database and their bridges to
+Mario Carneiro's semantics. The acceptance theorems are downstream of it: import
+`Metamath.CheckerCompleteness` for acceptance at a parser state and `Metamath.SourceCompleteness`
+for source text and complete files.
 For compact usage patterns, see `Metamath/ParserEquivalenceExamples.lean`.
 
 **Main results (no project-declared axioms, no sorries):**
 
-1. `proofChecker_normal_acceptance_iff_specProvable_in_parsedDB` — Normal-mode biconditional
-2. `proofChecker_anyMode_acceptance_iff_specProvable_in_parsedDB` — Any-mode biconditional
-3. `ProofReachableZ_iff_NormalProofReachable` — Mode equivalence
-4. `compressed_completeness_of_normal_completeness` — Compressed completeness
-5. `toExpr_eq_implies_formula_eq` — Strict formula equality upgrade
-6. `normal_trace_sound` — Token-trace soundness (normal mode)
-7. `compressed_trace_sound` — Token-trace soundness (compressed mode)
-8. `parser_supported_semantic_to_operational` — Parser-specialized completeness from local support
-9. `parser_supported_semantic_to_operational_total` — Same completeness with total DB extraction
-10. `parser_operational_to_supported_total` — Parser-specialized operational -> local-support bridge
-11. `parser_operational_to_semantic_total` — Parser-specialized unconditional soundness (total DB)
-12. `proofChecker_normal_iff_supported_semantic_provable_in_parsedDB` — Normal acceptance <-> supported semantic provability (total DB)
-13. `proofChecker_anyMode_iff_supported_semantic_provable_in_parsedDB` — Any-mode acceptance <-> supported semantic provability (total DB)
-14. `proofChecker_normal_implies_semantic_provable_in_parsedDB` — Normal acceptance -> canonical semantic provability (total DB)
-15. `proofChecker_anyMode_implies_semantic_provable_in_parsedDB` — Any-mode acceptance -> canonical semantic provability (total DB)
-16. `parser_operational_iff_semantic(_total)` and `proofChecker__*_iff_semantic_provable_total` — legacy global-support compatibility wrappers
+Proof runs (expression level):
+1. `proofChecker_normal_acceptance_iff_specProvable_in_parsedDB` — a normal-mode run to a one-element stack with the expression `toExpr f` ↔ `Spec.Provable`
+2. `proofChecker_anyFormat_acceptance_iff_specProvable_in_parsedDB` — the same for normal or compressed runs
+3. `normalFoldSucceeds_iff_specProvable`, `anyFormatFoldSucceeds_iff_specProvable` — the same at any well-formed database state, in its active frame
+4. `ProofReachableZ_iff_NormalProofReachable` — reachability in any proof format is normal reachability
+5. `proofReachableZ_of_spec_provable` — an any-format witness (a normal proof) from spec provability
+6. `toExpr_eq_implies_formula_eq` — strict formula equality upgrade
+7. `normal_trace_sound`, `compressed_trace_sound` — token-trace soundness
+
+These are statements about proof runs, not acceptance: `finishProof` compares the final stack
+with the claim literally, which the expression `toExpr` cannot see. Acceptance is stated in
+`CheckerCompleteness.acceptedWithDummies_iff_statementProvable` (at a parser state between
+statements) and in `SourceCompleteness.statementProvable_iff_sourceAccepts` and
+`SourceCompleteness.statementProvable_iff_fileAccepts` (for source text and complete files).
+
+Mario Carneiro's declarative semantics:
+8. `statementProvable_of_anyFormatFoldSucceeds` (`Metamath/CheckerCompleteness.lean`) — a proof run at a database state whose active frame is an extended frame of `fr` → the stored statement `(fr, f)` is declaratively provable
+9. `acceptedWithDummies_iff_statementProvable` (`Metamath/CheckerCompleteness.lean`) — at a parser state between statements, a `$p` claim's stored statement is declaratively provable iff the parser accepts a proof of it after declaring fresh dummy variables
+10. `proofChecker_normal_iff_frameDerivable_in_parsedDB`, `proofChecker_anyFormat_iff_frameDerivable_in_parsedDB` — proof runs ↔ derivability by Mario's rules in the frame (`FrameDerivable`)
+11. `proofChecker_normal_implies_declarative_provable_in_parsedDB`, `proofChecker_anyFormat_implies_declarative_provable_in_parsedDB` — proof runs → Mario's `Provable` in the frame context
+12. `parser_frameDerivable_to_operational(_total)`, `parser_operational_to_frameDerivable(_total)`, `parser_operational_to_declarative(_total)` — parser-specialized bridges
 -/
 
-import Metamath.ParserAnyModeEquivalence
+import Metamath.ParserAnyFormatEquivalence
 
 /-!
 ## Theorem Map: Trust Chain Layers
 
-### Layer 1 — Fixed-parsed-database checker-adequacy biconditionals
-- `proofChecker_normal_acceptance_iff_specProvable_in_parsedDB` (KernelClean.lean:10976)
-  Normal-mode `foldlM stepNormal` ↔ `Spec.Provable`. Canonical biconditional.
-- `proofChecker_anyMode_acceptance_iff_specProvable_in_parsedDB` (ParserAnyModeEquivalence.lean:185)
-  (Normal `foldlM` ∨ `ProofReachableZ`) ↔ `Spec.Provable`. Mode-agnostic wrapper.
-- `proofChecker_normal_iff_supported_semantic_provable_in_parsedDB` (this file):
-  normal-mode acceptance ↔ supported semantic provability over `toDatabaseTotal`.
-- `proofChecker_anyMode_iff_supported_semantic_provable_in_parsedDB` (this file):
-  any-mode acceptance ↔ supported semantic provability over `toDatabaseTotal`.
-- `proofChecker_normal_implies_semantic_provable_in_parsedDB` (this file):
-  normal-mode acceptance → canonical semantic provability over `toDatabaseTotal`.
-- `proofChecker_anyMode_implies_semantic_provable_in_parsedDB` (this file):
-  any-mode acceptance → canonical semantic provability over `toDatabaseTotal`.
+### Layer 1 — Proof runs
+- `proofChecker_normal_acceptance_iff_specProvable_in_parsedDB` (KernelCorrectness.lean):
+  normal-mode `foldlM stepNormal` in the parsed database ↔ `Spec.Provable`.
+- `proofChecker_anyFormat_acceptance_iff_specProvable_in_parsedDB` (ParserAnyFormatEquivalence.lean):
+  (normal `foldlM` ∨ `ProofReachableZ`) ↔ `Spec.Provable`.
+- `normalFoldSucceeds_iff_specProvable`, `anyFormatFoldSucceeds_iff_specProvable` (this file):
+  the same at any well-formed database state, e.g. the one at a `$p` statement.
+- `proofChecker_normal_iff_frameDerivable_in_parsedDB`,
+  `proofChecker_anyFormat_iff_frameDerivable_in_parsedDB` (this file):
+  proof runs ↔ `FrameDerivable` over `toDatabaseTotal`.
+- `proofChecker_normal_implies_declarative_provable_in_parsedDB`,
+  `proofChecker_anyFormat_implies_declarative_provable_in_parsedDB` (this file):
+  proof runs → Mario's `Provable` in the frame context over `toDatabaseTotal`.
 
 ### Layer 2 — Token-trace soundness (parser execution → Spec.Provable)
 - `normal_trace_sound`: `feedProof` token stream in normal mode → `Spec.Provable`
@@ -52,41 +59,47 @@ Both use ParserState-level DB (`finishProof` insertion-time), NOT final `checkBy
 These prove that actual parser execution implies correctness — no abstract reachability.
 
 ### Layer 3 — Mode bridge (token-trace → DB-level reachability)
-- `compressed_full_bridge` (PrefixProvenance.lean:2660):
+- `compressed_full_bridge` (PrefixProvenance.lean):
   Parser compressed execution → `ProofReachableZ` (from pure DB operations)
-- `ProofReachableZ_iff_NormalProofReachable` (ParserAnyModeEquivalence.lean:236):
-  All three modes (normal/compressed/Z-compressed) ↔ `NormalProofReachable` under `WellFormedDB`
-- `compressed_acceptance_implies_normal_acceptance` (ParserAnyModeEquivalence.lean:163):
+- `ProofReachableZ_iff_NormalProofReachable` (ParserAnyFormatEquivalence.lean):
+  reachability in any format ↔ `NormalProofReachable`, under `WellFormedDB` and a one-element
+  stack holding `fmla`
+- `compressed_acceptance_implies_normal_acceptance` (ParserAnyFormatEquivalence.lean):
   Any `ProofReachableZ` → ∃ `stepNormal` fold (same form as normal biconditional LHS)
 
 ### Layer 4 — Spec equivalence
-- `operational_iff_semantic` (Equivalence.lean):
-  `Spec.Provable` ↔ `Semantic.Provable` (Mario Carneiro's formulation)
-- `parser_supported_semantic_to_operational(_total)` (this file):
-  completeness from derivation-local support (`SupportedProvable`), no global
-  support premise.
-- `parser_operational_to_supported_total` (this file):
-  operational/spec witness to derivation-local support (`SupportedProvable`),
-  no global support premise.
-- `parser_operational_to_semantic_total` (this file):
-  unconditional soundness to canonical semantics.
-- `parser_operational_iff_semantic(_total)` (this file):
-  legacy biconditional wrappers that still require global support.
+- `operational_to_frameDerivable`, `frameDerivable_to_proofValid` (Spec/Equivalence.lean):
+  at one frame, `Spec.Provable` ↔ `FrameDerivable`.
+- `operational_to_declarative` (Spec/Equivalence.lean):
+  `Spec.Provable` → Mario's `Provable` in the frame context.
+- `statementProvable_iff_exists_extendedFrame` (Spec/Completeness.lean):
+  a stored statement is provable in Mario's statement-level semantics iff some
+  extended frame (Metamath book §4.2.7) has a `Spec.Provable` proof.
+  `originalStatementProvable_iff_exists_extendedFrame`: the same for Mario's
+  original `ax` rule.
+- `Spec/FixedFrameCounterexample.lean`: at one fixed frame the two differ, both
+  for lack of a dummy variable and for lack of an optional `$d` statement.
+- `acceptedWithDummies_iff_statementProvable` (CheckerCompleteness.lean): the
+  declarative semantics against the parser's acceptance at a state between statements.
+- `statementProvable_iff_sourceAccepts`, `statementProvable_iff_fileAccepts`
+  (SourceCompleteness.lean): the same for the source text the parser reads after a prefix,
+  and for the complete file `checkBytes` checks.
 
-### Layer 5 — checkBytes-level event-lift (PrefixWitnessCheckBytes)
-- `checkBytesCore_prefix_provenance` (PrefixWitnessCheckBytes.lean:1996):
+### Layer 5 — checkBytes-level event-lift (PrefixProvability.Checker)
+- `checkBytesCore_prefix_provable` (PrefixProvability/Checker.lean):
   successful `checkBytesCore` run implies all feed/feedAll finishProof events are prefix-provable
-- `checkBytes_prefix_provenance` (PrefixWitnessCheckBytes.lean:2033):
+- `checkBytes_prefix_provable` (PrefixProvability/Checker.lean):
   lifts event-lift theorem to `checkBytes`
-- `checkBytes_feedEvents_prefix_provable` (PrefixWitnessCheckBytes.lean):
+- `checkBytes_feedEvents_prefix_provable` (PrefixProvability/Checker.lean):
   the fold-wide statement — every finish-proof event anywhere in the feed loop is
   provable in the database as it stood at that event (pre-insertion)
-- `checkBytes_finalState_finishProofEvent_prefix_provable` (PrefixWitnessCheckBytes.lean):
+- `checkBytes_finalState_finishProofEvent_prefix_provable` (PrefixProvability/Checker.lean):
   narrow eliminator for a `FinishProofEvent` at the final `feedAll` state only
 
 ### How the layers connect
-- Layer 1 biconditionals are the canonical completeness results (bytes → `Spec.Provable` ↔).
-  Normal branch: explicit `foldlM stepNormal`. Compressed branch: `ProofReachableZ`.
+- Layer 1 biconditionals relate proof runs in a parsed database to `Spec.Provable` at the
+  level of expressions. Normal branch: explicit `foldlM stepNormal`. Compressed branch:
+  `ProofReachableZ`. Acceptance of source text is `SourceCompleteness.statementProvable_iff_sourceAccepts`.
 - `ProofReachableZ` is NOT assumed — it IS proven from token execution (Layer 3).
 - Layer 2 trace theorems are strictly additional: they show the parser's actual
   `feedProof` token-by-token execution implies `Spec.Provable` with zero abstract
@@ -94,20 +107,17 @@ These prove that actual parser execution implies correctness — no abstract rea
 - Layer 5 closes the parser-loop integration for finishProof events on successful
   `checkBytes` runs, giving explicit pre-insert provability at those events.
 
-### Recommended theorem call order (supported-first)
-For new integrations, use this sequence:
-1. Completeness target:
-   build/provide `SupportedProvable ... (exprToFormula ... (toExpr f))`,
-   then call `parser_supported_semantic_to_operational_total`, or directly use
-   `proofChecker_normal_iff_supported_semantic_provable_in_parsedDB`.
-2. Soundness target to canonical semantics:
-   from acceptance witnesses, call
-   `proofChecker_normal_implies_semantic_provable_in_parsedDB`
-   (or any-mode analogue).
-3. Any-mode completeness:
-   use `proofChecker_anyMode_iff_supported_semantic_provable_in_parsedDB`.
-4. Use global-support wrappers only for legacy downstream code that still
-   depends on `SemanticFrameSupported`.
+### Recommended theorem call order
+1. Frame completeness: provide `FrameDerivable ... (exprToFormula ... (toExpr f))`,
+   then call `parser_frameDerivable_to_operational_total`, or use
+   `proofChecker_normal_iff_frameDerivable_in_parsedDB`.
+2. Soundness to Mario's semantics: from proof-run witnesses, call
+   `proofChecker_normal_implies_declarative_provable_in_parsedDB`
+   (or the any-format analogue); for a stored statement, call
+   `CheckerCompleteness.statementProvable_of_anyFormatFoldSucceeds`.
+3. Completeness for Mario's semantics:
+   `CheckerCompleteness.acceptedWithDummies_iff_statementProvable`, and for source text
+   `SourceCompleteness.statementProvable_iff_sourceAccepts`.
 
 Frontend include-policy bridges are intentionally split:
 - `Metamath.FrontendBridge` is single-pass-first.
@@ -124,7 +134,7 @@ open Metamath.Kernel
    parser_toDatabase_wellFormed_strong)
 open Metamath.Spec.Equivalence
 
--- Re-export core theorems from KernelClean and ParserAnyModeEquivalence.
+-- Re-export core theorems from KernelCorrectness and ParserAnyFormatEquivalence.
 -- Users can access these via `open Metamath.ParserEquivalence`.
 export Metamath.Kernel
   (toDatabase toDatabaseTotal toFrame toExpr
@@ -133,10 +143,10 @@ export Metamath.Kernel
    verify_parser_accepts_of_spec_provable
    parser_construction_wf_scoped)
 
-export Metamath.ParserAnyModeEquivalence
-  (proofChecker_anyMode_acceptance_iff_specProvable_in_parsedDB
+export Metamath.ParserAnyFormatEquivalence
+  (proofChecker_anyFormat_acceptance_iff_specProvable_in_parsedDB
    ProofReachableZ_iff_NormalProofReachable
-   compressed_completeness_of_normal_completeness
+   proofReachableZ_of_spec_provable
    finishProof_success_stack_conditions)
 
 /-! ## Strict formula equality upgrade
@@ -174,13 +184,13 @@ to obtain `Spec.Provable`. -/
 
 open Metamath.Verify
 open Metamath.WF (WellFormedDB WellScopedDB WellFormedFrame UniqueFloatVars)
-open Metamath.PrefixProvenance (NormalTokensOK normal_proof_full_provenance
+open Metamath.PrefixProvenance (NormalTokensOK normal_proof_provable_from_prefix
   feedProof_start_establishes_reachable NormalTokensOK_preserves_invariant
   ProofReachableZ)
 open Metamath.PrefixTraceCompressed (PreloadTokensOK CompressedTokensOK
-  NormalProofReachable_same_db_provable compressed_proof_prefix_provenance)
-open Metamath.ParserAnyModeEquivalence (finishProof_success_stack_conditions
-  compressed_proof_full_provenance_tight)
+  NormalProofReachable_same_db_provable compressed_proof_prefix_provable)
+open Metamath.ParserAnyFormatEquivalence (finishProof_success_stack_conditions
+  compressed_proof_provable_from_prefix_tight)
 
 -- Resolve Formula ambiguity (Kernel.Formula vs Verify.Formula)
 private abbrev Formula := Metamath.Verify.Formula
@@ -256,7 +266,7 @@ theorem normal_trace_sound
       Spec.Provable Γ fr (toExpr pr_final.fmla) := by
   have ⟨h_stack_one, h_stack_fmla, _⟩ :=
     finishProof_success_stack_conditions s pr_final h_trace.finish_ok
-  exact normal_proof_full_provenance s tk₀ tokens pr₀ pr₁ pr_final
+  exact normal_proof_provable_from_prefix s tk₀ tokens pr₀ pr₁ pr_final
     h_trace.init_stack h_trace.init_start
     h_trace.first_ok h_trace.first_not_open h_trace.first_not_q
     h_trace.first_tokp h_trace.body h_trace.finish_ok h_s_ok h_wf
@@ -278,7 +288,7 @@ theorem compressed_trace_sound
       toDatabase (s.finishProof pr_final).db = some Γ ∧
       toFrame s.db s.db.frame = some fr ∧
       Spec.Provable Γ fr (toExpr pr_final.fmla) :=
-  compressed_proof_full_provenance_tight s label fmla
+  compressed_proof_provable_from_prefix_tight s label fmla
     tk_open preload_toks tk_close comp_toks all_acts
     pr₀ pr₁ pr₂ pr₃ pr_final
     h_trace.init h_trace.open_ok h_trace.is_open h_trace.open_tokp
@@ -344,7 +354,7 @@ theorem compressed_trace_prefix_provable
       Spec.Provable Γ fr (toExpr pr_final.fmla) := by
   have ⟨h_stack_one, h_stack_fmla, _⟩ :=
     finishProof_success_stack_conditions s pr_final h_trace.finish_ok
-  exact compressed_proof_prefix_provenance s label fmla
+  exact compressed_proof_prefix_provable s label fmla
     tk_open preload_toks tk_close comp_toks all_acts
     pr₀ pr₁ pr₂ pr₃ pr_final
     h_trace.init h_trace.open_ok h_trace.is_open h_trace.open_tokp
@@ -352,16 +362,16 @@ theorem compressed_trace_prefix_provable
     h_trace.compressed h_trace.finish_ok h_s_ok h_wf
     h_stack_one h_stack_fmla
 
-/-! ## Parser-specialized operational/semantic bridge
+/-! ## Parser-specialized operational/declarative bridges
 
-`Spec.Equivalence.operational_iff_semantic` is generic by design. This wrapper
-specializes it to parser-origin databases and discharges all structural
+The bridges of `Spec.Equivalence` are generic by design. The wrappers below
+specialize them to parser-origin databases and discharge all structural
 premises from `checkBytes` success plus `toDatabase`/`toFrame` witnesses. -/
 
 /-- Shared parser-origin structural premises used by all parser bridge theorems.
 
 From `checkBytes` success plus extraction witnesses, we recover exactly the
-proof obligations needed by Spec/semantic bridge results:
+proof obligations needed by the Spec/declarative bridge results:
 - strong DB well-formedness at extracted `Γ`
 - no duplicate floating variables in extracted `fr`
 - frame-vs-constant disjointness for extracted `fr` -/
@@ -400,36 +410,9 @@ private theorem parser_structural_premises
     simpa [h_Γ] using h_wf_strong'
   exact ⟨by simpa [db] using h_wf_strong, h_fr_nodup, by simpa [db] using h_fr_disjoint⟩
 
-/-! ## Legacy Compatibility (Global Support Wrappers)
-
-The next wrappers intentionally preserve the old public API shape that
-requires a global support premise:
-- `parser_operational_iff_semantic(_total)`
-- `proofChecker_normal_iff_semantic_provable_in_parsedDB`
-- `proofChecker_anyMode_iff_semantic_provable_in_parsedDB`
-
-New code should prefer the supported-first and unconditional-soundness APIs:
-- completeness: `parser_supported_semantic_to_operational(_total)` and
-  `proofChecker_*_iff_supported_semantic_provable_in_parsedDB`
-- soundness: `parser_operational_to_semantic(_total)` and
-  `proofChecker_*_implies_semantic_provable_in_parsedDB`
-- operational-to-supported bridge:
-  `parser_operational_to_supported(_total)` -/
-
-/-- Legacy parser-specialized operational/semantic equivalence.
-
-For a successful `checkBytes` run, any extracted `(Γ, fr)` witness satisfies the
-exact premises required by `operational_iff_semantic`, so users only provide:
-- parse success (`h_success`)
-- extraction witnesses (`h_db`, `h_frame`)
-
-`WellFormedDatabaseStrong`, `FloatVarNoDup`, and
-`FrameVarsDisjointConsts` are discharged from parser success; callers still
-provide the global semantic-frame support bridge premise.
-
-Prefer `parser_operational_to_semantic(_total)` for soundness and
-`parser_supported_semantic_to_operational(_total)` for completeness. -/
-theorem parser_operational_iff_semantic
+/-- Parser-specialized completeness: a formula derivable by Mario's rules in
+the frame (`FrameDerivable`) is operationally provable. -/
+theorem parser_frameDerivable_to_operational
     (bytes : ByteArray)
     (h_success : (Verify.checkBytes bytes).error? = none)
     (Γ : Spec.Database)
@@ -437,83 +420,34 @@ theorem parser_operational_iff_semantic
     (e : Spec.Expr)
     (h_db : toDatabase (Verify.checkBytes bytes) = some Γ)
     (h_frame : toFrame (Verify.checkBytes bytes) (Verify.checkBytes bytes).frame = some fr)
-    (h_supported : SemanticFrameSupported Γ fr) :
-    Spec.Provable Γ fr e ↔
-      Spec.Semantic.Provable
-        (dbToAxioms Γ)
-        (frameToContext fr)
-        (exprToFormula (varMapOfFrame fr) e) := by
-  obtain ⟨h_wf_strong, h_fr_nodup, h_fr_disjoint⟩ :=
-    parser_structural_premises bytes h_success Γ fr h_db h_frame
-  exact
-    (operational_iff_semantic
-      (Γ := Γ) (consts := toConsts (Verify.checkBytes bytes)) (fr := fr) (e := e)
-      h_wf_strong h_fr_nodup h_fr_disjoint h_supported)
-
-/-- Legacy parser-specialized operational/semantic equivalence with total DB extraction.
-
-This removes the obsolete `h_db : toDatabase ... = some Γ` premise from call
-sites by fixing `Γ := toDatabaseTotal (checkBytes bytes)`, but it still
-requires global support.
-
-Prefer `parser_operational_to_semantic_total` and
-`parser_supported_semantic_to_operational_total`. -/
-theorem parser_operational_iff_semantic_total
-    (bytes : ByteArray)
-    (h_success : (Verify.checkBytes bytes).error? = none)
-    (fr : Spec.Frame)
-    (e : Spec.Expr)
-    (h_frame : toFrame (Verify.checkBytes bytes) (Verify.checkBytes bytes).frame = some fr)
-    (h_supported : SemanticFrameSupported (toDatabaseTotal (Verify.checkBytes bytes)) fr) :
-    Spec.Provable (toDatabaseTotal (Verify.checkBytes bytes)) fr e ↔
-      Spec.Semantic.Provable
-        (dbToAxioms (toDatabaseTotal (Verify.checkBytes bytes)))
-        (frameToContext fr)
-        (exprToFormula (varMapOfFrame fr) e) := by
-  exact parser_operational_iff_semantic bytes h_success
-    (toDatabaseTotal (Verify.checkBytes bytes)) fr e
-    (by simp [Metamath.Kernel.toDatabase]) h_frame h_supported
-
-/-- Parser-specialized completeness from derivation-local semantic support.
-
-This avoids the global `SemanticFrameSupported` assumption: callers provide a
-`SupportedProvable` witness for the target formula instead. -/
-theorem parser_supported_semantic_to_operational
-    (bytes : ByteArray)
-    (h_success : (Verify.checkBytes bytes).error? = none)
-    (Γ : Spec.Database)
-    (fr : Spec.Frame)
-    (e : Spec.Expr)
-    (h_db : toDatabase (Verify.checkBytes bytes) = some Γ)
-    (h_frame : toFrame (Verify.checkBytes bytes) (Verify.checkBytes bytes).frame = some fr)
-    (h_supported_sem :
-      SupportedProvable Γ fr (exprToFormula (varMapOfFrame fr) e)) :
+    (h_derivable :
+      FrameDerivable Γ fr (exprToFormula (varMapOfFrame fr) e)) :
     Spec.Provable Γ fr e := by
   obtain ⟨h_wf_strong, h_fr_nodup, h_fr_disjoint⟩ :=
     parser_structural_premises bytes h_success Γ fr h_db h_frame
   exact
-    (mario_to_proofValid
+    (frameDerivable_to_proofValid
       (Γ := Γ) (consts := toConsts (Verify.checkBytes bytes)) (fr := fr) (e := e)
-      h_wf_strong h_fr_nodup h_fr_disjoint h_supported_sem)
+      h_wf_strong h_fr_nodup h_fr_disjoint h_derivable)
 
 /-- Total-DB specialization of
-`parser_supported_semantic_to_operational`. -/
-theorem parser_supported_semantic_to_operational_total
+`parser_frameDerivable_to_operational`. -/
+theorem parser_frameDerivable_to_operational_total
     (bytes : ByteArray)
     (h_success : (Verify.checkBytes bytes).error? = none)
     (fr : Spec.Frame)
     (e : Spec.Expr)
     (h_frame : toFrame (Verify.checkBytes bytes) (Verify.checkBytes bytes).frame = some fr)
-    (h_supported_sem :
-      SupportedProvable (toDatabaseTotal (Verify.checkBytes bytes)) fr
+    (h_derivable :
+      FrameDerivable (toDatabaseTotal (Verify.checkBytes bytes)) fr
         (exprToFormula (varMapOfFrame fr) e)) :
     Spec.Provable (toDatabaseTotal (Verify.checkBytes bytes)) fr e := by
-  exact parser_supported_semantic_to_operational bytes h_success
+  exact parser_frameDerivable_to_operational bytes h_success
     (toDatabaseTotal (Verify.checkBytes bytes)) fr e
-    (by simp [Metamath.Kernel.toDatabase]) h_frame h_supported_sem
+    (by simp [Metamath.Kernel.toDatabase]) h_frame h_derivable
 
-/-- Parser-specialized unconditional soundness (no global support premise). -/
-theorem parser_operational_to_semantic
+/-- Parser-specialized soundness for Mario's `Provable` in the frame context. -/
+theorem parser_operational_to_declarative
     (bytes : ByteArray)
     (h_success : (Verify.checkBytes bytes).error? = none)
     (Γ : Spec.Database)
@@ -522,7 +456,7 @@ theorem parser_operational_to_semantic
     (h_db : toDatabase (Verify.checkBytes bytes) = some Γ)
     (h_frame : toFrame (Verify.checkBytes bytes) (Verify.checkBytes bytes).frame = some fr) :
     Spec.Provable Γ fr e →
-      Spec.Semantic.Provable
+      Spec.Declarative.Provable
         (dbToAxioms Γ)
         (frameToContext fr)
         (exprToFormula (varMapOfFrame fr) e) := by
@@ -530,28 +464,28 @@ theorem parser_operational_to_semantic
   have h_wf_strong : WellFormedDatabaseStrong Γ (toConsts (Verify.checkBytes bytes)) := h_struct.1
   have h_fr_disjoint : Spec.FrameVarsDisjointConsts (toConsts (Verify.checkBytes bytes)) fr := h_struct.2.2
   intro h_prov
-  exact operational_to_semantic (Γ := Γ) (consts := toConsts (Verify.checkBytes bytes)) (fr := fr) (e := e)
+  exact operational_to_declarative (Γ := Γ) (consts := toConsts (Verify.checkBytes bytes)) (fr := fr) (e := e)
     h_wf_strong h_fr_disjoint h_prov
 
-/-- Total-DB specialization of `parser_operational_to_semantic`. -/
-theorem parser_operational_to_semantic_total
+/-- Total-DB specialization of `parser_operational_to_declarative`. -/
+theorem parser_operational_to_declarative_total
     (bytes : ByteArray)
     (h_success : (Verify.checkBytes bytes).error? = none)
     (fr : Spec.Frame)
     (e : Spec.Expr)
     (h_frame : toFrame (Verify.checkBytes bytes) (Verify.checkBytes bytes).frame = some fr) :
     Spec.Provable (toDatabaseTotal (Verify.checkBytes bytes)) fr e →
-      Spec.Semantic.Provable
+      Spec.Declarative.Provable
         (dbToAxioms (toDatabaseTotal (Verify.checkBytes bytes)))
         (frameToContext fr)
         (exprToFormula (varMapOfFrame fr) e) := by
-  exact parser_operational_to_semantic bytes h_success
+  exact parser_operational_to_declarative bytes h_success
     (toDatabaseTotal (Verify.checkBytes bytes)) fr e
     (by simp [Metamath.Kernel.toDatabase]) h_frame
 
-/-- Parser-specialized bridge from operational provability to derivation-local
-support (no global support premise). -/
-theorem parser_operational_to_supported
+/-- Parser-specialized bridge from operational provability to frame
+derivability. -/
+theorem parser_operational_to_frameDerivable
     (bytes : ByteArray)
     (h_success : (Verify.checkBytes bytes).error? = none)
     (Γ : Spec.Database)
@@ -560,138 +494,33 @@ theorem parser_operational_to_supported
     (h_db : toDatabase (Verify.checkBytes bytes) = some Γ)
     (h_frame : toFrame (Verify.checkBytes bytes) (Verify.checkBytes bytes).frame = some fr) :
     Spec.Provable Γ fr e →
-      SupportedProvable Γ fr (exprToFormula (varMapOfFrame fr) e) := by
+      FrameDerivable Γ fr (exprToFormula (varMapOfFrame fr) e) := by
   have h_struct := parser_structural_premises bytes h_success Γ fr h_db h_frame
   have h_wf_strong : WellFormedDatabaseStrong Γ (toConsts (Verify.checkBytes bytes)) := h_struct.1
   have h_fr_disjoint : Spec.FrameVarsDisjointConsts (toConsts (Verify.checkBytes bytes)) fr := h_struct.2.2
   intro h_prov
-  exact operational_to_supported (Γ := Γ) (consts := toConsts (Verify.checkBytes bytes)) (fr := fr) (e := e)
+  exact operational_to_frameDerivable (Γ := Γ) (consts := toConsts (Verify.checkBytes bytes)) (fr := fr) (e := e)
     h_wf_strong h_fr_disjoint h_prov
 
-/-- Total-DB specialization of `parser_operational_to_supported`. -/
-theorem parser_operational_to_supported_total
+/-- Total-DB specialization of `parser_operational_to_frameDerivable`. -/
+theorem parser_operational_to_frameDerivable_total
     (bytes : ByteArray)
     (h_success : (Verify.checkBytes bytes).error? = none)
     (fr : Spec.Frame)
     (e : Spec.Expr)
     (h_frame : toFrame (Verify.checkBytes bytes) (Verify.checkBytes bytes).frame = some fr) :
     Spec.Provable (toDatabaseTotal (Verify.checkBytes bytes)) fr e →
-      SupportedProvable (toDatabaseTotal (Verify.checkBytes bytes)) fr
+      FrameDerivable (toDatabaseTotal (Verify.checkBytes bytes)) fr
         (exprToFormula (varMapOfFrame fr) e) := by
-  exact parser_operational_to_supported bytes h_success
+  exact parser_operational_to_frameDerivable bytes h_success
     (toDatabaseTotal (Verify.checkBytes bytes)) fr e
     (by simp [Metamath.Kernel.toDatabase]) h_frame
 
-/-! ## Acceptance wrappers to semantic provability (total DB extraction) -/
+/-! ## Acceptance wrappers to declarative provability (total DB extraction) -/
 
-/-- Parser success turns the existing Spec-level existential witness into a
-semantic witness over `toDatabaseTotal`, and conversely. -/
-private theorem parser_spec_exists_iff_semantic_total_exists
-    (bytes : ByteArray)
-    (f : Verify.Formula)
-    (h_success : (Verify.checkBytes bytes).error? = none)
-    (h_supported : ∀ fr : Spec.Frame,
-      SemanticFrameSupported (toDatabaseTotal (Verify.checkBytes bytes)) fr) :
-    (∃ (Γ : Spec.Database) (fr : Spec.Frame),
-      toDatabase (Verify.checkBytes bytes) = some Γ ∧
-      toFrame (Verify.checkBytes bytes) (Verify.checkBytes bytes).frame = some fr ∧
-      Spec.Provable Γ fr (toExpr f))
-    ↔
-    (∃ (fr : Spec.Frame),
-      toFrame (Verify.checkBytes bytes) (Verify.checkBytes bytes).frame = some fr ∧
-      Spec.Semantic.Provable
-        (dbToAxioms (toDatabaseTotal (Verify.checkBytes bytes)))
-        (frameToContext fr)
-        (exprToFormula (varMapOfFrame fr) (toExpr f))) := by
-  constructor
-  · intro h
-    rcases h with ⟨Γ, fr, h_db, h_frame, h_prov⟩
-    have h_db_total : toDatabaseTotal (Verify.checkBytes bytes) = Γ := by
-      apply Option.some.inj
-      simpa [Metamath.Kernel.toDatabase] using h_db
-    have h_Γ_total : Γ = toDatabaseTotal (Verify.checkBytes bytes) := h_db_total.symm
-    have h_prov_total :
-        Spec.Provable (toDatabaseTotal (Verify.checkBytes bytes)) fr (toExpr f) := by
-      simpa [h_Γ_total] using h_prov
-    have h_sem :
-        Spec.Semantic.Provable
-      (dbToAxioms (toDatabaseTotal (Verify.checkBytes bytes)))
-      (frameToContext fr)
-      (exprToFormula (varMapOfFrame fr) (toExpr f)) :=
-      (parser_operational_iff_semantic_total bytes h_success fr (toExpr f) h_frame
-        (h_supported fr)).1 h_prov_total
-    exact ⟨fr, h_frame, h_sem⟩
-  · intro h
-    rcases h with ⟨fr, h_frame, h_sem⟩
-    have h_prov_total :
-        Spec.Provable (toDatabaseTotal (Verify.checkBytes bytes)) fr (toExpr f) :=
-      (parser_operational_iff_semantic_total bytes h_success fr (toExpr f) h_frame
-        (h_supported fr)).2 h_sem
-    exact ⟨toDatabaseTotal (Verify.checkBytes bytes), fr,
-      by simp [Metamath.Kernel.toDatabase], h_frame, by simpa using h_prov_total⟩
-
-/-- Legacy compatibility wrapper: normal-mode parser acceptance is equivalent
-to canonical semantic provability, using `toDatabaseTotal` as the canonical DB
-extraction (requires global support bridge). -/
-theorem proofChecker_normal_iff_semantic_provable_in_parsedDB
-    (bytes : ByteArray)
-    (label : String)
-    (f : Verify.Formula)
-    (h_success : (Verify.checkBytes bytes).error? = none)
-    (h_supported : ∀ fr : Spec.Frame,
-      SemanticFrameSupported (toDatabaseTotal (Verify.checkBytes bytes)) fr) :
-    (∃ (proof : Array String) (pr_final : Verify.ProofState) (f' : Verify.Formula),
-      proof.foldlM (fun pr step => Verify.DB.stepNormal (Verify.checkBytes bytes) pr step)
-        ⟨⟨0, 0⟩, label, f, (Verify.checkBytes bytes).frame, #[], #[], Verify.ProofTokenParser.normal, false⟩ =
-          Except.ok pr_final ∧
-      pr_final.stack.size = 1 ∧
-      pr_final.stack[0]? = some f' ∧
-      toExpr f' = toExpr f)
-    ↔
-    (∃ (fr : Spec.Frame),
-      toFrame (Verify.checkBytes bytes) (Verify.checkBytes bytes).frame = some fr ∧
-      Spec.Semantic.Provable
-        (dbToAxioms (toDatabaseTotal (Verify.checkBytes bytes)))
-        (frameToContext fr)
-        (exprToFormula (varMapOfFrame fr) (toExpr f))) :=
-  (proofChecker_normal_acceptance_iff_specProvable_in_parsedDB bytes label f h_success).trans
-    (parser_spec_exists_iff_semantic_total_exists bytes f h_success h_supported)
-
-/-- Legacy compatibility wrapper: any-mode parser acceptance (normal ∨ compressed)
-is equivalent to canonical semantic provability, using `toDatabaseTotal` as the
-canonical DB extraction (requires global support bridge). -/
-theorem proofChecker_anyMode_iff_semantic_provable_in_parsedDB
-    (bytes : ByteArray)
-    (label : String)
-    (f : Verify.Formula)
-    (h_success : (Verify.checkBytes bytes).error? = none)
-    (h_supported : ∀ fr : Spec.Frame,
-      SemanticFrameSupported (toDatabaseTotal (Verify.checkBytes bytes)) fr) :
-    ((∃ (proof : Array String) (pr_final : Verify.ProofState) (f' : Verify.Formula),
-      proof.foldlM (fun pr step => Verify.DB.stepNormal (Verify.checkBytes bytes) pr step)
-        ⟨⟨0, 0⟩, label, f, (Verify.checkBytes bytes).frame, #[], #[],
-         Verify.ProofTokenParser.normal, false⟩ = Except.ok pr_final ∧
-      pr_final.stack.size = 1 ∧
-      pr_final.stack[0]? = some f' ∧
-      toExpr f' = toExpr f)
-    ∨
-    (∃ (stack : Array Verify.Formula) (f' : Verify.Formula),
-      ProofReachableZ (Verify.checkBytes bytes) label f' stack ∧
-      stack.size = 1 ∧ stack[0]? = some f' ∧
-      toExpr f' = toExpr f))
-    ↔
-    (∃ (fr : Spec.Frame),
-      toFrame (Verify.checkBytes bytes) (Verify.checkBytes bytes).frame = some fr ∧
-      Spec.Semantic.Provable
-        (dbToAxioms (toDatabaseTotal (Verify.checkBytes bytes)))
-        (frameToContext fr)
-        (exprToFormula (varMapOfFrame fr) (toExpr f))) :=
-    (proofChecker_anyMode_acceptance_iff_specProvable_in_parsedDB bytes label f h_success).trans
-    (parser_spec_exists_iff_semantic_total_exists bytes f h_success h_supported)
-
-/-- Parser success turns the Spec-level existential witness into a semantic
-witness over `toDatabaseTotal` without any global support premise. -/
-private theorem parser_spec_exists_implies_semantic_total_exists
+/-- Parser success turns the Spec-level existential witness into a declarative
+witness over `toDatabaseTotal`. -/
+private theorem parser_spec_exists_implies_declarative_total_exists
     (bytes : ByteArray)
     (f : Verify.Formula)
     (h_success : (Verify.checkBytes bytes).error? = none) :
@@ -702,7 +531,7 @@ private theorem parser_spec_exists_implies_semantic_total_exists
     →
     (∃ (fr : Spec.Frame),
       toFrame (Verify.checkBytes bytes) (Verify.checkBytes bytes).frame = some fr ∧
-      Spec.Semantic.Provable
+      Spec.Declarative.Provable
         (dbToAxioms (toDatabaseTotal (Verify.checkBytes bytes)))
         (frameToContext fr)
         (exprToFormula (varMapOfFrame fr) (toExpr f))) := by
@@ -716,19 +545,16 @@ private theorem parser_spec_exists_implies_semantic_total_exists
       Spec.Provable (toDatabaseTotal (Verify.checkBytes bytes)) fr (toExpr f) := by
     simpa [h_Γ_total] using h_prov
   have h_sem :
-      Spec.Semantic.Provable
+      Spec.Declarative.Provable
         (dbToAxioms (toDatabaseTotal (Verify.checkBytes bytes)))
         (frameToContext fr)
         (exprToFormula (varMapOfFrame fr) (toExpr f)) :=
-    parser_operational_to_semantic_total bytes h_success fr (toExpr f) h_frame h_prov_total
+    parser_operational_to_declarative_total bytes h_success fr (toExpr f) h_frame h_prov_total
   exact ⟨fr, h_frame, h_sem⟩
 
 /-- Parser success turns the existing Spec-level existential witness into a
-supported-semantic witness over `toDatabaseTotal`, and conversely.
-
-This removes manual construction of `SupportedProvable` from parser/spec
-witnesses and does not require global support. -/
-private theorem parser_spec_exists_iff_supported_total_exists
+`FrameDerivable` witness over `toDatabaseTotal`, and conversely. -/
+private theorem parser_spec_exists_iff_frameDerivable_total_exists
     (bytes : ByteArray)
     (f : Verify.Formula)
     (h_success : (Verify.checkBytes bytes).error? = none) :
@@ -739,7 +565,7 @@ private theorem parser_spec_exists_iff_supported_total_exists
     ↔
     (∃ (fr : Spec.Frame),
       toFrame (Verify.checkBytes bytes) (Verify.checkBytes bytes).frame = some fr ∧
-      SupportedProvable
+      FrameDerivable
         (toDatabaseTotal (Verify.checkBytes bytes))
         fr
         (exprToFormula (varMapOfFrame fr) (toExpr f))) := by
@@ -754,21 +580,21 @@ private theorem parser_spec_exists_iff_supported_total_exists
         Spec.Provable (toDatabaseTotal (Verify.checkBytes bytes)) fr (toExpr f) := by
       simpa [h_Γ_total] using h_prov
     have h_sup :
-        SupportedProvable (toDatabaseTotal (Verify.checkBytes bytes)) fr
+        FrameDerivable (toDatabaseTotal (Verify.checkBytes bytes)) fr
           (exprToFormula (varMapOfFrame fr) (toExpr f)) :=
-      parser_operational_to_supported_total bytes h_success fr (toExpr f) h_frame h_prov_total
+      parser_operational_to_frameDerivable_total bytes h_success fr (toExpr f) h_frame h_prov_total
     exact ⟨fr, h_frame, h_sup⟩
   · intro h
     rcases h with ⟨fr, h_frame, h_sup⟩
     have h_prov_total :
         Spec.Provable (toDatabaseTotal (Verify.checkBytes bytes)) fr (toExpr f) :=
-      parser_supported_semantic_to_operational_total bytes h_success fr (toExpr f) h_frame h_sup
+      parser_frameDerivable_to_operational_total bytes h_success fr (toExpr f) h_frame h_sup
     exact ⟨toDatabaseTotal (Verify.checkBytes bytes), fr,
       by simp [Metamath.Kernel.toDatabase], h_frame, by simpa using h_prov_total⟩
 
-/-- Normal-mode parser acceptance implies canonical semantic provability over
-`toDatabaseTotal` (unconditional soundness, no global support premise). -/
-theorem proofChecker_normal_implies_semantic_provable_in_parsedDB
+/-- A normal-mode proof run implies Mario's declarative provability in the frame context over
+`toDatabaseTotal`. -/
+theorem proofChecker_normal_implies_declarative_provable_in_parsedDB
     (bytes : ByteArray)
     (label : String)
     (f : Verify.Formula)
@@ -783,7 +609,7 @@ theorem proofChecker_normal_implies_semantic_provable_in_parsedDB
     →
     (∃ (fr : Spec.Frame),
       toFrame (Verify.checkBytes bytes) (Verify.checkBytes bytes).frame = some fr ∧
-      Spec.Semantic.Provable
+      Spec.Declarative.Provable
         (dbToAxioms (toDatabaseTotal (Verify.checkBytes bytes)))
         (frameToContext fr)
         (exprToFormula (varMapOfFrame fr) (toExpr f))) := by
@@ -794,11 +620,11 @@ theorem proofChecker_normal_implies_semantic_provable_in_parsedDB
         toFrame (Verify.checkBytes bytes) (Verify.checkBytes bytes).frame = some fr ∧
         Spec.Provable Γ fr (toExpr f) :=
     (proofChecker_normal_acceptance_iff_specProvable_in_parsedDB bytes label f h_success).1 h_accept
-  exact parser_spec_exists_implies_semantic_total_exists bytes f h_success h_spec
+  exact parser_spec_exists_implies_declarative_total_exists bytes f h_success h_spec
 
-/-- Any-mode parser acceptance implies canonical semantic provability over
-`toDatabaseTotal` (unconditional soundness, no global support premise). -/
-theorem proofChecker_anyMode_implies_semantic_provable_in_parsedDB
+/-- A proof run in either mode implies Mario's declarative provability in the frame context over
+`toDatabaseTotal`. -/
+theorem proofChecker_anyFormat_implies_declarative_provable_in_parsedDB
     (bytes : ByteArray)
     (label : String)
     (f : Verify.Formula)
@@ -818,7 +644,7 @@ theorem proofChecker_anyMode_implies_semantic_provable_in_parsedDB
     →
     (∃ (fr : Spec.Frame),
       toFrame (Verify.checkBytes bytes) (Verify.checkBytes bytes).frame = some fr ∧
-      Spec.Semantic.Provable
+      Spec.Declarative.Provable
         (dbToAxioms (toDatabaseTotal (Verify.checkBytes bytes)))
         (frameToContext fr)
         (exprToFormula (varMapOfFrame fr) (toExpr f))) := by
@@ -828,12 +654,12 @@ theorem proofChecker_anyMode_implies_semantic_provable_in_parsedDB
         toDatabase (Verify.checkBytes bytes) = some Γ ∧
         toFrame (Verify.checkBytes bytes) (Verify.checkBytes bytes).frame = some fr ∧
         Spec.Provable Γ fr (toExpr f) :=
-    (proofChecker_anyMode_acceptance_iff_specProvable_in_parsedDB bytes label f h_success).1 h_accept
-  exact parser_spec_exists_implies_semantic_total_exists bytes f h_success h_spec
+    (proofChecker_anyFormat_acceptance_iff_specProvable_in_parsedDB bytes label f h_success).1 h_accept
+  exact parser_spec_exists_implies_declarative_total_exists bytes f h_success h_spec
 
-/-- Normal-mode parser acceptance is equivalent to derivation-local supported
-semantic provability over `toDatabaseTotal` (no global support premise). -/
-theorem proofChecker_normal_iff_supported_semantic_provable_in_parsedDB
+/-- A normal-mode proof run exists iff the expression is derivable by Mario's rules in the frame
+(`FrameDerivable`) over `toDatabaseTotal`. -/
+theorem proofChecker_normal_iff_frameDerivable_in_parsedDB
     (bytes : ByteArray)
     (label : String)
     (f : Verify.Formula)
@@ -848,16 +674,16 @@ theorem proofChecker_normal_iff_supported_semantic_provable_in_parsedDB
     ↔
     (∃ (fr : Spec.Frame),
       toFrame (Verify.checkBytes bytes) (Verify.checkBytes bytes).frame = some fr ∧
-      SupportedProvable
+      FrameDerivable
         (toDatabaseTotal (Verify.checkBytes bytes))
         fr
         (exprToFormula (varMapOfFrame fr) (toExpr f))) :=
   (proofChecker_normal_acceptance_iff_specProvable_in_parsedDB bytes label f h_success).trans
-    (parser_spec_exists_iff_supported_total_exists bytes f h_success)
+    (parser_spec_exists_iff_frameDerivable_total_exists bytes f h_success)
 
-/-- Any-mode parser acceptance is equivalent to derivation-local supported
-semantic provability over `toDatabaseTotal` (no global support premise). -/
-theorem proofChecker_anyMode_iff_supported_semantic_provable_in_parsedDB
+/-- A proof run in either mode exists iff the expression is derivable by Mario's rules in the frame
+(`FrameDerivable`) over `toDatabaseTotal`. -/
+theorem proofChecker_anyFormat_iff_frameDerivable_in_parsedDB
     (bytes : ByteArray)
     (label : String)
     (f : Verify.Formula)
@@ -877,11 +703,101 @@ theorem proofChecker_anyMode_iff_supported_semantic_provable_in_parsedDB
     ↔
     (∃ (fr : Spec.Frame),
       toFrame (Verify.checkBytes bytes) (Verify.checkBytes bytes).frame = some fr ∧
-      SupportedProvable
+      FrameDerivable
         (toDatabaseTotal (Verify.checkBytes bytes))
         fr
         (exprToFormula (varMapOfFrame fr) (toExpr f))) :=
-    (proofChecker_anyMode_acceptance_iff_specProvable_in_parsedDB bytes label f h_success).trans
-    (parser_spec_exists_iff_supported_total_exists bytes f h_success)
+    (proofChecker_anyFormat_acceptance_iff_specProvable_in_parsedDB bytes label f h_success).trans
+    (parser_spec_exists_iff_frameDerivable_total_exists bytes f h_success)
+
+/-! ## Proof runs at a database state
+
+The theorems above run a proof against the database left at the end of
+parsing. A `$p` statement is checked in the database state at that statement,
+whose active frame may declare dummy variables. The following results hold at
+any well-formed database state. They concern the run of the proof steps, whose
+final formula has the expression of the claim; acceptance by `finishProof`,
+which compares formulas literally, is `CheckerCompleteness.ProofAccepted`. -/
+
+/-- A normal-mode proof run in the active frame of database state `db` ends
+with one formula, whose expression is that of `f`. -/
+def NormalFoldSucceeds (db : Verify.DB) (label : String) (f : Verify.Formula) : Prop :=
+  ∃ (proof : Array String) (pr_final : Verify.ProofState) (f' : Verify.Formula),
+    proof.foldlM (fun pr step => Verify.DB.stepNormal db pr step)
+      ⟨⟨0, 0⟩, label, f, db.frame, #[], #[], Verify.ProofTokenParser.normal, false⟩ =
+        Except.ok pr_final ∧
+    pr_final.stack.size = 1 ∧ pr_final.stack[0]? = some f' ∧ toExpr f' = toExpr f
+
+/-- A normal or compressed proof run in the active frame of database state `db`
+ends with one formula, whose expression is that of `f`. -/
+def AnyFormatFoldSucceeds (db : Verify.DB) (label : String) (f : Verify.Formula) : Prop :=
+  NormalFoldSucceeds db label f ∨
+    ∃ (stack : Array Verify.Formula) (f' : Verify.Formula),
+      ProofReachableZ db label f' stack ∧ stack.size = 1 ∧ stack[0]? = some f' ∧
+        toExpr f' = toExpr f
+
+/-- A successful run at a well-formed database state proves the claim in its
+active frame. -/
+theorem specProvable_of_normalFoldSucceeds
+    (db : Verify.DB) (label : String) (f : Verify.Formula)
+    (Γ : Spec.Database) (fr : Spec.Frame)
+    (h_success : db.error? = none) (h_wf : WellFormedDB db)
+    (h_db : toDatabase db = some Γ) (h_frame : toFrame db db.frame = some fr)
+    (h_accept : NormalFoldSucceeds db label f) :
+    Spec.Provable Γ fr (toExpr f) := by
+  obtain ⟨proof, pr_final, f', h_fold, h_size, h_stack, h_eq⟩ := h_accept
+  obtain ⟨Γ', fr', h_db', h_frame', h_prov⟩ :=
+    Kernel.verify_impl_sound_declarative db label f pr_final f' proof h_success h_wf
+      h_fold h_size h_stack
+  rw [h_db] at h_db'
+  rw [h_frame] at h_frame'
+  cases h_db'
+  cases h_frame'
+  rw [← h_eq]
+  exact h_prov
+
+/-- **Proof runs at a database state.** At a well-formed, well-scoped database
+state, a normal-mode proof run ends with the expression of `f` iff `f` is
+provable in the active frame. -/
+theorem normalFoldSucceeds_iff_specProvable
+    (db : Verify.DB) (label : String) (f : Verify.Formula)
+    (Γ : Spec.Database) (fr : Spec.Frame)
+    (h_success : db.error? = none) (h_wf : WellFormedDB db) (h_scoped : WellScopedDB db)
+    (h_db : toDatabase db = some Γ) (h_frame : toFrame db db.frame = some fr)
+    (h_dv : ∀ l fr' e, Γ l = some (fr', e) → DVWellFormed fr') :
+    NormalFoldSucceeds db label f ↔ Spec.Provable Γ fr (toExpr f) :=
+  ⟨specProvable_of_normalFoldSucceeds db label f Γ fr h_success h_wf h_db h_frame,
+    Kernel.verify_impl_complete db label f h_success h_wf
+      (Kernel.completenessScopedFacts_of_wellScopedDB db h_scoped) Γ fr h_db h_frame h_dv⟩
+
+/-- A successful normal or compressed run at a well-formed database state proves
+the claim in its active frame. -/
+theorem specProvable_of_anyFormatFoldSucceeds
+    (db : Verify.DB) (label : String) (f : Verify.Formula)
+    (Γ : Spec.Database) (fr : Spec.Frame)
+    (h_success : db.error? = none) (h_wf : WellFormedDB db)
+    (h_db : toDatabase db = some Γ) (h_frame : toFrame db db.frame = some fr)
+    (h_accept : AnyFormatFoldSucceeds db label f) :
+    Spec.Provable Γ fr (toExpr f) := by
+  rcases h_accept with h_normal | ⟨stack, f', h_reach, h_size, h_fmla, h_eq⟩
+  · exact specProvable_of_normalFoldSucceeds db label f Γ fr h_success h_wf h_db h_frame
+      h_normal
+  · have h_prov := specProvable_of_normalFoldSucceeds db label f' Γ fr h_success h_wf h_db
+      h_frame (ParserAnyFormatEquivalence.compressed_acceptance_implies_normal_acceptance
+        db label f' stack h_reach h_wf h_size h_fmla)
+    rw [← h_eq]
+    exact h_prov
+
+/-- Any-format version of `normalFoldSucceeds_iff_specProvable`. -/
+theorem anyFormatFoldSucceeds_iff_specProvable
+    (db : Verify.DB) (label : String) (f : Verify.Formula)
+    (Γ : Spec.Database) (fr : Spec.Frame)
+    (h_success : db.error? = none) (h_wf : WellFormedDB db) (h_scoped : WellScopedDB db)
+    (h_db : toDatabase db = some Γ) (h_frame : toFrame db db.frame = some fr)
+    (h_dv : ∀ l fr' e, Γ l = some (fr', e) → DVWellFormed fr') :
+    AnyFormatFoldSucceeds db label f ↔ Spec.Provable Γ fr (toExpr f) :=
+  ⟨specProvable_of_anyFormatFoldSucceeds db label f Γ fr h_success h_wf h_db h_frame,
+    fun h_prov => Or.inl ((normalFoldSucceeds_iff_specProvable db label f Γ fr h_success h_wf
+      h_scoped h_db h_frame h_dv).mpr h_prov)⟩
 
 end Metamath.ParserEquivalence

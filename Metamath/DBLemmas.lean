@@ -6,7 +6,7 @@ These lemmas establish basic properties of mkError, find?, withHyps, etc.
 -/
 
 import Metamath.Verify
-import Metamath.VerifyDBThms
+import Metamath.Verify.DB
 
 namespace Metamath.DBLemmas
 

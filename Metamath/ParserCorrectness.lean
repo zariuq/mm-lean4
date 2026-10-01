@@ -22,8 +22,8 @@ We prove properties at each layer using only properties from layers below.
 -/
 
 import Metamath.Verify
-import Metamath.VerifyDBPredicateThms
-import Metamath.VerifyStabilityThms
+import Metamath.Verify.DBPredicate
+import Metamath.Verify.Stability
 import Metamath.WellFormedness
 import Metamath.ParserBasics
 import Std.Data.HashMap.Lemmas

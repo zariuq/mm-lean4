@@ -121,7 +121,7 @@ end List
 **Time spent:** ~1 hour (as planned)
 
 **Dependencies:** Only List (stdlib)
-**Used by:** Metamath.KernelClean (will remove AXIOM 1)
+**Used by:** Metamath.KernelCorrectness (will remove AXIOM 1)
 
 **Next step:** Phase 3 - Implement toSubstTyped using these lemmas
 -/

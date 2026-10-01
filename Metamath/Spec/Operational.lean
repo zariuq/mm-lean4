@@ -267,4 +267,44 @@ theorem Provable.mono_db
   obtain ⟨steps, finalStack, h_valid, h_eq⟩ := h_prov
   exact ⟨steps, finalStack, h_valid.mono_db h_sub, h_eq⟩
 
+/-! ## A proof reads its frame's `$d` list only through `dvRel` -/
+
+/-- A proof stays valid in a frame with the same hypotheses whose `$d` relation contains the old
+one. -/
+theorem ProofValid.dv_mono {Γ : Database} {fr fr' : Frame} {stk : List Expr}
+    {steps : List ProofStep}
+    (h_hyps : fr.hyps = fr'.hyps) (h_dv : ∀ v w, dvRel fr.dv v w → dvRel fr'.dv v w)
+    (h : ProofValid Γ fr stk steps) : ProofValid Γ fr' stk steps := by
+  have h_vars : fr'.vars = fr.vars := by
+    unfold Frame.vars
+    rw [h_hyps]
+  induction h with
+  | nil => exact .nil _
+  | useEssential stack steps e h_in _ ih =>
+      exact .useEssential _ _ _ _ (h_hyps ▸ h_in) ih
+  | useFloating stack steps c v h_in _ ih =>
+      exact .useFloating _ _ _ _ _ (h_hyps ▸ h_in) ih
+  | useAxiom stack steps l frAx e σ h_find h_dvok h_typed _ needed h_needed remaining h_stack
+      ih =>
+      have h_dvok' : dvOK fr'.vars frAx.dv fr'.dv σ := by
+        rw [h_vars]
+        intro v w h_vw vs ws x hx y hy
+        exact h_dv _ _ (h_dvok v w h_vw x hx y hy)
+      exact .useAxiom _ _ _ _ _ _ _ h_find h_dvok' h_typed ih needed h_needed remaining h_stack
+
+/-- `Provable` in a frame with the same hypotheses whose `$d` relation contains the old one. -/
+theorem Provable.dv_mono {Γ : Database} {fr fr' : Frame} {e : Expr}
+    (h_hyps : fr.hyps = fr'.hyps) (h_dv : ∀ v w, dvRel fr.dv v w → dvRel fr'.dv v w)
+    (h : Provable Γ fr e) : Provable Γ fr' e := by
+  obtain ⟨steps, finalStack, h_valid, h_eq⟩ := h
+  exact ⟨steps, finalStack, h_valid.dv_mono h_hyps h_dv, h_eq⟩
+
+/-- Two frames with the same hypotheses and the same `$d` relation prove the same expressions:
+the order, duplicates, orientation and self-pairs of a `$d` list are invisible to proofs. -/
+theorem Provable.dv_congr {Γ : Database} {fr fr' : Frame} {e : Expr}
+    (h_hyps : fr.hyps = fr'.hyps) (h_dv : ∀ v w, dvRel fr.dv v w ↔ dvRel fr'.dv v w) :
+    Provable Γ fr e ↔ Provable Γ fr' e :=
+  ⟨Provable.dv_mono h_hyps fun v w => (h_dv v w).mp,
+    Provable.dv_mono h_hyps.symm fun v w => (h_dv v w).mpr⟩
+
 end Metamath.Spec

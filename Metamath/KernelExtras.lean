@@ -188,7 +188,7 @@ theorem foldl_from_pos1_preserves_head {a : Metamath.Verify.Formula} (suffix : L
 /-! ## HashMap Lemmas
 
 Standard HashMap insertion and lookup properties.
-These replace the axiomatized versions in KernelClean.lean.
+These replace the axiomatized versions in KernelCorrectness.lean.
 -/
 
 namespace HashMap

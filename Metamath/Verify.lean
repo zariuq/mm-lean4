@@ -107,6 +107,13 @@ structure ModeConfig where
   allowConstInnerScope   : Bool := false  -- Allow $c in inner blocks
   allowIncludeInnerScope : Bool := false  -- Allow $[ $] in inner blocks
   allowTokenSplicing     : Bool := false  -- Allow include to split tokens
+  -- [MM 4.1.1–4.1.2] Lexical relaxations.  The book allows only printable ASCII
+  -- and five whitespace bytes, also inside comments, and forbids `$(`/`$)`
+  -- inside a comment.
+  allowVerticalTabWhitespace : Bool := false  -- Vertical tab separates tokens (metamath.exe)
+  -- Ignore comment text: any byte and any `$(` up to the first standalone `$)`.
+  -- Comments do not nest.
+  ignoreCommentText      : Bool := false
   childFileBoundary      : ChildFileBoundaryPolicy := .strict
   compressedInvalidBytes : CompressedInvalidBytePolicy := .reject
   compressedSavePlacement : CompressedSavePlacement := .immediatelyAfterUse
@@ -138,7 +145,9 @@ def zar : ModeConfig := {}
 
 /-- `metamath-knife` acceptance-policy mirror.  Knife rejects incomplete proofs
 and top-level `$e`, ignores non-code bytes in compressed proof bodies, and uses
-literal include strings relative to the invocation directory. -/
+literal include strings relative to the invocation directory.  Inside comments
+it accepts exactly the book's bytes and rejects `$(`/`$)` in a longer token; on
+a non-ASCII byte in a comment it panics, where this mirror reports an error. -/
 def knife : ModeConfig := {
   rejectUnknownSteps := true
   rejectToplevelEss := true
@@ -151,8 +160,10 @@ def knife : ModeConfig := {
 `$f`, includes inside scopes/statements, and statement state to cross physical
 file boundaries, while its per-file scanner still rejects an unterminated
 comment.  It rejects direct `$c` in an inner scope and keys includes literally
-from the invocation directory. -/
+from the invocation directory.  It treats vertical tab as whitespace, also
+inside comments. -/
 def exe : ModeConfig := {
+  allowVerticalTabWhitespace := true
   allowDuplicateFloat := true
   allowIncludeInnerScope := true
   allowTokenSplicing := true
@@ -170,6 +181,8 @@ it.  `Metamath.VariableActivity` proves the activity gate implements the book's
 block rule; what the flags below relax are placement and duplication policies,
 not scope. -/
 def permissive : ModeConfig := {
+  allowVerticalTabWhitespace := true
+  ignoreCommentText := true
   allowDuplicateFloat := true
   allowConstInnerScope := true
   allowIncludeInnerScope := true
@@ -181,14 +194,14 @@ def permissive : ModeConfig := {
 /-- Sound default: Zar mode + reject incomplete proofs.
     Minimal restriction needed for prefix-provenance (every accepted `$p` theorem
     is `Spec.Provable` in the pre-insertion database). -/
-def soundDefault : ModeConfig := {
+def sound : ModeConfig := {
   rejectUnknownSteps := true
 }
 
 /-- A config is prefix-certified when it rejects `?` steps and does not allow
     duplicate `$f` hypotheses. These are the minimal conditions under which the
-    prefix-provenance event-lift theorems hold (see `PrefixWitnessCheckBytes`). -/
-def prefixCertified (c : ModeConfig) : Prop :=
+    prefix-provenance event-lift theorems hold (see `PrefixProvability.Checker`). -/
+def IsSound (c : ModeConfig) : Prop :=
   c.rejectUnknownSteps = true ∧ c.allowDuplicateFloat = false
 
 
@@ -200,7 +213,7 @@ inductive VerifierMode where
   | knife
   | exe
   | permissive
-  | soundDefault
+  | sound
   deriving DecidableEq, Repr, Inhabited
 
 namespace VerifierMode
@@ -210,7 +223,7 @@ def toConfig : VerifierMode → ModeConfig
   | .knife => ModeConfig.knife
   | .exe => ModeConfig.exe
   | .permissive => ModeConfig.permissive
-  | .soundDefault => ModeConfig.soundDefault
+  | .sound => ModeConfig.sound
 
 end VerifierMode
 
@@ -229,6 +242,30 @@ def isSpecWhitespace (c : UInt8) : Bool :=
 
 
 def isPrintable (c : UInt8) : Bool := c >= 32 && c <= 126
+
+/-- Bytes a Metamath source file may contain, comments included (§4.1.1–4.1.2):
+printable ASCII and the five whitespace bytes. -/
+def isSourceByte (c : UInt8) : Bool := isPrintable c || isSpecWhitespace c
+
+/-- Token separators of a mode: the book's whitespace (§4.1.1), and vertical tab
+in modes that treat it as whitespace, as `metamath.exe` does. -/
+def ModeConfig.isWhitespace (cfg : ModeConfig) (c : UInt8) : Bool :=
+  Metamath.Verify.isWhitespace c || (cfg.allowVerticalTabWhitespace && c == 11)
+
+/-- The first byte of a comment token outside the book's character set. -/
+def firstNonSourceByte? (tk : ByteSlice) : Option UInt8 := Id.run do
+  for b in tk do
+    if !isSourceByte b then return some b
+  return none
+
+/-- Whether a comment token contains `$(` or `$)` (§4.1.2: comments "may not
+contain the 2-character sequences `$(` or `$)`"). -/
+def hasCommentDelimiter (tk : ByteSlice) : Bool := Id.run do
+  let mut afterDollar := false
+  for b in tk do
+    if afterDollar && (b == '('.toUInt8 || b == ')'.toUInt8) then return true
+    afterDollar := b == '$'.toUInt8
+  return false
 
 def isMathChar (c : UInt8) : Bool := c ≠ '$'.toUInt8 && isPrintable c
 
@@ -542,6 +579,8 @@ inductive ParseErrorCode
   | hypothesisNotFound
   | outOfOrderHypothesesInFrame
   | mandatoryHypothesisInCompressedHeader
+  | commentDelimiterInToken
+  | commentIllegalByte
   deriving DecidableEq, Repr, Inhabited
 /-- Reviewer-facing alias: verifier diagnostics include parse and proof-check phases. -/
 abbrev VerifyErrorCode := ParseErrorCode
@@ -641,6 +680,8 @@ namespace ParseErrorCode
   | .outOfOrderHypothesesInFrame => "out of order hypotheses in frame"
   | .mandatoryHypothesisInCompressedHeader =>
       "mandatory hypothesis '<label>' repeated in compressed proof header"
+  | .commentDelimiterInToken => "'$(' or '$)' inside a comment token"
+  | .commentIllegalByte => "illegal character in comment"
 
 
 /-- Stable numeric ID for each parse error code. -/
@@ -708,6 +749,8 @@ def toNat : ParseErrorCode → Nat
   | .hypothesisNotFound => 53
   | .outOfOrderHypothesesInFrame => 54
   | .mandatoryHypothesisInCompressedHeader => 62
+  | .commentDelimiterInToken => 63
+  | .commentIllegalByte => 64
 
 /-- Decode a stable numeric ID into a parse error code. -/
 def ofNat? : Nat → Option ParseErrorCode
@@ -774,6 +817,8 @@ def ofNat? : Nat → Option ParseErrorCode
   | 53 => some .hypothesisNotFound
   | 54 => some .outOfOrderHypothesesInFrame
   | 62 => some .mandatoryHypothesisInCompressedHeader
+  | 63 => some .commentDelimiterInToken
+  | 64 => some .commentIllegalByte
   | _ => none
 
 
@@ -842,6 +887,8 @@ def specClause : ParseErrorCode → SpecClause
   | .hypothesisNotFound => .sec4_3_labelResolution
   | .outOfOrderHypothesesInFrame => .sec4_2_7_frames
   | .mandatoryHypothesisInCompressedHeader => .sec4_4_5_compressedProof
+  | .commentDelimiterInToken => .sec4_1_2_comments
+  | .commentIllegalByte => .sec4_1_2_comments
 
 /-- Option-valued compatibility wrapper (kept for existing callsites/tests). -/
 def specClause? (code : ParseErrorCode) : Option SpecClause :=
@@ -899,6 +946,8 @@ inductive TokenFormError where
   | invalidMathString (tok : String)
   | unknownStatementType (tok : String)
   | nestedCommentDelimiter
+  | commentDelimiterInToken
+  | commentIllegalByte (byte : UInt8)
   deriving DecidableEq, Repr, Inhabited
 
 namespace TokenFormError
@@ -909,6 +958,8 @@ def code : TokenFormError → ParseErrorCode
   | .invalidMathString _ => .invalidMathString
   | .unknownStatementType _ => .unknownStatementType
   | .nestedCommentDelimiter => .nestedCommentDelimiter
+  | .commentDelimiterInToken => .commentDelimiterInToken
+  | .commentIllegalByte _ => .commentIllegalByte
 
 def message : TokenFormError → String
   | .notACommand _ => "not a command"
@@ -916,6 +967,8 @@ def message : TokenFormError → String
   | .invalidMathString tok => "invalid math string '" ++ tok ++ "'"
   | .unknownStatementType tok => "unknown statement type '" ++ tok ++ "'"
   | .nestedCommentDelimiter => "nested comment delimiter '$(' inside comment"
+  | .commentDelimiterInToken => "'$(' or '$)' inside a comment token"
+  | .commentIllegalByte b => "illegal character (byte " ++ toString b.toNat ++ ") in comment"
 
 end TokenFormError
 
@@ -1180,9 +1233,6 @@ def message : ErrorEvidence → String
   | compressedSave err => CompressedSaveError.message err
   | internalGate _ _ _ => ParseErrorCode.message .internalIllFormedDatabaseAfterParse
 
-def allowed : ErrorEvidence → Prop
-  | _ => True
-
 end ErrorEvidence
 
 
@@ -1380,42 +1430,42 @@ def Sec4_2_4_DjvarsScopeViolation (s : DB) : Prop :=
   s.TokenNotInScopeViolation
 
 /-- Payload witness for `.invalidLabel` carrying the concrete rejected token. -/
-def InvalidLabelPayloadWitness (s : DB) : Prop :=
+def HasInvalidLabelEvidence (s : DB) : Prop :=
   ∃ label, s.errorEvidence? = some (.tokenForm (.invalidLabel label))
 
 /-- Payload witness for `.topLevelEssentialNotAllowed` carrying strict-mode gate values. -/
-def TopLevelEssentialPayloadWitness (s : DB) : Prop :=
+def HasTopLevelEssentialEvidence (s : DB) : Prop :=
   s.errorEvidence? = some (.scopeDecl (.topLevelEssentialNotAllowed))
 
 /-- Payload witness for a degenerate `$d` statement, retaining the number of
 variables seen before the terminator. -/
-def DisjointStatementTooShortPayloadWitness (s : DB) : Prop :=
+def HasDisjointStatementTooShortEvidence (s : DB) : Prop :=
   ∃ actual,
     s.errorEvidence? = some (.scopeDecl (.disjointStatementTooShort actual))
 
 /-- Payload witness for `.tokenNotInScope` carrying symbol + gate booleans. -/
-def TokenNotInScopePayloadWitness (s : DB) : Prop :=
+def HasTokenNotInScopeEvidence (s : DB) : Prop :=
   ∃ sym,
     s.errorEvidence? = some (.scopeDecl (.tokenNotInScope sym))
 
 /-- Payload witness for `.inactiveMathSymbol` carrying the offending symbol. -/
-def InactiveMathSymbolPayloadWitness (s : DB) : Prop :=
+def HasInactiveMathSymbolEvidence (s : DB) : Prop :=
   ∃ sym,
     s.errorEvidence? = some (.scopeDecl (.inactiveMathSymbol sym))
 
 /-- Payload witness for `.tokenNotConstantOrVariable` carrying symbol + gate boolean. -/
-def TokenNotConstantOrVariablePayloadWitness (s : DB) : Prop :=
+def HasTokenNotConstantOrVariableEvidence (s : DB) : Prop :=
   ∃ sym,
     s.errorEvidence? = some (.scopeDecl (.tokenNotConstantOrVariable sym))
 
 /-- Payload witness for `.includeInInnerScope` carrying position + scope + in-statement. -/
-def IncludeInInnerScopePayloadWitness (s : DB) : Prop :=
+def HasIncludeInInnerScopeEvidence (s : DB) : Prop :=
   ∃ pos depth inStatement allowIncludeInnerScopeWitness,
     s.errorEvidence? =
       some (.includeErr (.inInnerScope pos depth inStatement allowIncludeInnerScopeWitness))
 
 /-- Payload witness for `.includeInsideStatement` carrying position + scope + in-statement. -/
-def IncludeInsideStatementPayloadWitness (s : DB) : Prop :=
+def HasIncludeInsideStatementEvidence (s : DB) : Prop :=
   ∃ pos scopeDepth inStatementWitness allowTokenSplicingWitness,
     s.errorEvidence? =
       some (.includeErr (.insideStatement pos scopeDepth inStatementWitness allowTokenSplicingWitness))
@@ -1435,8 +1485,7 @@ def AllCodePayloadShapeViolation (s : DB) (code : ParseErrorCode) : Prop :=
   ∃ pos msg idx ev,
     s.error? = some ⟨.error pos msg, idx⟩ ∧
     s.errorEvidence? = some ev ∧
-    ev.code = code ∧
-    ErrorEvidence.allowed ev
+    ev.code = code
 
 /-- All-code semantic witness carried by a concrete parser interrupt.
 Currently identical to `AllCodePayloadShapeViolation`; kept as a stable API for future strengthening. -/
@@ -1468,6 +1517,8 @@ def InternalConsistencyViolation (s : DB) : Prop :=
     s.errorEvidence? = some (.internalGate allowDup wf dv)
 
 /-- Canonical per-code rule-semantic predicate.
+Its cases are stated over the error evidence the parser recorded (tag and payload), so it
+certifies that a code agrees with its evidence; it is not an independent predicate on the source.
 This is the stable theorem-facing API for code-indexed parser semantics.
 Specific constructors can be strengthened over time without changing callers. -/
 def RuleSemanticViolation (s : DB) (code : ParseErrorCode) : Prop :=
@@ -1534,6 +1585,8 @@ def RuleSemanticViolation (s : DB) (code : ParseErrorCode) : Prop :=
   | .hypothesisNotFound => s.ProofCheckViolation .hypothesisNotFound
   | .mandatoryHypothesisInCompressedHeader =>
       s.ProofCheckViolation .mandatoryHypothesisInCompressedHeader
+  | .commentDelimiterInToken => s.TokenFormViolation .commentDelimiterInToken
+  | .commentIllegalByte => s.TokenFormViolation .commentIllegalByte
   | .theoremMoreThanOneStackElement => s.TheoremFinalityViolation .theoremMoreThanOneStackElement
   | .theoremClaimMismatch => s.TheoremFinalityViolation .theoremClaimMismatch
   | .internalIllFormedDatabaseAfterParse =>
@@ -2429,10 +2482,15 @@ def feedToken (s : ParserState) (pos : Nat) (tk : ByteSlice) : ParserState :=
   match s.tokp with
   | .comment p =>
     if tk.eqArray "$)".toAscii then { s with tokp := p }
+    else if s.db.config.ignoreCommentText then s
     else if tk.eqArray "$(".toAscii then
       -- Per spec §4.1.2: "comments may not contain the 2-character sequences $( or $)"
       -- Test: metamath-test/tests/unit/test03_nested_comment_delimiters.mm
       s.mkErrorFromEvidence pos (.tokenForm .nestedCommentDelimiter)
+    else if hasCommentDelimiter tk then
+      s.mkErrorFromEvidence pos (.tokenForm .commentDelimiterInToken)
+    else if let some b := firstNonSourceByte? tk then
+      s.mkErrorFromEvidence pos (.tokenForm (.commentIllegalByte b))
     else s
   | p =>
     if tk.eqArray "$(".toAscii then { s with tokp := p.comment } else
@@ -2561,7 +2619,7 @@ def feed (base : Nat) (arr : ByteArray)
     (i : Nat) (rs : FeedState) (s : ParserState) : ParserState :=
   if h : i < arr.size then
     let c := arr[i]
-    if isWhitespace c then
+    if s.db.config.isWhitespace c then
       match rs with
       | .ws =>
         let s := s.updateLine (base + i) c
@@ -2638,7 +2696,7 @@ end ParserState
 `checkBytes` is a pure parser entry point for proofs about parser invariants.
 It processes the full byte array in one pass. This is simpler to reason about
 than chunked IO. The canonical IO entrypoint (`check`) is single-pass include-aware
-streaming (`checkSinglePass`), while `checkBytes` remains the pure parser model.
+streaming (`check`), while `checkBytes` remains the pure parser model.
 -/
 def checkBytesCore (arr : ByteArray) (config : ModeConfig := {}) : DB :=
   let initialDB : DB := { (default : DB) with config := config }
@@ -3414,16 +3472,12 @@ def finalizeSinglePassResult (config : ModeConfig)
     (singlePassInitialState config)
     0
 
-/-- IO entrypoint using single-pass include scanning + parser streaming.
+/-- Default IO entrypoint: single-pass include scanning + parser streaming.
 This keeps include recursion bounded and avoids materializing a fully expanded
 byte array before parsing. -/
-def checkSinglePass (fname : String) (config : ModeConfig := {}) : IO DB := do
+def check (fname : String) (config : ModeConfig := {}) : IO DB := do
   let result ← singlePassInitialResult fname config
   return finalizeSinglePassResult config result
-
-/-- Default IO entrypoint (single-pass include handling). -/
-def check (fname : String) (config : ModeConfig := {}) : IO DB :=
-  checkSinglePass fname config
 
 /-! ## Include child-file boundary: preservation theorems
 

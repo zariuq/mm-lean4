@@ -9,14 +9,11 @@ that correspond to our formal WellFormedDB invariants.
 -/
 
 import Metamath.Verify
-import Metamath.WellFormedness
-import Metamath.ParserOperations
 
 namespace Metamath
 namespace Tests
 
 open Verify
-open WF
 
 /-! ## Test Helpers -/
 
@@ -27,7 +24,6 @@ def mkTestDB : DB := {
   scopes := #[]
   objects := Std.HashMap.emptyWithCapacity 8
   interrupt := false
-  mode := .zar
 }
 
 /-- Check if DB has no error -/
@@ -89,12 +85,12 @@ def test_insertHyp_float_structure : IO Unit := do
   -- Add float: wff x
   let pos : Pos := ⟨3, 1⟩
   let arr : Formula := #[.const "wff", .var "x"]
-  let db' := db.insert pos "fx" (fun _ => .hyp false arr "fx")
+  let db' := db.insertHyp pos "fx" false arr
 
   -- Observable property: float is added
   match db'.find? "fx" with
   | some (.hyp false f _) =>
-    if f.size = 2 ∧ !f[0]!.isVar ∧ f[1]!.isVar then
+    if dbOk db' ∧ f = arr then
       IO.println "✓ insertHyp float has correct structure"
     else
       throw <| IO.userError "float should have structure (const, var)"
@@ -113,11 +109,10 @@ def test_insertHyp_float_duplicate_detection : IO Unit := do
   -- Try to add duplicate float (same variable)
   let db' := db.insertHyp ⟨4, 1⟩ "fx2" false arr
 
-  -- Observable property: should set error
-  if dbOk db' then
-    throw <| IO.userError "insertHyp should detect duplicate float variable"
-  else
-    IO.println "✓ insertHyp detects duplicate float variables"
+  if db'.parseErrorCode? != some .variableAlreadyHasFloatHyp then
+    throw <| IO.userError
+      s!"insertHyp: expected variableAlreadyHasFloatHyp, got {repr db'.parseErrorCode?}"
+  IO.println "✓ insertHyp detects duplicate float variables"
 
 /-! ## Frame Tests -/
 
@@ -150,10 +145,33 @@ def test_float_declaration_sequence : IO Unit := do
     throw <| IO.userError "float declaration sequence failed"
   if db.objects.size ≠ 3 then
     throw <| IO.userError s!"expected 3 objects, got {db.objects.size}"
-  -- Note: floats are stored in objects, not a separate field
-  -- Could count floats by filtering objects, but for now just check total
-
   IO.println "✓ Float declaration sequence succeeds"
+
+/-- A float may follow an essential hypothesis that does not use its variable.
+The assertion frame and proof must retain the source hypothesis order. -/
+def test_interleaved_hypotheses : IO Unit := do
+  let text := "$c wff |- $. $v x y $. fx $f wff x $. " ++
+    "${ ex $e |- x $. fy $f wff y $. ax $a |- y $. " ++
+    "th $p |- y $= fx ex fy ax $. $}"
+  let db := checkBytes text.toUTF8
+  if !dbOk db || !db.incompleteProofs.isEmpty then
+    throw <| IO.userError s!"interleaved hypotheses rejected: {repr db.parseErrorCode?}"
+  match db.find? "th" with
+  | some (.assert _ fr _) =>
+    if fr.hyps != #["fx", "ex", "fy"] then
+      throw <| IO.userError s!"interleaved hypothesis order changed: {repr fr.hyps}"
+  | _ => throw <| IO.userError "interleaved proof did not store its theorem"
+  IO.println "✓ legal interleaving preserves hypothesis and proof order"
+
+/-- An essential hypothesis cannot use a variable before its float hypothesis. -/
+def test_essential_before_its_float : IO Unit := do
+  let text := "$c wff |- $. $v x y $. fx $f wff x $. " ++
+    "${ ey $e |- y $. fy $f wff y $. ax $a |- y $. $}"
+  let db := checkBytes text.toUTF8
+  if db.parseErrorCode? != some .hypothesisSymbolsNotInFrame then
+    throw <| IO.userError
+      s!"late float: expected hypothesisSymbolsNotInFrame, got {repr db.parseErrorCode?}"
+  IO.println "✓ an essential hypothesis requires its variables' floats first"
 
 /-! ## Main Test Runner -/
 
@@ -178,6 +196,8 @@ def runAllTests : IO Unit := do
 
   IO.println "## Integration"
   test_float_declaration_sequence
+  test_interleaved_hypotheses
+  test_essential_before_its_float
   IO.println ""
 
   IO.println "=== All tests passed! ==="
@@ -188,4 +208,3 @@ end Metamath
 /-- Main entry point for test executable -/
 def main : IO Unit :=
   Metamath.Tests.runAllTests
-

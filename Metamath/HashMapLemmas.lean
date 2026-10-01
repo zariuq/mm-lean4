@@ -11,7 +11,7 @@ of insertions, we can find what we inserted. This module provides the machinery.
 
 import Batteries.Data.HashMap
 import Metamath.Verify
-import Metamath.VerifyDBThms
+import Metamath.Verify.DB
 import Metamath.ParserInvariants
 import Metamath.WellFormedness
 

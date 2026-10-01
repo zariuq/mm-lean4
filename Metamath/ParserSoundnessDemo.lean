@@ -9,7 +9,7 @@ Created by: Opus 4.1
 
 import Metamath.Verify
 import Metamath.WellFormedness
-import Metamath.ParserOperations
+import Metamath.ParserInvariantPreservation
 import Std.Data.HashMap.Lemmas
 
 namespace Metamath.ParserSoundnessDemo

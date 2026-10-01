@@ -1,4 +1,4 @@
-import Metamath.VerifySinglePassThms
+import Metamath.Verify.Check
 import Metamath.Legacy.Runtime
 
 namespace Metamath.Legacy
@@ -73,8 +73,8 @@ theorem checkSinglePass_eq_checkTwoPassLegacy_of_sharedExpandedBytes
         config
         config.maxIncludeDepth =
         pure (.ok (processed, seenLegacy))) :
-    checkSinglePass fname config = checkTwoPassLegacy fname config := by
-  rw [checkSinglePass_eq_finalize_singlePassInitialResult]
+    check fname config = checkTwoPassLegacy fname config := by
+  rw [check_eq_finalize_singlePassInitialResult]
   rw [checkTwoPassLegacy_eq_checkExpandedResult_expandIncludes]
   rw [h_single, h_legacy]
   have h_inner :
@@ -111,8 +111,8 @@ theorem checkSinglePass_eq_checkTwoPassLegacy_of_sharedIncludeError
         config
         config.maxIncludeDepth =
         pure (.error err)) :
-    checkSinglePass fname config = checkTwoPassLegacy fname config := by
-  rw [checkSinglePass_eq_finalize_singlePassInitialResult]
+    check fname config = checkTwoPassLegacy fname config := by
+  rw [check_eq_finalize_singlePassInitialResult]
   rw [checkTwoPassLegacy_eq_checkExpandedResult_expandIncludes]
   rw [h_single, h_legacy]
   have h_inner :
@@ -140,7 +140,7 @@ theorem checkSinglePass_eq_checkTwoPassLegacy_of_includeReadFailure
         config
         config.maxIncludeDepth =
         pure (.error (.readFailure name path err))) :
-    checkSinglePass fname config = checkTwoPassLegacy fname config := by
+    check fname config = checkTwoPassLegacy fname config := by
   exact checkSinglePass_eq_checkTwoPassLegacy_of_sharedIncludeError
     fname config (.readFailure name path err) h_single h_legacy
 
@@ -158,7 +158,7 @@ theorem checkSinglePass_eq_checkTwoPassLegacy_of_includeCycleDetected
         config
         config.maxIncludeDepth =
         pure (.error (.cycleDetected path))) :
-    checkSinglePass fname config = checkTwoPassLegacy fname config := by
+    check fname config = checkTwoPassLegacy fname config := by
   exact checkSinglePass_eq_checkTwoPassLegacy_of_sharedIncludeError
     fname config (.cycleDetected path) h_single h_legacy
 
@@ -197,7 +197,7 @@ inductive CheckerBridgeWitness (fname : String) (config : ModeConfig) : Prop whe
 theorem checkSinglePass_eq_checkTwoPassLegacy_of_bridgeWitness
     (fname : String) (config : ModeConfig)
     (h : CheckerBridgeWitness fname config) :
-    checkSinglePass fname config = checkTwoPassLegacy fname config := by
+    check fname config = checkTwoPassLegacy fname config := by
   cases h with
   | sharedExpandedBytes processed seenSingle seenLegacy h_single h_legacy =>
       exact checkSinglePass_eq_checkTwoPassLegacy_of_sharedExpandedBytes
@@ -341,7 +341,7 @@ theorem includeSafeSemantic_implies_includeSafe
 theorem checkSinglePass_eq_checkTwoPassLegacy_of_includeSafeSemantic
     (fname : String) (config : ModeConfig)
     (h_sem : IncludeSafeSemantic fname config) :
-    checkSinglePass fname config = checkTwoPassLegacy fname config :=
+    check fname config = checkTwoPassLegacy fname config :=
   checkSinglePass_eq_checkTwoPassLegacy_of_bridgeWitness
     fname config (includeSafeSemantic_implies_includeSafe fname config h_sem)
 
@@ -349,7 +349,7 @@ theorem checkSinglePass_eq_checkTwoPassLegacy_of_includeSafeSemantic
 theorem checkSinglePass_eq_checkTwoPassLegacy_of_includeSafe
     (fname : String) (config : ModeConfig)
     (h_safe : IncludeSafe fname config) :
-    checkSinglePass fname config = checkTwoPassLegacy fname config :=
+    check fname config = checkTwoPassLegacy fname config :=
   checkSinglePass_eq_checkTwoPassLegacy_of_bridgeWitness fname config h_safe
 
 /-- Read-failure payload specialization routed through the semantic
@@ -366,7 +366,7 @@ theorem checkSinglePass_eq_checkTwoPassLegacy_of_includeSafeSemantic_includeRead
         config
         config.maxIncludeDepth =
         pure (.error (.readFailure name path err))) :
-    checkSinglePass fname config = checkTwoPassLegacy fname config := by
+    check fname config = checkTwoPassLegacy fname config := by
   exact checkSinglePass_eq_checkTwoPassLegacy_of_includeSafeSemantic
     fname config
     (includeSafeSemantic_of_includeReadFailure
@@ -386,7 +386,7 @@ theorem checkSinglePass_eq_checkTwoPassLegacy_of_includeSafeSemantic_includeCycl
         config
         config.maxIncludeDepth =
         pure (.error (.cycleDetected path))) :
-    checkSinglePass fname config = checkTwoPassLegacy fname config := by
+    check fname config = checkTwoPassLegacy fname config := by
   exact checkSinglePass_eq_checkTwoPassLegacy_of_includeSafeSemantic
     fname config
     (includeSafeSemantic_of_includeCycleDetected
@@ -406,7 +406,7 @@ theorem checkSinglePass_eq_checkTwoPassLegacy_of_includeSafeSemantic_includeDept
         config
         config.maxIncludeDepth =
         pure (.error (.depthExceeded path))) :
-    checkSinglePass fname config = checkTwoPassLegacy fname config := by
+    check fname config = checkTwoPassLegacy fname config := by
   exact checkSinglePass_eq_checkTwoPassLegacy_of_includeSafeSemantic
     fname config
     (includeSafeSemantic_of_includeDepthExceeded
@@ -449,7 +449,7 @@ immediately return the same include-depth error DB. -/
 theorem checkSinglePass_eq_checkTwoPassLegacy_zeroIncludeDepth
     (fname : String) (config : ModeConfig)
     (h_depth : config.maxIncludeDepth = 0) :
-    checkSinglePass fname config = checkTwoPassLegacy fname config := by
+    check fname config = checkTwoPassLegacy fname config := by
   exact checkSinglePass_eq_checkTwoPassLegacy_of_includeSafe
     fname config (includeSafe_zeroIncludeDepth fname config h_depth)
 

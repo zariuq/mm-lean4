@@ -152,9 +152,9 @@ theorem knife_selects_metamathKnifeIncludePolicy :
 theorem zar_selects_zarIncludePolicy :
     zar.includeInterpretation = zarIncludePolicy := rfl
 
-/-- `soundDefault` changes proof completeness policy, not include policy. -/
-theorem soundDefault_selects_zarIncludePolicy :
-    soundDefault.includeInterpretation = zarIncludePolicy := rfl
+/-- `sound` changes proof completeness policy, not include policy. -/
+theorem sound_selects_zarIncludePolicy :
+    sound.includeInterpretation = zarIncludePolicy := rfl
 
 /-- Selection fact: `permissive` deliberately permits all child splicing. -/
 theorem permissive_selects_permissiveIncludePolicy :
@@ -226,6 +226,8 @@ structure AcceptanceInterpretation where
   allowConstInnerScope : Bool
   allowIncludeInnerScope : Bool
   allowTokenSplicing : Bool
+  allowVerticalTabWhitespace : Bool
+  ignoreCommentText : Bool
   includes : IncludeInterpretation
   compressedProofs : CompressedProofInterpretation
   deriving DecidableEq, Repr
@@ -238,6 +240,8 @@ def acceptanceInterpretation (c : ModeConfig) : AcceptanceInterpretation :=
     allowConstInnerScope := c.allowConstInnerScope
     allowIncludeInnerScope := c.allowIncludeInnerScope
     allowTokenSplicing := c.allowTokenSplicing
+    allowVerticalTabWhitespace := c.allowVerticalTabWhitespace
+    ignoreCommentText := c.ignoreCommentText
     includes := c.includeInterpretation
     compressedProofs := c.compressedProofInterpretation }
 
@@ -249,6 +253,8 @@ def metamathKnifeAcceptanceRequirement : AcceptanceInterpretation :=
     allowConstInnerScope := false
     allowIncludeInnerScope := false
     allowTokenSplicing := false
+    allowVerticalTabWhitespace := false
+    ignoreCommentText := false
     includes := metamathKnifeIncludePolicy
     compressedProofs := metamathKnifeCompressedProofPolicy }
 
@@ -260,6 +266,8 @@ def metamathExeAcceptanceRequirement : AcceptanceInterpretation :=
     allowConstInnerScope := false
     allowIncludeInnerScope := true
     allowTokenSplicing := true
+    allowVerticalTabWhitespace := true
+    ignoreCommentText := false
     includes := metamathExeIncludePolicy
     compressedProofs := metamathExeCompressedProofPolicy }
 
@@ -271,11 +279,13 @@ def zarAcceptancePolicy : AcceptanceInterpretation :=
     allowConstInnerScope := false
     allowIncludeInnerScope := false
     allowTokenSplicing := false
+    allowVerticalTabWhitespace := false
+    ignoreCommentText := false
     includes := zarIncludePolicy
     compressedProofs := strictCompressedProofPolicy }
 
 /-- The proof-certified default changes only unknown-proof acceptance. -/
-def soundDefaultAcceptancePolicy : AcceptanceInterpretation :=
+def soundAcceptancePolicy : AcceptanceInterpretation :=
   { zarAcceptancePolicy with rejectUnknownSteps := true }
 
 /-- Selection fact only: the `knife` preset selects the source-derived
@@ -293,8 +303,8 @@ theorem zar_selects_zarAcceptancePolicy :
     zar.acceptanceInterpretation = zarAcceptancePolicy := rfl
 
 /-- Selection fact for the proof-certified default. -/
-theorem soundDefault_selects_soundDefaultAcceptancePolicy :
-    soundDefault.acceptanceInterpretation = soundDefaultAcceptancePolicy := rfl
+theorem sound_selects_soundAcceptancePolicy :
+    sound.acceptanceInterpretation = soundAcceptancePolicy := rfl
 
 end ModeConfig
 

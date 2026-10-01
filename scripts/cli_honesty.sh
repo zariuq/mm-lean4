@@ -4,7 +4,8 @@
 # Pins the exact accepted/verified/rejected wording of the CLI across modes
 # ([MM 4.1.4]: `?` proofs are accepted with an incompleteness warning, never
 # reported as verified) and the include-resolution budget canaries
-# (zero / sufficient / default).  Run from the repo root:
+# (zero / sufficient / default), and rejects malformed arguments.  Run from
+# the repo root:
 #
 #   MM_LEAN4=.lake/build/bin/mm-lean4 sh scripts/cli_honesty.sh
 set -u
@@ -87,6 +88,18 @@ chk "mirror literal lookup is CWD-based"     1 "failed to read include file" --m
 chk "exe-mode skips same-spelling self"      0 "verified, 1 objects" --mode=exe "$B/self_lit.mm"
 chk "knife-mode skips same-spelling self"    0 "verified, 1 objects" --mode=knife "$B/self_lit.mm"
 neg "mirror skip is silent"                    "warning"             --mode=exe "$B/self_lit.mm"
+
+# Command-line arguments: a misspelt, malformed or conflicting option is an
+# error (exit 2), never a silent fallback to a default policy.
+chk "misspelt mode rejected"         2 "unknown mode in --mode=soud"   --mode=soud "$Q/normal_qmark.mm"
+chk "malformed budget rejected"      2 "invalid number"                --max-include-resolutions=abc "$B/main.mm"
+chk "non-digit budget rejected"      2 "invalid number"                --max-include-resolutions=1_0 "$B/main.mm"
+chk "unknown option rejected"        2 "unknown option --frobnicate"   --frobnicate "$Q/complete.mm"
+chk "conflicting modes rejected"     2 "conflicting mode option"       --mode=zar --mode=sound "$Q/complete.mm"
+chk "conflicting budgets rejected"   2 "conflicting include-resolution budget" --max-include-resolutions=3 --max-include-resolutions=4 "$B/main.mm"
+chk "extra argument rejected"        2 "unexpected argument"           "$Q/complete.mm" "$Q/normal_qmark.mm"
+chk "mode after file still applies"  1 "unknown step '?' not allowed"  "$Q/normal_qmark.mm" --mode=sound
+chk "repeated same mode accepted"    0 "verified, 6 objects"           --mode=sound --mode=sound "$Q/complete.mm"
 
 if [ "$fails" != 0 ]; then echo "$fails failure(s)"; exit 1; fi
 echo "all CLI honesty gates green"

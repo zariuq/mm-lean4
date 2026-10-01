@@ -1,19 +1,13 @@
 /-
 # Database Format Validation Tests
 
-This module validates that real Metamath databases satisfy the well-formedness
-properties we assume as axioms in KernelClean.lean.
-
-Key properties tested:
-1. **float_key_not_rebound**: Float variables appear at most once per frame
-2. Frame structure: Floats before essentials
-3. Hypothesis validity: Well-formed formulas
-
-These tests ensure our axioms reflect reality!
+This module checks float-variable uniqueness in stored assertion frames.
+The default runner uses in-tree normal and compressed proof fixtures and
+requires the duplicate-float fixture to fail with its specific parser error.
+These runtime checks supplement, rather than replace, the correctness proofs.
 -/
 
 import Metamath.Verify
-import Metamath.Spec
 
 namespace Metamath.Validate
 
@@ -21,8 +15,7 @@ open Verify
 
 /-! ## Float Uniqueness Validation
 
-Tests the property assumed by `float_key_not_rebound` axiom in KernelClean.lean:
-In any frame, each float variable appears at most once.
+Check that each float variable appears at most once in an assertion frame.
 -/
 
 /-- Check if a single frame has unique float variables. -/
@@ -45,14 +38,12 @@ def validateFloatUniqueness (db : DB) (hyps : Array String) : Bool :=
 
 /-- Collect all frames from a database and validate float uniqueness. -/
 def validateAllFrames (db : DB) : Except String Unit := do
-  let mut frameCount := 0
   let mut malformedFrames : List (String × String) := []
 
   -- Iterate through all objects looking for assertions (which have frames)
   for (label, obj) in db.objects.toList do
     match obj with
     | .assert _ fr _ =>
-        frameCount := frameCount + 1
         if !validateFloatUniqueness db fr.hyps then
           malformedFrames := (label, "Float variable appears multiple times") :: malformedFrames
     | _ => continue
@@ -63,56 +54,6 @@ def validateAllFrames (db : DB) : Except String Unit := do
     let msg := s!"Found {malformedFrames.length} frames with duplicate float variables:\n" ++
                String.intercalate "\n" (malformedFrames.map fun (lbl, err) => s!"  {lbl}: {err}")
     throw msg
-
-/-! ## Frame Structure Validation
-
-Test that frames follow the expected structure:
-- Float hypotheses come before essential hypotheses
-- Hypothesis formulas are well-formed
--/
-
-/-- Check if frame follows standard structure (floats before essentials). -/
-def validateFrameStructure (db : DB) (hyps : Array String) : Bool :=
-  let rec check (seenEssential : Bool) : List String → Bool
-    | [] => true
-    | label :: rest =>
-        match db.find? label with
-        | some (.hyp false _ _) =>  -- Float
-            if seenEssential then
-              false  -- Float after essential!
-            else
-              check false rest
-        | some (.hyp true _ _) =>   -- Essential
-            check true rest
-        | _ => check seenEssential rest  -- Non-hyp or not found
-
-  check false hyps.toList
-
-/-- Check if a float hypothesis is well-formed: f = #[.const c, .var v]. -/
-def validateFloatFormula (f : Formula) : Bool :=
-  match f.toList with
-  | [.const _, .var _] => true
-  | _ => false
-
-/-- Comprehensive frame validation. -/
-def validateFrame (db : DB) (hyps : Array String) : Except String Unit := do
-  -- Check 1: Float uniqueness
-  if !validateFloatUniqueness db hyps then
-    throw "Float variables are not unique"
-
-  -- Check 2: Frame structure (floats before essentials)
-  if !validateFrameStructure db hyps then
-    throw "Frame structure invalid: essential hypothesis before float"
-
-  -- Check 3: Float formulas are well-formed
-  for label in hyps.toList do
-    match db.find? label with
-    | some (.hyp false f _) =>
-        if !validateFloatFormula f then
-          throw s!"Malformed float hypothesis '{label}': expected #[const, var], got formula of length {f.size}"
-    | _ => continue
-
-  return ()
 
 /-! ## Database Validation Entry Point -/
 
@@ -144,36 +85,28 @@ def validateDatabase (filename : String) (config : ModeConfig := {}) : IO Unit :
 
 /-! ## Test Runner -/
 
-/-- Run validation tests on standard Metamath databases. -/
-def runValidationTests : IO Unit := do
+/-- Require the intended parser rejection; I/O and setup failures propagate. -/
+def validateRejection (filename : String) (expected : ParseErrorCode) : IO Unit := do
+  let db ← check filename
+  if db.parseErrorCode? != some expected then
+    throw <| IO.userError
+      s!"{filename}: expected rejection {repr expected}, got {repr db.parseErrorCode?}"
+  IO.println s!"✓ Correctly rejected {filename}: {repr expected}"
+
+/-- Run the in-tree validation fixtures. Every failed expectation propagates. -/
+def runValidationTests
+    (positiveFiles : List String := [
+      "test_databases/incomplete_proofs/complete.mm",
+      "test_databases/compressed_phase/positive_nonmandatory_header_hyp.mm"])
+    (negativeFile : String := "test_databases/invalid_duplicate_floats.mm") : IO Unit := do
   IO.println "=== Metamath Database Validation Tests ==="
   IO.println ""
 
-  -- Test 1: Small demo database
-  IO.println "Test 1: demo0.mm (small test database)"
-  try
-    validateDatabase "../mmverify/examples/demo0.mm"
-  catch e =>
-    IO.println s!"  FAILED: {e}"
+  for filename in positiveFiles do
+    validateDatabase filename
+    IO.println ""
 
-  IO.println ""
-
-  -- Test 2: set.mm (large production database)
-  IO.println "Test 2: set.mm (large production database)"
-  try
-    validateDatabase "../set.mm"
-  catch e =>
-    IO.println s!"  FAILED: {e}"
-
-  IO.println ""
-
-  -- Test 3: Invalid database (should FAIL validation)
-  IO.println "Test 3: invalid_duplicate_floats.mm (NEGATIVE TEST - should fail)"
-  try
-    validateDatabase "test_databases/invalid_duplicate_floats.mm"
-    IO.println "  ✗ ERROR: Validator should have rejected this database!"
-  catch e =>
-    IO.println s!"  ✓ Correctly rejected: {e}"
+  validateRejection negativeFile .variableAlreadyHasFloatHyp
 
   IO.println ""
   IO.println "=== Validation Complete ==="
@@ -182,33 +115,25 @@ end Metamath.Validate
 
 /-! ## Main Entry Point -/
 
-def main : IO UInt32 := do
+def main (args : List String) : IO UInt32 := do
   try
-    Metamath.Validate.runValidationTests
+    if args.isEmpty then
+      Metamath.Validate.runValidationTests
+    else
+      for filename in args do
+        Metamath.Validate.validateDatabase filename
     pure 0
   catch e =>
-    IO.println s!"Validation tests failed: {e}"
+    IO.eprintln s!"Database validation failed: {e}"
     pure 1
 
 /-! ## Usage
 
-To run validation tests:
+From the project root, run the in-tree validation fixtures or validate explicit files:
 
 ```bash
-# Build the test module
-lake build Metamath.ValidateDB
-
-# Run from Lean REPL
-#eval Metamath.Validate.runValidationTests
-
-# Or add to lakefile.lean:
-@[default_target]
-lean_exe validateDB where
-  root := `Metamath.ValidateDB
-  supportInterpreter := true
-
-# Then run:
+lake build validateDB
 lake exe validateDB
+lake exe validateDB /path/to/database.mm
 ```
 -/
-

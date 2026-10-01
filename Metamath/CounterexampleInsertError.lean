@@ -16,7 +16,7 @@ Then `insert` will call `mkError` again, creating a new error? with a different 
 -/
 
 import Metamath.Verify
-import Metamath.VerifyDBThms
+import Metamath.Verify.DB
 
 namespace Metamath.CounterexampleInsertError
 

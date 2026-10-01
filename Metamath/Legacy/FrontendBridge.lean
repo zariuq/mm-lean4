@@ -36,7 +36,7 @@ theorem checkTwoPassLegacy_inInnerScope_error_implies_frontendNotAdmissible
       config pos depth inStatement h_allow h_depth h_code
 
 /-- Backward-compatible legacy theorem alias.
-Prefer `checkSinglePass_inInnerScope_error_implies_frontendNotAdmissible`
+Prefer `check_inInnerScope_error_implies_frontendNotAdmissible`
 for new single-pass integrations. -/
 theorem check_inInnerScope_of_expandIncludes_error_implies_frontendNotAdmissible
     (fname : String) (config : ModeConfig) (pos depth : Nat) (inStatement : Bool)
@@ -80,7 +80,7 @@ theorem checkTwoPassLegacy_insideStatement_error_implies_frontendNotAdmissible
       config pos scopeDepth inStatement h_allow h_stmt h_code
 
 /-- Backward-compatible legacy theorem alias.
-Prefer `checkSinglePass_insideStatement_error_implies_frontendNotAdmissible`
+Prefer `check_insideStatement_error_implies_frontendNotAdmissible`
 for new single-pass integrations. -/
 theorem check_insideStatement_of_expandIncludes_error_implies_frontendNotAdmissible
     (fname : String) (config : ModeConfig) (pos scopeDepth : Nat) (inStatement : Bool)

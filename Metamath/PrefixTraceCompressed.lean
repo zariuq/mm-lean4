@@ -4,7 +4,7 @@ Prefix Trace — Compressed Proof Full Provenance (Phase C6)
 This module proves the parser-level compressed proof provenance theorem:
 starting from an actual feedProof token stream in compressed mode
 (.start → .preload → .compressed), derive Spec.Provable with NO h_reach
-assumption. This mirrors `normal_proof_full_provenance` for compressed proofs.
+assumption. This mirrors `normal_proof_provable_from_prefix` for compressed proofs.
 
 **Architecture:**
 - Step 1: feedProof.go extraction lemmas (case-analysis per ptp mode)
@@ -13,16 +13,16 @@ assumption. This mirrors `normal_proof_full_provenance` for compressed proofs.
 - Step 4: PreloadTokensOK composition → preload fold
 - Step 5: applyCA ptp irrelevance + CompressedTokensOK composition
 - Step 6: Phase bridges (start→preload, preload→compressed)
-- Step 7: End-to-end theorem (compressed_proof_full_provenance)
+- Step 7: End-to-end theorem (compressed_proof_provable_from_prefix)
 
 **Dependencies:**
 - PrefixProvenance.lean (Parts 1-16): all foundation + bridge infrastructure
-- ParserOperations.lean: parser correctness lemmas
+- ParserInvariantPreservation.lean: parser correctness lemmas
 - Verify.lean: parser implementation
 -/
 
 import Metamath.PrefixProvenance
-import Metamath.VerifyParserStateThms
+import Metamath.Verify.ParserState
 
 set_option autoImplicit false
 
@@ -585,7 +585,7 @@ theorem preloadMandatoryHyps_preserves_label
       | assert f fr origin => simp [h_find, Bind.bind, Except.bind] at h
 
 /-- `stepAssert` preserves `label`. Same case analysis as `stepAssert_ok_preserves_core`
-    in ParserOperations.lean, but extracting the label field. -/
+    in ParserInvariantPreservation.lean, but extracting the label field. -/
 private theorem stepAssert_preserves_label (db : DB) (pr : ProofState) (f : Formula) (fr : Frame)
     (result : ProofState) (h_ok : db.stepAssert pr f fr = .ok result) :
     result.label = pr.label := by
@@ -730,15 +730,15 @@ private theorem preload_fold_ptp_rev (db : DB) (labels : List String)
 
 /-! ## Step 7: End-to-End Compressed Proof Provenance -/
 
-/-- **compressed_proof_full_provenance**: From actual feedProof token stream in
+/-- **compressed_proof_provable_from_prefix**: From actual feedProof token stream in
     compressed mode, derive `Spec.Provable` with NO `h_reach` assumption.
 
-    Mirrors `normal_proof_full_provenance` for compressed proofs. The token stream:
+    Mirrors `normal_proof_provable_from_prefix` for compressed proofs. The token stream:
     1. `tk_open` = "(" → preloadMandatoryHyps → .preload
     2. `preload_toks` → preload labels (fill heap)
     3. `tk_close` = ")" → .compressed 0
     4. `comp_toks` → decode + applyCompressedActions -/
-theorem compressed_proof_full_provenance
+theorem compressed_proof_provable_from_prefix
     (s : ParserState) (label : String) (fmla : Formula)
     (tk_open : ByteSlice) (preload_toks : List ByteSlice)
     (tk_close : ByteSlice) (comp_toks : List ByteSlice)
@@ -947,7 +947,7 @@ theorem compressed_implies_normal_fold
     on a well-formed DB, then the result is `Spec.Provable` against the **same** DB.
     This is the audit-facing integration theorem: both proof modes are now part
     of the verified pipeline with same-DB provability. -/
-theorem verify_any_mode_sound
+theorem verify_anyFormat_sound
     (db : DB) (label : String) (fmla : Formula)
     (h_ok : db.error? = none) (h_wf : WellFormedDB db) :
     -- Normal mode: stepNormal fold succeeds with singleton stack
@@ -976,9 +976,9 @@ theorem verify_any_mode_sound
 
 /-- **PREFIX PROVENANCE (compressed, pre-insert DB)**: Compressed trace execution on a
     well-formed DB produces `Spec.Provable` against the **same** (pre-insert) database.
-    Follows `compressed_proof_full_provenance` exactly but applies
+    Follows `compressed_proof_provable_from_prefix` exactly but applies
     `ProofReachableZ_same_db_provable` instead of `postInsert_provable_any_proof_z`. -/
-theorem compressed_proof_prefix_provenance
+theorem compressed_proof_prefix_provable
     (s : ParserState) (label : String) (fmla : Formula)
     (tk_open : ByteSlice) (preload_toks : List ByteSlice)
     (tk_close : ByteSlice) (comp_toks : List ByteSlice)
