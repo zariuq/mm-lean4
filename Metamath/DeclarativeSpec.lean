@@ -18,7 +18,7 @@ in `Spec/Operational.lean`).
 | §4.2.2 | Expressions and substitution | `Expr`, `Expr.subst` |
 | §4.2.4 | Disjoint variable restrictions | `DJ`, `DJ.subst` |
 | §4.2.5 | Floating ($f) and essential ($e) hypotheses | `Formula`, `VR.vhyp` |
-| §4.2.6 | Assertions ($a and $p statements) | `Statement`, `Statement.WellFormed` |
+| §4.2.6 | Assertions ($a and $p statements) | `Statement` |
 | §4.2.7 | Frames (mandatory hypotheses + DV) | `Context` |
 | §4.1.4, §4.3 | Proof verification algorithm | `Provable` |
 
@@ -492,20 +492,6 @@ theorem Statement.Provable'.of {axs} {s : Statement} (h : s.Provable' axs) : s.P
 
 theorem Statement.Provable.trim {axs} {s : Statement} : s.trim.Provable axs ↔ s.Provable axs := by
   simp only [Provable, untrim_trim]
-
-/-- Well-formed statement (§4.2.5, §4.2.7): all variables used in the formula
-    or hypotheses have floating hypotheses in the context.
-
-    Per §4.2.5: "A variable must have its type specified in a $f statement
-    before it may be used in a $e, $a, or $p statement."
-
-    Per §4.2.7: "The set of variables contained in its $f statements must be
-    identical to the set of variables contained in its $e, $a, and/or $p
-    statements."
-
-    Test: metamath-test/tests/unit/test14_variable_without_f_hypothesis.mm -/
-def Statement.WellFormed (s : Statement) : Prop :=
-  ∀ v ∈ s.vars, v.vhyp ∈ s.ctx.hyps
 
 theorem Provable.ax_self (axs : Statement → Prop) {ax} (H : axs ax) : ax.Provable' axs := by
   have := Provable.ax (Γ := ax.ctx) VR.expr H ?disj ?hyp ?var

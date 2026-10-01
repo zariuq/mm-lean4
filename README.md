@@ -196,6 +196,8 @@ h_success : (checkBytes bytes).error? = none
 
 ## Reproduction
 
+`METAMATH_TEST` is a checkout of the specification suite: https://github.com/zariuq/metamath-test, branch `unit-tests`.
+
 ```bash
 ROOT="$(pwd)"
 lake build
